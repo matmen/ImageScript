@@ -129,5 +129,10 @@ module.exports = {
         const {compress} = module.exports = await load();
 
         return compress(buffer, level);
+    },
+    async decompress(buffer, limit) {
+        const {decompress} = module.exports = await load();
+
+        return decompress(buffer, limit);
     }
 };
