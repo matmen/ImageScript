@@ -1,7 +1,7 @@
 /* global SharedArrayBuffer */
-const {inflate} = require('zlib');
 const crc32 = require('./crc32.js');
-const {compress} = require('./wasm/zlib.js');
+const Buffer = require('./buffer');
+const {compress, decompress} = require('./wasm/zlib.js');
 
 const __IHDR__ = new Uint8Array([73, 72, 68, 82]);
 const __IDAT__ = new Uint8Array([73, 68, 65, 84]);
@@ -93,7 +93,7 @@ module.exports = {
             c_offset += 4 + 4 + 4 + view.getUint32(c_offset);
         }
 
-        array = await new Promise((resolve, reject) => inflate(chunks.length === 1 ? chunks[0] : Buffer.concat(chunks), (err, res) => err ? reject(err) : resolve(res)));
+        array = await decompress(chunks.length === 1 ? chunks[0] : Buffer.concat(chunks));
 
         while (offset < array.byteLength) {
             const filter = array[offset++];

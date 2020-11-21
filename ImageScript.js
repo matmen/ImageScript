@@ -964,6 +964,10 @@ class Image {
     async encode(compression = 1) {
         return await png.encode(this.bitmap, {width: this.width, height: this.height, level: compression, channels: 4});
     }
+
+    static async decode(buffer) {
+        return await png.decode(buffer);
+    }
 }
 
 /**
