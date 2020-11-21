@@ -7,7 +7,7 @@ const gif = require('./utils/gif');
 class Image {
     /**
      * This is for internal use.
-     * If you intend on creating a new image, use {@link Image.new} instead.
+     * If you intend on creating a new image, use {@link Image.new} or {@link Image.decode} instead.
      * @param {SharedArrayBuffer} data
      * @property {number} width The images width
      * @property {number} height The images height
