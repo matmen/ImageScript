@@ -1,7 +1,6 @@
 const fs = require('fs');
 const child_process = require('child_process');
 
-let failed = false;
 (async () => {
     for (const file of fs.readdirSync('./tests/')) {
         if (file === 'run.js' || file.slice(-3) !== '.js') continue;
@@ -13,14 +12,12 @@ let failed = false;
         await new Promise(resolve => {
             proc.on('exit', code => {
                 if (code) {
-                    failed = true;
                     console.error(`test ${file} failed`);
-                }
-                resolve();
+                    process.exit(1);
+                } else resolve();
             });
         });
     }
 
-    if (failed) process.exit(1);
-    else console.log('all tests passed');
+    console.log('all tests passed');
 })();

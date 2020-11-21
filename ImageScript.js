@@ -964,6 +964,15 @@ class Image {
     async encode(compression = 1) {
         return await png.encode(this.bitmap, {width: this.width, height: this.height, level: compression, channels: 4});
     }
+
+    /**
+     * Decodes a PNG image
+     * @param {Buffer|Uint8Array} buffer The binary data to decode
+     * @return {Promise<Image>} The decoded image
+     */
+    static async decode(buffer) {
+        return new Image(await png.decode(new Uint8Array(buffer)));
+    }
 }
 
 /**
