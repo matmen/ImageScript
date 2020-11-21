@@ -1,6 +1,6 @@
 {
   "name": "imagescript",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "zero-dependency javascript image manipulation",
   "main": "ImageScript.js",
   "scripts": {
