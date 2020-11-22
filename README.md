@@ -17,8 +17,8 @@ const fs = require('fs').promises;
 const {Image} = require('imagescript');
 
 (async () => {
-    const image = await Image.decode(await fs.readFile('./tests/external.png'));
-    const overlay = await Image.decode(await fs.readFile('./tests/issues.png'));
+    const image = await Image.decode(await fs.readFile('./photo.png'));
+    const overlay = await Image.decode(await fs.readFile('./overlay.png'));
 
     image.crop(228, 20, 152, 171);
 
@@ -26,13 +26,13 @@ const {Image} = require('imagescript');
     overlay.opacity(0.8, true);
     image.composite(overlay, 0, image.height - overlay.height);
 
-    await fs.writeFile('./test.png', await image.encode());
+    await fs.writeFile('./output.png', await image.encode());
 })();
 ```
 
 #### Inputs
-![Input 1](./.github/external.png)  
-![Input 2](./.github/issues.png)
+![Photo](./.github/external.png)  
+![Overlay](./.github/issues.png)
 
 #### Output
 ![Output](./.github/readme.png)

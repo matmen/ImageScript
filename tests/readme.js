@@ -11,5 +11,8 @@ const {Image} = require('../ImageScript');
     overlay.opacity(0.8, true);
     image.composite(overlay, 0, image.height - overlay.height);
 
-    await fs.writeFile('./tests/readme.png', await image.encode());
+    const encoded = await image.encode();
+
+    if (!(await fs.readFile('./tests/readme.png')).equals(Buffer.from(encoded)))
+        process.exit(1);
 })();
