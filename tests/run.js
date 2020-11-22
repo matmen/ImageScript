@@ -11,7 +11,7 @@ const child_process = require('child_process');
         proc.stderr.pipe(process.stderr);
         proc.stdout.pipe(process.stdout);
         await new Promise(resolve => {
-            setTimeout(() => {
+            const timeout = setTimeout(() => {
                 if (proc.connected) {
                     console.log('script timeout');
                     proc.exitCode = 1;
@@ -20,6 +20,8 @@ const child_process = require('child_process');
             }, 1000);
 
             proc.on('exit', code => {
+                clearTimeout(timeout);
+
                 if (code) {
                     console.error(`test ${file} failed in ${Date.now() - start}ms`);
                     process.exit(1);

@@ -2,6 +2,11 @@ const fs = require('fs').promises;
 const {Image} = require('../ImageScript');
 const ImageTest = require('./image');
 
+const panic = message => {
+    console.error(message);
+    process.exit(1);
+};
+
 (async () => {
     {
         const binary = await fs.readFile('./tests/image.png');
@@ -14,6 +19,11 @@ const ImageTest = require('./image');
     {
         const binary = await fs.readFile('./tests/external.png');
         const image = await Image.decode(binary);
-        if ([image.width, image.height].some(v => v !== 638)) process.exit(1);
+
+        if ([image.width, image.height].some(v => v !== 638))
+            panic('dimensions don\'t match');
+
+        if (!Buffer.from(image.bitmap.subarray(0, 4)).equals(Buffer.from([70, 65, 62, 255])))
+            panic('pixel doesn\'t match');
     }
 })();
