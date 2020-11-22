@@ -16,16 +16,27 @@ It can achieve much more performant results by utilizing lower-level memory acce
 const fs = require('fs').promises;
 const {Image} = require('imagescript');
 
-(async ()=>{
-    const image = Image.new(128, 128);
-    image.fill((x, y) => Image.hslToColor(x * y / (image.width * image.height), 1, 0.5));
+(async () => {
+    const image = await Image.decode(await fs.readFile('./tests/external.png'));
+    const overlay = await Image.decode(await fs.readFile('./tests/issues.png'));
 
-    const encoded = await image.encode();
-    await fs.writeFile('./example.png', encoded);
+    image.crop(228, 20, 152, 171);
+
+    overlay.resize(image.width, Image.RESIZE_AUTO);
+    overlay.opacity(0.8, true);
+    image.composite(overlay, 0, image.height - overlay.height);
+
+    await fs.writeFile('./test.png', await image.encode());
 })();
 ```
 
-![Example](./.github/example.png)
+#### Inputs
+![Input 1](./.github/external.png)  
+![Input 2](./.github/issues.png)
+
+#### Output
+![Output](./.github/readme.png)
+
 ---
 
 If you have any additional questions, feel free to join the [discord support server](https://discord.gg/8hPrwAH).
