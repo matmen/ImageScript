@@ -20,5 +20,8 @@
   "bugs": {
     "url": "https://github.com/matmen/ImageScript/issues"
   },
-  "homepage": "https://github.com/matmen/ImageScript#readme"
+  "homepage": "https://github.com/matmen/ImageScript#readme",
+  "engines": {
+    "node": ">=12.0.0"
+  }
 }
