@@ -7,5 +7,7 @@ module.exports = (async () => {
 
     const encoded = await image.encode();
     const desired = await fs.readFile('./tests/image.png');
-    process.exit(desired.equals(encoded) ? 0 : 1);
+    if (process.argv[1].slice(-8) === 'image.js') process.exit(desired.equals(encoded) ? 0 : 1);
+
+    return image;
 })();
