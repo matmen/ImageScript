@@ -1,5 +1,5 @@
-const fs = require('fs').promises;
-const {Frame, GIF} = require('../ImageScript');
+import {Frame, GIF} from '../ImageScript.js';
+import { equal } from "https://deno.land/std/bytes/mod.ts";
 
 (async () => {
     const frames = [];
@@ -12,6 +12,6 @@ const {Frame, GIF} = require('../ImageScript');
     const gif = new GIF(frames);
 
     const encoded = await gif.encode();
-    const desired = await fs.readFile('./tests/gif.gif');
-    process.exit(desired.equals(encoded) ? 0 : 1);
+    const desired = await Deno.readFile('./tests/gif.gif');
+    Deno.exit(equal(desired, encoded) ? 0 : 1);
 })();

@@ -1,4 +1,4 @@
-module.exports = class Buffer {
+export class Buffer {
     static concat(...arrays) {
         const array = new Uint8Array(
             arrays.reduce((length, array) => length + array.length, 0)

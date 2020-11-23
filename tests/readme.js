@@ -1,9 +1,9 @@
-const fs = require('fs').promises;
-const {Image} = require('../ImageScript');
+import {Image} from '../ImageScript.js';
+import { equal } from "https://deno.land/std/bytes/mod.ts";
 
 (async () => {
-    const image = await Image.decode(await fs.readFile('./tests/external.png'));
-    const overlay = await Image.decode(await fs.readFile('./tests/issues.png'));
+    const image = await Image.decode(await Deno.readFile('./tests/external.png'));
+    const overlay = await Image.decode(await Deno.readFile('./tests/issues.png'));
 
     image.crop(228, 20, 152, 171);
 
@@ -13,6 +13,6 @@ const {Image} = require('../ImageScript');
 
     const encoded = await image.encode();
 
-    if (!(await fs.readFile('./tests/readme.png')).equals(Buffer.from(encoded)))
+    if (!equal(await Deno.readFile('./tests/readme.png'), encoded))
         process.exit(1);
 })();

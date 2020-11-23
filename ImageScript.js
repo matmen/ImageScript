@@ -1,10 +1,10 @@
-const png = require('./utils/png');
-const gif = require('./utils/gif');
+import * as  png from './utils/png.js';
+import * as gif from './utils/gif.js';
 
 /**
  * Represents an image; provides utility functions
  */
-class Image {
+export class Image {
     /**
      * This is for internal use.
      * If you intend on creating a new image, use {@link Image.new} or {@link Image.decode} instead.
@@ -979,7 +979,7 @@ class Image {
  * Represents a frame in a GIF
  * @extends Image
  */
-class Frame extends Image {
+export class Frame extends Image {
     /**
      * This is for internal use.
      * If you intend on creating a frame from an Image, use {@link Frame.from} instead.
@@ -1038,7 +1038,7 @@ class Frame extends Image {
  * Represents a GIF image as an array of frames
  * @extends Array<Frame>
  */
-class GIF extends Array {
+export class GIF extends Array {
     /**
      * Creates a new GIF image.
      * The maximum frame count for a GIF is calculated based on its dimensions:
@@ -1122,7 +1122,7 @@ class GIF extends Array {
             });
         }
 
-        return gif(frames, {
+        return gif.encode(frames, {
             width: this.width,
             height: this.height,
             comment: 'powered by ImageScript',
@@ -1130,5 +1130,3 @@ class GIF extends Array {
         });
     }
 }
-
-module.exports = {Image, GIF, Frame};

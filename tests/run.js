@@ -1,30 +1,29 @@
-const fs = require('fs');
-const child_process = require('child_process');
-
 (async () => {
-    for (const file of fs.readdirSync('./tests/')) {
+    for await (const {name: file} of Deno.readDir('./tests/')) {
         if (file === 'run.js' || file.slice(-3) !== '.js') continue;
 
         console.log(`running test ${file}`);
         const start = Date.now();
-        const proc = child_process.exec(`node --unhandled-rejections=strict ./tests/${file}`);
-        proc.stderr.pipe(process.stderr);
-        proc.stdout.pipe(process.stdout);
+        const proc = Deno.run({
+            cmd: ['deno', 'run', '--allow-read', `./tests/${file}`],
+            stdout: 'piped',
+            stderr: 'piped'
+        });
+
         await new Promise(resolve => {
             const timeout = setTimeout(() => {
-                if (proc.connected) {
-                    console.log('script timeout');
-                    proc.exitCode = 1;
-                    proc.kill('SIGTERM');
-                }
-            }, 1000);
+                console.log('script timeout');
+                proc.exitCode = 1;
+                proc.kill(15);
+            }, 5000);
 
-            proc.on('exit', code => {
+            proc.status().then(async ({code}) => {
                 clearTimeout(timeout);
 
                 if (code) {
+                    await Deno.stdout.write(await proc.stderrOutput());
                     console.error(`test ${file} failed in ${Date.now() - start}ms`);
-                    process.exit(1);
+                    Deno.exit(1);
                 } else {
                     console.log(`test ${file} passed in ${Date.now() - start}ms`);
                     resolve();

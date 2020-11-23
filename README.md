@@ -13,12 +13,11 @@ It can achieve much more performant results by utilizing lower-level memory acce
 
 ### Example
 ```js
-const fs = require('fs').promises;
-const {Image} = require('imagescript');
+import {Image} from 'https://deno.land/x/imagescript/mod.ts';
 
 (async () => {
-    const image = await Image.decode(await fs.readFile('./photo.png'));
-    const overlay = await Image.decode(await fs.readFile('./overlay.png'));
+    const image = await Image.decode(await Deno.readFile('./photo.png'));
+    const overlay = await Image.decode(await Deno.readFile('./overlay.png'));
 
     image.crop(228, 20, 152, 171);
 
@@ -26,7 +25,7 @@ const {Image} = require('imagescript');
     overlay.opacity(0.8, true);
     image.composite(overlay, 0, image.height - overlay.height);
 
-    await fs.writeFile('./output.png', await image.encode());
+    await Deno.writeFile('./output.png', await image.encode());
 })();
 ```
 
