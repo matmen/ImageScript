@@ -1,7 +1,8 @@
 let wasm;
 
 {
-    const module = new WebAssembly.Module(await Deno.readFile(import.meta.url.replace(/js$/, 'wasm')));
+    console.log(import.meta);
+    const module = new WebAssembly.Module(await fetch('https://github.com/matmen/ImageScript/raw/deno/utils/wasm/zlib.wasm').then(r => r.arrayBuffer()));
     const instance = new WebAssembly.Instance(module);
 
     wasm = instance.exports;
