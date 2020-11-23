@@ -1,7 +1,7 @@
 let wasm;
 
 {
-    const module = new WebAssembly.Module(await Deno.readFile('./utils/wasm/zlib.wasm'));
+    const module = new WebAssembly.Module(await Deno.readFile(import.meta.url.replace(/js$/, 'wasm')));
     const instance = new WebAssembly.Instance(module);
 
     wasm = instance.exports;
