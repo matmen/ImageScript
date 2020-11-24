@@ -117,12 +117,8 @@ export async function decode(array) {
         pixels = newPixels;
     }
 
-    const isPassable = new SharedArrayBuffer(pixels.length + 4);
-    const dataArray = new Uint8Array(isPassable);
-    dataArray.set([(width >> 8) & 0xff, width & 0xff, (height >> 8) & 0xff, height & 0xff]);
-    dataArray.set(pixels, 4);
-    return isPassable;
-}
+        return {width, height, pixels};
+    }
 
 function filter_1(slice, pixels, p_offset, channels, row_length) {
     let i = 0;
