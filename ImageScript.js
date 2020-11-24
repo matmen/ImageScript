@@ -6,27 +6,29 @@ const gif = require('./utils/gif');
  */
 class Image {
     /**
-     * This is for internal use.
-     * If you intend on creating a new image, use {@link Image.new} or {@link Image.decode} instead.
-     * @param {SharedArrayBuffer} data
-     * @property {number} width The images width
-     * @property {number} height The images height
+     * Creates a new image with the given dimensions
+     * @param {number} width
+     * @param {number} height
+     * @param {number} [fillColor = 0] (0..0xffffffff)
+     * @returns {Image}
      */
-    constructor(data) {
-        if (!(data instanceof SharedArrayBuffer))
-            throw new TypeError(`${this.constructor.name} is not a constructor. Use \`Image.new\` instead`);
+    constructor(width, height, fillColor) {
+        width = ~~width;
+        height = ~~height;
 
-        /** @private */
-        this.__array__ = new Uint8ClampedArray(data);
+        if (width < 1)
+            throw new RangeError('Image has to be at least 1 pixel wide');
+        if (height < 1)
+            throw new RangeError('Image has to be at least 1 pixel high');
+
+        this.__width__ = width;
+        this.__height__ = height;
 
         /**
          * The images RGBA pixel data
          * @type {Uint8ClampedArray}
          */
-        this.bitmap = this.__array__.subarray(4, this.__array__.length);
-
-        if (this.bitmap.length !== (this.width * this.height * 4))
-            throw new Error('Invalid image data');
+        this.bitmap = new Uint8ClampedArray(width * height * 4);
 
         /** @private */
         this.refs = new Array(this.width);
@@ -37,7 +39,7 @@ class Image {
             const row_length = 4 * this.width;
 
             while (offset < this.bitmap.length) {
-                this.refs[row++] = new Uint32Array(this.__array__.buffer, 4 + offset, this.width);
+                this.refs[row++] = new Uint32Array(this.bitmap.buffer, offset, this.width);
 
                 offset += row_length;
             }
@@ -60,41 +62,7 @@ class Image {
      * @returns {Image}
      */
     static new(width, height, fillColor = 0) {
-        width = ~~width;
-        height = ~~height;
-
-        if (width > 0xffff)
-            throw new RangeError('Image width cannot exceed 65535 pixels');
-        if (width < 1)
-            throw new RangeError('Image has to be at least 1 pixel wide');
-        if (height > 0xffff)
-            throw new RangeError('Image height cannot exceed 65535 pixels');
-        if (height < 1)
-            throw new RangeError('Image has to be at least 1 pixel high');
-        if (width * height > 2048 ** 2)
-            throw new RangeError('Invalid image size (<= 2^22px)');
-
-        return Image.__new__(width, height, fillColor);
-    }
-
-    /**
-     * @param {number} width
-     * @param {number} height
-     * @param {number} fillColor
-     * @returns {Image}
-     * @private
-     */
-    static __new__(width, height, fillColor = 0) {
-        const data = new SharedArrayBuffer(width * height * 4 + 4);
-        const dataUint8Clamped = new Uint8ClampedArray(data);
-        dataUint8Clamped.set([width >> 8 & 0xff, width & 0xff, height >> 8 & 0xff, height & 0xff]);
-
-        const image = new Image(data);
-
-        if (fillColor)
-            image.__fast_fill__(Image.colorToRGBA(fillColor));
-
-        return image;
+        return new Image(width, height, fillColor);
     }
 
     /**
@@ -102,7 +70,7 @@ class Image {
      * @returns {number}
      */
     get width() {
-        return (this.__array__[0] << 8) | this.__array__[1];
+        return this.__width__;
     }
 
     /**
@@ -110,7 +78,7 @@ class Image {
      * @returns {number}
      */
     get height() {
-        return (this.__array__[2] << 8) | this.__array__[3];
+        return this.__height__;
     }
 
     /**
@@ -291,6 +259,8 @@ class Image {
      * @param {number} pixelColor
      */
     setPixelAt(x, y, pixelColor) {
+        x = ~~x;
+        y = ~~y;
         this.__check_boundaries__(x, y);
         this.__set_pixel__(x, y, pixelColor);
         return this;
@@ -303,7 +273,7 @@ class Image {
      * @param {number} pixelColor
      */
     __set_pixel__(x, y, pixelColor) {
-        const i = (~~y - 1) * this.width * 4 + (~~x - 1) * 4;
+        const i = ((y - 1) * this.width + (x - 1)) * 4;
         this.bitmap.set(Image.colorToRGBA(pixelColor), i);
     }
 
@@ -372,15 +342,9 @@ class Image {
      * @returns {Image}
      */
     clone() {
-        return new Image(this.__toSharedBuffer__().slice());
-    }
-
-    /**
-     * @private
-     * @returns {ArrayBufferLike<SharedArrayBuffer>}
-     */
-    __toSharedBuffer__() {
-        return this.__array__.buffer;
+        const image = Image.new(this.width, this.height);
+        image.bitmap.set(this.bitmap);
+        return image;
     }
 
     /**
@@ -425,17 +389,10 @@ class Image {
 
         width = Math.floor(width);
         height = Math.floor(height);
-
-        if (width > 0xffff)
-            throw new RangeError('Image width cannot exceed 65535 pixels');
         if (width < 1)
             throw new RangeError('Image has to be at least 1 pixel wide');
-        if (height > 0xffff)
-            throw new RangeError('Image height cannot exceed 65535 pixels');
         if (height < 1)
             throw new RangeError('Image has to be at least 1 pixel high');
-        if (width * height > 2048 ** 2)
-            throw new RangeError('Invalid image size (<= 2^22px)');
 
         if (mode === Image.RESIZE_NEAREST_NEIGHBOR)
             return this.__resize_nearest_neighbor__(width, height);
@@ -448,9 +405,7 @@ class Image {
      * @param {number} height The new height
      */
     __resize_nearest_neighbor__(width, height) {
-        const sharedArrayBuffer = new SharedArrayBuffer(width * height * 4 + 4);
-        const destinationBuffer = new Uint8ClampedArray(sharedArrayBuffer);
-        destinationBuffer.set([width >> 8 & 0xff, width & 0xff, height >> 8 & 0xff, height & 0xff]);
+        const image = new Image(width, height);
 
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
@@ -460,11 +415,13 @@ class Image {
                 const destPos = (y * width + x) * 4;
                 const srcPos = (ySrc * this.width + xSrc) * 4;
 
-                destinationBuffer.set(this.bitmap.subarray(srcPos, srcPos + 4), destPos + 4);
+                image.bitmap.set(this.bitmap.subarray(srcPos, srcPos + 4), destPos);
             }
         }
 
-        return this.__apply__(new Image(sharedArrayBuffer));
+        this.__apply__(image);
+
+        return this;
     }
 
     /**
@@ -491,17 +448,15 @@ class Image {
         x = ~~x;
         y = ~~y;
 
-        const sharedArrayBuffer = new SharedArrayBuffer(width * height * 4 + 4);
-        const destinationBuffer = new Uint8ClampedArray(sharedArrayBuffer);
-        destinationBuffer.set([width >> 8 & 0xff, width & 0xff, height >> 8 & 0xff, height & 0xff]);
+        const image = new Image(width, height);
 
         for (let tY = 0; tY < height; tY++) {
             const idx = ((tY + y) * this.width + x) * 4;
             const tIdx = tY * width * 4;
-            destinationBuffer.set(this.bitmap.subarray(idx, idx + width * 4), tIdx + 4);
+            image.bitmap.set(this.bitmap.subarray(idx, idx + width * 4), tIdx);
         }
 
-        return new Image(sharedArrayBuffer);
+        return image;
     }
 
     /**
@@ -726,7 +681,7 @@ class Image {
             const bgPixel = this.getPixelAt(tX, tY);
             const fgPixel = source.getPixelAt(sX, sY);
             if ((fgPixel & 0xff) === 0xff) this.__set_pixel__(tX, tY, fgPixel);
-            if ((fgPixel & 0xff) === 0x00) this.__set_pixel__(tX, tY, bgPixel);
+            else if ((fgPixel & 0xff) === 0x00) this.__set_pixel__(tX, tY, bgPixel);
             else this.__set_pixel__(tX, tY, Image.__alpha_blend__(fgPixel, bgPixel));
         }
 
@@ -950,8 +905,10 @@ class Image {
      * @returns {Image}
      */
     __apply__(image) {
-        this.__array__ = image.__array__;
+        this.__width__ = image.__width__;
+        this.__height__ = image.__height__;
         this.bitmap = image.bitmap;
+        this.refs = image.refs;
 
         return this;
     }
@@ -971,7 +928,11 @@ class Image {
      * @return {Promise<Image>} The decoded image
      */
     static async decode(buffer) {
-        return new Image(await png.decode(new Uint8Array(buffer)));
+        const {width, height, pixels} = await png.decode(new Uint8Array(buffer));
+        const image = new Image(width, height);
+        image.bitmap.set(pixels);
+
+        return image;
     }
 }
 
@@ -981,15 +942,18 @@ class Image {
  */
 class Frame extends Image {
     /**
-     * This is for internal use.
-     * If you intend on creating a frame from an Image, use {@link Frame.from} instead.
-     * @param {SharedArrayBuffer} data
-     * @param {number} [duration = 100]
+     * Creates a new, blank frame
+     * @param {number} width
+     * @param {number} height
+     * @param {number} [duration = 100] The frames duration (in ms)
+     * @param {number} [fillColor = 0] (0..0xffffffff)
+     * @return {Frame}
      */
-    constructor(data, duration = 100) {
-        super(data);
-        if (isNaN(duration) || duration < 0 || duration > 0xffff)
+    constructor(width, height, duration = 100, fillColor) {
+        if (isNaN(duration) || duration < 0)
             throw new RangeError('Invalid frame duration');
+
+        super(width, height, fillColor);
         this.duration = duration;
     }
 
@@ -1005,9 +969,8 @@ class Frame extends Image {
      * @param {number} [fillColor = 0] (0..0xffffffff)
      * @return {Frame}
      */
-    static new(width, height, duration, fillColor) {
-        const image = super.new(width, height, fillColor);
-        return Frame.from(image, duration);
+    static new(width, height, duration = 100, fillColor) {
+        return new Frame(width, height, duration, fillColor);
     }
 
     /**
@@ -1019,18 +982,10 @@ class Frame extends Image {
     static from(image, duration) {
         if (!(image instanceof Image))
             throw new TypeError('Invalid image passed');
-        return new Frame(image.__toSharedBuffer__(), duration);
-    }
+        const frame = new Frame(image.width, image.height, duration);
+        frame.bitmap.set(image.bitmap);
 
-    /**
-     * @private
-     */
-    __toSharedTimedBuffer__() {
-        const imageBuffer = this.__array__;
-        const data = new Uint8Array(imageBuffer.byteLength + 2);
-        data.set([(this.duration >> 8) & 0xff, this.duration & 0xff], 0);
-        data.set(imageBuffer, 2);
-        return data;
+        return frame;
     }
 }
 
@@ -1055,21 +1010,11 @@ class GIF extends Array {
                 throw new TypeError(`Frame ${frames.indexOf(frame)} is not an instance of Frame`);
         }
 
-        if (loopCount < 0 || loopCount > 0xffff)
+        if (loopCount < 0)
             throw new RangeError('Invalid loop count');
 
         super(...frames);
         this.loopCount = loopCount;
-
-        const sizeSqrt = Math.sqrt(this.width * this.height);
-        const maxFrames = Math.floor(30 * 512 / sizeSqrt);
-
-        if (Math.max(this.width, this.height) > 0xffff)
-            throw new RangeError('Invalid GIF dimensions (<= 65535px)');
-        if (this.width * this.height > 2048 ** 2)
-            throw new RangeError('Invalid GIF size (<= 2^22px)');
-        if (frames.length > maxFrames)
-            throw new RangeError(`GIF cannot exceed ${maxFrames} frames at this resolution`);
     }
 
     toString() {
@@ -1098,13 +1043,6 @@ class GIF extends Array {
      */
     get height() {
         return Math.max(...[...this].map(frame => frame.height));
-    }
-
-    /**
-     * @private
-     */
-    __toArray__() {
-        return [this.loopCount, ...[...this].map(frame => frame.__toSharedTimedBuffer__())];
     }
 
     /**

@@ -13,7 +13,7 @@ const panic = message => {
         const image = await Image.decode(binary);
 
         const target = await ImageTest;
-        if (!Buffer.from(target.__array__).equals(Buffer.from(image.__array__))) process.exit(1);
+        if (!Buffer.from(target.bitmap).equals(Buffer.from(image.bitmap))) process.exit(1);
     }
 
     {
