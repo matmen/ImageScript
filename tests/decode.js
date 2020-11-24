@@ -1,6 +1,6 @@
 import {Image} from '../ImageScript.js';
 import * as ImageTest from './image.js';
-import { equal } from "https://deno.land/std/bytes/mod.ts";
+import {equal} from "https://deno.land/std/bytes/mod.ts";
 
 const panic = message => {
     console.error(message);
@@ -13,7 +13,7 @@ const panic = message => {
         const image = await Image.decode(binary);
 
         const target = await ImageTest.default;
-        if (!equal(target.__array__, image.__array__)) panic('arrays are unequal');
+        if (!equal(target.bitmap, image.bitmap)) panic('arrays are unequal');
     }
 
     {
