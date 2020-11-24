@@ -1,4 +1,3 @@
-/* global WebAssembly */
 const {join} = require('path');
 const {promises: {readFile}} = require('fs');
 
