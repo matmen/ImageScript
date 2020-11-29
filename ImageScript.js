@@ -790,8 +790,8 @@ class Image {
     averageColor() {
         let colorAvg = [0, 0, 0];
         let divisor = 0;
-        for (const [, , color] of this.iterateWithColors()) {
-            const rgba = Image.colorToRGBA(color);
+        for (let idx = 0; idx < this.bitmap.length; idx += 4) {
+            const rgba = this.bitmap.subarray(idx, idx + 4);
             for (let i = 0; i < 3; i++)
                 colorAvg[i] += rgba[i];
             divisor += rgba[3] / 255;
