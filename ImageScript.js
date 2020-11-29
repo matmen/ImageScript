@@ -766,7 +766,7 @@ class Image {
     hueShift(degrees) {
         for (const [x, y, color] of this.iterateWithColors()) {
             const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(color));
-            this.__set_pixel__(x, y, Image.hslaToColor((h + degrees / 360) % 1, s, l, a));
+            this.__set_pixel__(x, y, Image.hslaToColor(h + degrees / 360, s, l, a));
         }
 
         return this;
