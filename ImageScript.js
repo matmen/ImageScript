@@ -142,6 +142,11 @@ class Image {
      * @returns {number} color
      */
     static hslaToColor(h, s, l, a) {
+        h %= 1;
+        s = Math.min(1, Math.max(0, s));
+        l = Math.min(1, Math.max(0, l));
+        a = Math.min(1, Math.max(0, a));
+
         let r, g, b;
 
         if (s === 0) {
