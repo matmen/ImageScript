@@ -1,5 +1,5 @@
-const fs = require('fs').promises;
-const {Image} = require('../ImageScript');
+import {Image} from '../ImageScript.js';
+import {equal} from "https://deno.land/std/bytes/mod.ts";
 
 const panic = message => {
     console.error(message);
@@ -13,8 +13,8 @@ const panic = message => {
 
         const encoded = await image.encode();
 
-        const target = await fs.readFile('./tests/targets/fill-static.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('fill static doesn\'t equal');
+        const target = await Deno.readFile('./tests/targets/fill-static.png');
+        if (!equal(encoded, target)) panic('fill static doesn\'t equal');
     }
 
     {
@@ -23,7 +23,7 @@ const panic = message => {
 
         const encoded = await image.encode();
 
-        const target = await fs.readFile('./tests/targets/fill-func.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('fill func doesn\'t equal');
+        const target = await Deno.readFile('./tests/targets/fill-func.png');
+        if (!equal(encoded, target)) panic('fill func doesn\'t equal');
     }
 })();

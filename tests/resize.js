@@ -1,11 +1,12 @@
-const fs = require('fs').promises;
-const {Image} = require('../ImageScript');
-(async () => {
-        const binary = await fs.readFile('./tests/targets/image.png');
-        const image = await Image.decode(binary);
-        image.resize(image.width / 4, Image.RESIZE_AUTO);
+import {Image} from '../ImageScript.js';
+import {equal} from "https://deno.land/std/bytes/mod.ts";
 
-        const encoded = await image.encode();
-        const target = await fs.readFile('./tests/targets/resize.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+(async () => {
+    const binary = await Deno.readFile('./tests/targets/image.png');
+    const image = await Image.decode(binary);
+    image.resize(image.width / 4, Image.RESIZE_AUTO);
+
+    const encoded = await image.encode();
+    const target = await Deno.readFile('./tests/targets/resize.png');
+    if (!equal(encoded, target)) process.exit(1);
 })();

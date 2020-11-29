@@ -1,4 +1,6 @@
-const {Image, Frame, GIF} = require('../ImageScript');
+import {Frame, GIF, Image} from '../ImageScript.js';
+import {equal} from "https://deno.land/std/bytes/mod.ts";
+
 const panic = msg => {
     console.error(msg);
     process.exit(1);
@@ -103,7 +105,7 @@ if (Image.hslaToColor(0, 0, 1, 0xff) !== 0xffffffff)
 
     const clone = image.clone();
 
-    if (!Buffer.from(clone.bitmap).equals(Buffer.from(image.bitmap)))
+    if (!equal(clone.bitmap, image.bitmap))
         panic('clone failed');
 }
 

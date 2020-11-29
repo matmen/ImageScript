@@ -1,5 +1,5 @@
-const fs = require('fs').promises;
-const {Image} = require('../ImageScript');
+import {Image} from '../ImageScript.js';
+import {equal} from "https://deno.land/std/bytes/mod.ts";
 
 (async () => {
     {
@@ -9,8 +9,8 @@ const {Image} = require('../ImageScript');
 
         const encoded = await image.encode();
 
-        const target = await fs.readFile('./tests/targets/invert.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        const target = await Deno.readFile('./tests/targets/invert.png');
+        if (!equal(encoded, target)) process.exit(1);
     }
 
     {
@@ -20,8 +20,8 @@ const {Image} = require('../ImageScript');
 
         const encoded = await image.encode();
 
-        const target = await fs.readFile('./tests/targets/invert-value.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        const target = await Deno.readFile('./tests/targets/invert-value.png');
+        if (!equal(encoded, target)) process.exit(1);
     }
 
     {
@@ -31,8 +31,8 @@ const {Image} = require('../ImageScript');
 
         const encoded = await image.encode();
 
-        const target = await fs.readFile('./tests/targets/invert-saturation.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        const target = await Deno.readFile('./tests/targets/invert-saturation.png');
+        if (!equal(encoded, target)) process.exit(1);
     }
 
     {
@@ -42,8 +42,8 @@ const {Image} = require('../ImageScript');
 
         const encoded = await image.encode();
 
-        const target = await fs.readFile('./tests/targets/invert-hue.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        const target = await Deno.readFile('./tests/targets/invert-hue.png');
+        if (!equal(encoded, target)) process.exit(1);
     }
 
     {
@@ -53,7 +53,7 @@ const {Image} = require('../ImageScript');
 
         const encoded = await image.encode();
 
-        const target = await fs.readFile('./tests/targets/invert-hueshift.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        const target = await Deno.readFile('./tests/targets/invert-hueshift.png');
+        if (!equal(encoded, target)) process.exit(1);
     }
 })();

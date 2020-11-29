@@ -1,7 +1,6 @@
 import * as  png from './utils/png.js';
 import * as gif from './utils/gif.js';
 import * as fontlib from './utils/wasm/font.js';
-const fontlib = require('./utils/wasm/font');
 
 /**
  * Represents an image; provides utility functions
@@ -933,46 +932,6 @@ export class Image {
         const {width, height, pixels} = await png.decode(new Uint8Array(buffer));
         const image = new Image(width, height);
         image.bitmap.set(pixels);
-
-        return image;
-    }
-
-    /**
-     * Wrap at individual characters. For use with {@link Image.renderText}
-     * @return {boolean}
-     */
-    static get WRAP_STYLE_CHAR() {
-        return true;
-    }
-
-    /**
-     * Wrap at word ends. For use with {@link Image.renderText}
-     * @return {boolean}
-     */
-    static get WRAP_STYLE_WORD() {
-        return false;
-    }
-
-    /**
-     * Creates a new image containing the rendered text.
-     * @param {Uint8Array} font .ttf font buffer to use
-     * @param {number} scale Font size to use
-     * @param {string} text Text to render
-     * @param {number} color Text color to use
-     * @param {number} wrapWidth Image width before wrapping
-     * @param {boolean} wrap_style Whether to break at words (WRAP_STYLE_WORD) or at characters (WRAP_STYLE_CHAR)
-     * @return {Promise<Image>} The rendered text
-     */
-    static async renderText(font, scale, text, color = 0xffffffff, wrapWidth = Infinity, wrap_style = this.WRAP_STYLE_WORD) {
-        const [r, g, b, a] = Image.colorToRGBA(color);
-        await fontlib.load(0, font, scale);
-        fontlib.render(0, 0, scale, r, g, b, text, wrapWidth === Infinity ? null : wrapWidth, wrap_style);
-        const buffer = fontlib.buffer(0);
-        const [width, height] = fontlib.meta(0);
-        fontlib.free(0);
-        const image = new Image(width, height);
-        image.bitmap.set(buffer);
-        image.opacity(a / 0xff);
 
         return image;
     }
