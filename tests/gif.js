@@ -12,6 +12,6 @@ import { equal } from "https://deno.land/std/bytes/mod.ts";
     const gif = new GIF(frames);
 
     const encoded = await gif.encode();
-    const desired = await Deno.readFile('./tests/gif.gif');
+    const desired = await Deno.readFile('./tests/targets/gif.gif');
     Deno.exit(equal(desired, encoded) ? 0 : 1);
 })();

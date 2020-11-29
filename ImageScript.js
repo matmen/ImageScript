@@ -1,6 +1,7 @@
 import * as  png from './utils/png.js';
 import * as gif from './utils/gif.js';
 import * as fontlib from './utils/wasm/font.js';
+const fontlib = require('./utils/wasm/font');
 
 /**
  * Represents an image; provides utility functions
@@ -10,10 +11,9 @@ export class Image {
      * Creates a new image with the given dimensions
      * @param {number} width
      * @param {number} height
-     * @param {number} [fillColor = 0] (0..0xffffffff)
      * @returns {Image}
      */
-    constructor(width, height, fillColor) {
+    constructor(width, height) {
         width = ~~width;
         height = ~~height;
 
@@ -26,27 +26,17 @@ export class Image {
         this.__width__ = width;
         /** @private */
         this.__height__ = height;
-
+        /** @private */
+        this.__buffer__ = new ArrayBuffer(width * height * 4);
+        /** @private */
+        this.__view__ = new DataView(this.__buffer__);
+        /** @private */
+        this.__u32__ = new Uint32Array(this.__buffer__);
         /**
          * The images RGBA pixel data
          * @type {Uint8ClampedArray}
          */
-        this.bitmap = new Uint8ClampedArray(width * height * 4);
-
-        /** @private */
-        this.refs = new Array(this.width);
-
-        {
-            let row = 0;
-            let offset = 0;
-            const row_length = 4 * this.width;
-
-            while (offset < this.bitmap.length) {
-                this.refs[row++] = new Uint32Array(this.bitmap.buffer, offset, this.width);
-
-                offset += row_length;
-            }
-        }
+        this.bitmap = new Uint8ClampedArray(this.__buffer__);
     }
 
     /**
@@ -61,11 +51,10 @@ export class Image {
      * Creates a new image with the given dimensions
      * @param {number} width
      * @param {number} height
-     * @param {number} [fillColor = 0] (0..0xffffffff)
      * @returns {Image}
      */
-    static new(width, height, fillColor = 0) {
-        return new Image(width, height, fillColor);
+    static new(width, height) {
+        return new Image(width, height);
     }
 
     /**
@@ -103,9 +92,11 @@ export class Image {
      * @returns {void}
      */
     * iterateWithColors() {
+        let offset = 0;
         for (let y = 1; y <= this.height; y++) {
             for (let x = 1; x <= this.width; x++) {
-                yield [x, y, this.getPixelAt(x, y)];
+                yield [x, y, this.__view__.getUint32(offset, false)];
+                offset += 4;
             }
         }
     }
@@ -142,6 +133,11 @@ export class Image {
      * @returns {number} color
      */
     static hslaToColor(h, s, l, a) {
+        h %= 1;
+        s = Math.min(1, Math.max(0, s));
+        l = Math.min(1, Math.max(0, l));
+        a = Math.min(1, Math.max(0, a));
+
         let r, g, b;
 
         if (s === 0) {
@@ -176,13 +172,6 @@ export class Image {
      */
     static hslToColor(h, s, l) {
         return Image.hslaToColor(h, s, l, 1);
-    }
-
-    /**
-     * @private
-     */
-    static rgbaToHsla(r, g, b, a) {
-        return Image.rgbaToHSLA(r, g, b, a);
     }
 
     /**
@@ -250,9 +239,19 @@ export class Image {
      */
     getPixelAt(x, y) {
         this.__check_boundaries__(x, y);
-        const i = (~~y - 1) * this.width * 4 + (~~x - 1) * 4;
-        const [r, g, b, a] = this.bitmap.subarray(i, i + 4);
-        return Image.rgbaToColor(r, g, b, a);
+        return this.__view__.getUint32((~~y - 1) * this.width + (~~x - 1), false);
+    }
+
+    /**
+     * Gets the pixel color at the specified position
+     * @param {number} x
+     * @param {number} y
+     * @returns {Uint8ClampedArray} The RGBA value
+     */
+    getRGBAAt(x, y) {
+        this.__check_boundaries__(x, y);
+        const idx = ((~~y - 1) * this.width + (~~x - 1)) * 4;
+        return this.bitmap.subarray(idx, idx + 4);
     }
 
     /**
@@ -276,8 +275,7 @@ export class Image {
      * @param {number} pixelColor
      */
     __set_pixel__(x, y, pixelColor) {
-        const i = ((y - 1) * this.width + (x - 1)) * 4;
-        this.bitmap.set(Image.colorToRGBA(pixelColor), i);
+        this.__view__.setUint32(((y - 1) * this.width + (x - 1)) * 4, pixelColor, false);
     }
 
     /**
@@ -287,7 +285,7 @@ export class Image {
      */
     __check_boundaries__(x, y) {
         if (isNaN(x)) throw new TypeError(`Invalid pixel coordinates (x=${x})`);
-        if (isNaN(x)) throw new TypeError(`Invalid pixel coordinates (y=${y})`);
+        if (isNaN(y)) throw new TypeError(`Invalid pixel coordinates (y=${y})`);
         if (x < 1)
             throw new RangeError(`${Image.__out_of_bounds__} (x=${x})<1`);
         if (x > this.width)
@@ -318,26 +316,21 @@ export class Image {
      * @returns {Image}
      */
     fill(color) {
-        const func = typeof color === 'function';
-        if (func) {
-            for (const [x, y] of this)
-                this.__set_pixel__(x, y, color(x, y));
-        } else this.__fast_fill__(Image.colorToRGBA(color));
+        const type = typeof color;
+        if (type !== 'function') {
+            this.__view__.setUint32(0, color, false);
+            this.__u32__.fill(this.__u32__[0]);
+        } else {
+            let offset = 0;
+            for (let y = 1; y <= this.height; y++) {
+                for (let x = 1; x <= this.width; x++) {
+                    this.__view__.setUint32(offset, color(x, y), false);
+                    offset += 4;
+                }
+            }
+        }
 
         return this;
-    }
-
-    /**
-     * @private
-     * @param {number[]} rgba
-     */
-    __fast_fill__(rgba) {
-        let x = this.width;
-        let y = this.height;
-        while (0 <= --x)
-            this.bitmap.set(rgba, 4 * x);
-        while (0 < --y)
-            this.bitmap.copyWithin(4 * (y * this.width), 0, 4 * this.width);
     }
 
     /**
@@ -418,7 +411,7 @@ export class Image {
                 const destPos = (y * width + x) * 4;
                 const srcPos = (ySrc * this.width + xSrc) * 4;
 
-                image.bitmap.set(this.bitmap.subarray(srcPos, srcPos + 4), destPos);
+                image.__view__.setUint32(destPos, this.__view__.getUint32(srcPos, false), false);
             }
         }
 
@@ -454,9 +447,8 @@ export class Image {
         const image = new Image(width, height);
 
         for (let tY = 0; tY < height; tY++) {
-            const idx = ((tY + y) * this.width + x) * 4;
-            const tIdx = tY * width * 4;
-            image.bitmap.set(this.bitmap.subarray(idx, idx + width * 4), tIdx);
+            const idx = (tY + y) * this.width + x;
+            image.__u32__.set(this.__u32__.subarray(idx, idx + width), tY * width);
         }
 
         return image;
@@ -472,6 +464,9 @@ export class Image {
      * @returns {Image}
      */
     drawBox(x, y, width, height, color) {
+        x -= 1;
+        y -= 1;
+
         if (typeof color === 'function') {
             for (let tY = 1; tY <= height; tY++) {
                 for (let tX = 1; tX <= width; tX++) {
@@ -498,12 +493,12 @@ export class Image {
      * @param {number} color
      */
     __fast_box__(x, y, width, height, color) {
-        if (x < 1) {
+        if (x < 0) {
             width += x;
             x = 1;
         }
 
-        if (y < 1) {
+        if (y < 0) {
             height += y;
             y = 1;
         }
@@ -511,7 +506,7 @@ export class Image {
         const right = Math.max(Math.min(x + width, this.width), 1);
         let xPos = right;
         while (x <= --xPos)
-            this.bitmap.set(Image.colorToRGBA(color), 4 * (xPos + y * this.width));
+            this.__view__.setUint32(4 * (xPos + y * this.width), color);
         const end = 4 * (right + y * this.width);
         const start = 4 * (x + y * this.width);
 
@@ -532,11 +527,8 @@ export class Image {
      */
     drawCircle(x, y, radius, color) {
         const radSquared = radius ** 2;
-        for (let currentY = Math.max(0, y - radius); currentY < Math.min(y + radius, this.height); currentY++) {
-            for (let currentX = Math.max(0, x - radius); currentX < Math.min(x + radius, this.width); currentX++) {
-                if (Math.min(currentY, currentX) < 1 || currentX > this.width || currentY > this.height)
-                    continue;
-
+        for (let currentY = Math.max(1, y - radius); currentY <= Math.min(y + radius, this.height); currentY++) {
+            for (let currentX = Math.max(1, x - radius); currentX <= Math.min(x + radius, this.width); currentX++) {
                 if ((currentX - x) ** 2 + (currentY - y) ** 2 < radSquared)
                     this.__set_pixel__(currentX, currentY, typeof color === 'function' ? color(currentX - x + radius, currentY - y + radius) : color);
             }
@@ -576,7 +568,7 @@ export class Image {
      * @returns {Image}
      */
     opacity(opacity, absolute = false) {
-        if (isNaN(opacity) || opacity < 0 || opacity > 1)
+        if (isNaN(opacity) || opacity < 0)
             throw new RangeError('Invalid opacity value');
 
         this.__set_channel_value__(opacity, absolute, 3);
@@ -591,7 +583,7 @@ export class Image {
      * @returns {Image}
      */
     red(saturation, absolute = false) {
-        if (isNaN(saturation) || saturation < 0 || saturation > 1)
+        if (isNaN(saturation) || saturation < 0)
             throw new RangeError('Invalid saturation value');
 
         this.__set_channel_value__(saturation, absolute, 0);
@@ -606,7 +598,7 @@ export class Image {
      * @returns {Image}
      */
     green(saturation, absolute = false) {
-        if (isNaN(saturation) || saturation < 0 || saturation > 1)
+        if (isNaN(saturation) || saturation < 0)
             throw new RangeError('Invalid saturation value');
 
         this.__set_channel_value__(saturation, absolute, 1);
@@ -621,7 +613,7 @@ export class Image {
      * @returns {Image}
      */
     blue(saturation, absolute = false) {
-        if (isNaN(saturation) || saturation < 0 || saturation > 1)
+        if (isNaN(saturation) || saturation < 0)
             throw new RangeError('Invalid saturation value');
 
         this.__set_channel_value__(saturation, absolute, 2);
@@ -647,8 +639,11 @@ export class Image {
      * @returns {Image}
      */
     lightness(value, absolute = false) {
+        if (isNaN(value) || value < 0)
+            throw new RangeError('Invalid lightness value');
+
         return this.fill((x, y) => {
-            const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(this.getPixelAt(x, y)));
+            const [h, s, l, a] = Image.rgbaToHSLA(...this.getRGBAAt(x, y));
             return Image.hslaToColor(h, s, value * (absolute ? 1 : l), a);
         });
     }
@@ -660,8 +655,11 @@ export class Image {
      * @returns {Image}
      */
     saturation(value, absolute = false) {
+        if (isNaN(value) || value < 0)
+            throw new RangeError('Invalid saturation value');
+
         return this.fill((x, y) => {
-            const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(this.getPixelAt(x, y)));
+            const [h, s, l, a] = Image.rgbaToHSLA(...this.getRGBAAt(x, y));
             return Image.hslaToColor(h, value * (absolute ? 1 : s), l, a);
         });
     }
@@ -674,18 +672,22 @@ export class Image {
      * @returns {Image}
      */
     composite(source, x = 0, y = 0) {
-        for (const [sX, sY] of source) {
-            const tX = x + sX;
-            const tY = y + sY;
+        for (let yy = 0; yy < source.height; yy++) {
+            let y_offset = y + yy;
+            if (y_offset < 0) continue;
 
-            if (Math.min(tX, tY) < 1 || tX > this.width || tY > this.height)
-                continue;
+            for (let xx = 0; xx < source.width; xx++) {
+                let x_offset = x + xx;
+                if (x_offset < 0) continue;
 
-            const bgPixel = this.getPixelAt(tX, tY);
-            const fgPixel = source.getPixelAt(sX, sY);
-            if ((fgPixel & 0xff) === 0xff) this.__set_pixel__(tX, tY, fgPixel);
-            else if ((fgPixel & 0xff) === 0x00) this.__set_pixel__(tX, tY, bgPixel);
-            else this.__set_pixel__(tX, tY, Image.__alpha_blend__(fgPixel, bgPixel));
+                const offset = 4 * (x_offset + y_offset * this.width);
+                const fg = source.__view__.getUint32(4 * (xx + yy * source.width), false);
+                const bg = this.__view__.getUint32(offset, false);
+
+                if ((fg & 0xff) === 0xff) this.__view__.setUint32(offset, fg, false);
+                else if ((fg & 0xff) === 0x00) this.__view__.setUint32(offset, bg, false);
+                else this.__view__.setUint32(offset, Image.__alpha_blend__(fg, bg), false);
+            }
         }
 
         return this;
@@ -698,18 +700,13 @@ export class Image {
      * @returns {number}
      */
     static __alpha_blend__(fg, bg) {
-        const fgRGBA = Image.colorToRGBA(fg);
-        const bgRGBA = Image.colorToRGBA(bg);
-
-        const alpha = fgRGBA[3] + 1;
-        const inv_alpha = 256 - fgRGBA[3];
-
-        const rR = (alpha * fgRGBA[0] + inv_alpha * bgRGBA[0]) >> 8;
-        const rG = (alpha * fgRGBA[1] + inv_alpha * bgRGBA[1]) >> 8;
-        const rB = (alpha * fgRGBA[2] + inv_alpha * bgRGBA[2]) >> 8;
-        const rA = Math.max(fgRGBA[3], bgRGBA[3]);
-
-        return Image.rgbaToColor(rR, rG, rB, rA);
+        const fa = fg & 0xff;
+        const alpha = fa + 1;
+        const inv_alpha = 256 - fa;
+        const r = (alpha * (fg >>> 24) + inv_alpha * (bg >>> 24)) >> 8;
+        const b = (alpha * (fg >> 8 & 0xff) + inv_alpha * (bg >> 8 & 0xff)) >> 8;
+        const g = (alpha * (fg >> 16 & 0xff) + inv_alpha * (bg >> 16 & 0xff)) >> 8;
+        return (((r & 0xff) << 24) | ((g & 0xff) << 16) | ((b & 0xff) << 8) | (Math.max(fa, bg & 0xff) & 0xff));
     }
 
     /**
@@ -729,7 +726,7 @@ export class Image {
      */
     invertValue() {
         for (const [x, y, color] of this.iterateWithColors()) {
-            const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(color));
+            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
             this.__set_pixel__(x, y, Image.hslaToColor(h, s, 1 - l, a));
         }
 
@@ -742,7 +739,7 @@ export class Image {
      */
     invertSaturation() {
         for (const [x, y, color] of this.iterateWithColors()) {
-            const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(color));
+            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
             this.__set_pixel__(x, y, Image.hslaToColor(h, 1 - s, l, a));
         }
 
@@ -755,7 +752,7 @@ export class Image {
      */
     invertHue() {
         for (const [x, y, color] of this.iterateWithColors()) {
-            const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(color));
+            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
             this.__set_pixel__(x, y, Image.hslaToColor(1 - h, s, l, a));
         }
 
@@ -768,8 +765,8 @@ export class Image {
      */
     hueShift(degrees) {
         for (const [x, y, color] of this.iterateWithColors()) {
-            const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(color));
-            this.__set_pixel__(x, y, Image.hslaToColor((h + degrees / 360) % 1, s, l, a));
+            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
+            this.__set_pixel__(x, y, Image.hslaToColor(h + degrees / 360, s, l, a));
         }
 
         return this;
@@ -782,8 +779,8 @@ export class Image {
     averageColor() {
         let colorAvg = [0, 0, 0];
         let divisor = 0;
-        for (const [, , color] of this.iterateWithColors()) {
-            const rgba = Image.colorToRGBA(color);
+        for (let idx = 0; idx < this.bitmap.length; idx += 4) {
+            const rgba = this.bitmap.subarray(idx, idx + 4);
             for (let i = 0; i < 3; i++)
                 colorAvg[i] += rgba[i];
             divisor += rgba[3] / 255;
@@ -910,6 +907,8 @@ export class Image {
     __apply__(image) {
         this.__width__ = image.__width__;
         this.__height__ = image.__height__;
+        this.__view__ = image.__view__;
+        this.__u32__ = image.__u32__;
         this.bitmap = image.bitmap;
         this.refs = image.refs;
 
@@ -977,6 +976,47 @@ export class Image {
 
         return image;
     }
+
+    /**
+     * Wrap at individual characters. For use with {@link Image.renderText}
+     * @return {boolean}
+     */
+    static get WRAP_STYLE_CHAR() {
+        return true;
+    }
+
+    /**
+     * Wrap at word ends. For use with {@link Image.renderText}
+     * @return {boolean}
+     */
+    static get WRAP_STYLE_WORD() {
+        return false;
+    }
+
+    /**
+     * Creates a new image containing the rendered text.
+     * @param {Uint8Array} font TrueType (ttf/ttc) or OpenType (otf) font buffer to use
+     * @param {number} scale Font size to use
+     * @param {string} text Text to render
+     * @param {number} color Text color to use
+     * @param {number} wrapWidth Image width before wrapping
+     * @param {boolean} wrapStyle Whether to break at words (WRAP_STYLE_WORD) or at characters (WRAP_STYLE_CHAR)
+     * @return {Promise<Image>} The rendered text
+     */
+    static async renderText(font, scale, text, color = 0xffffffff, wrapWidth = Infinity, wrapStyle = this.WRAP_STYLE_WORD) {
+        const [r, g, b, a] = Image.colorToRGBA(color);
+        await fontlib.load(0, font, scale);
+        fontlib.render(0, 0, scale, r, g, b, text, wrapWidth === Infinity ? null : wrapWidth, wrapStyle);
+        const buffer = fontlib.buffer(0);
+        const [width, height] = fontlib.meta(0);
+        fontlib.free(0);
+        const image = new Image(width, height);
+        image.bitmap.set(buffer);
+        image.opacity(a / 0xff);
+
+        return image;
+    }
+
 }
 
 /**
@@ -989,14 +1029,13 @@ export class Frame extends Image {
      * @param {number} width
      * @param {number} height
      * @param {number} [duration = 100] The frames duration (in ms)
-     * @param {number} [fillColor = 0] (0..0xffffffff)
      * @return {Frame}
      */
-    constructor(width, height, duration = 100, fillColor) {
+    constructor(width, height, duration = 100) {
         if (isNaN(duration) || duration < 0)
             throw new RangeError('Invalid frame duration');
 
-        super(width, height, fillColor);
+        super(width, height);
         this.duration = duration;
     }
 
@@ -1009,15 +1048,14 @@ export class Frame extends Image {
      * @param {number} width
      * @param {number} height
      * @param {number} [duration = 100] The frames duration (in ms)
-     * @param {number} [fillColor = 0] (0..0xffffffff)
      * @return {Frame}
      */
-    static new(width, height, duration = 100, fillColor) {
-        return new Frame(width, height, duration, fillColor);
+    static new(width, height, duration = 100) {
+        return new Frame(width, height, duration);
     }
 
     /**
-     * Converts an Image instance to a Frame
+     * Converts an Image instance to a Frame, cloning it in the process
      * @param {Image} image The image to create the frame from
      * @param {number} [duration = 100] The frames duration (in ms)
      * @return {Frame}
@@ -1053,7 +1091,7 @@ export class GIF extends Array {
                 throw new TypeError(`Frame ${frames.indexOf(frame)} is not an instance of Frame`);
         }
 
-        if (loopCount < 0)
+        if (loopCount < 0 || isNaN(loopCount))
             throw new RangeError('Invalid loop count');
 
         super(...frames);
@@ -1107,7 +1145,7 @@ export class GIF extends Array {
             width: this.width,
             height: this.height,
             comment: 'powered by ImageScript',
-            loop: isNaN(this.loopCount) ? 0 : this.loopCount
+            loop: this.loopCount
         });
     }
 }

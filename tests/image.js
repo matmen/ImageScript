@@ -6,7 +6,7 @@ export default (async () => {
     image.fill(x => Image.hslToColor(x / image.width, 1, 0.5));
 
     const encoded = await image.encode();
-    const desired = await Deno.readFile('./tests/image.png');
+    const desired = await Deno.readFile('./tests/targets/image.png');
     if (import.meta.main) Deno.exit(equal(desired, encoded) ? 0 : 1);
 
     return image;
