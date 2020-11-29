@@ -13,7 +13,7 @@ const panic = message => {
 
         const encoded = await image.encode();
 
-        const target = await fs.readFile('./tests/fill-static.png');
+        const target = await fs.readFile('./tests/targets/fill-static.png');
         if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('fill static doesn\'t equal');
     }
 
@@ -23,7 +23,7 @@ const panic = message => {
 
         const encoded = await image.encode();
 
-        const target = await fs.readFile('./tests/fill-func.png');
+        const target = await fs.readFile('./tests/targets/fill-func.png');
         if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('fill func doesn\'t equal');
     }
 })();

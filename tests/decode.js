@@ -9,7 +9,7 @@ const panic = message => {
 
 (async () => {
     {
-        const binary = await fs.readFile('./tests/image.png');
+        const binary = await fs.readFile('./tests/targets/image.png');
         const image = await Image.decode(binary);
 
         const target = await ImageTest;
@@ -17,7 +17,7 @@ const panic = message => {
     }
 
     {
-        const binary = await fs.readFile('./tests/external.png');
+        const binary = await fs.readFile('./tests/targets/external.png');
         const image = await Image.decode(binary);
 
         if ([image.width, image.height].some(v => v !== 638))
