@@ -94,7 +94,7 @@ class Image {
         let offset = 0;
         for (let y = 1; y <= this.height; y++) {
             for (let x = 1; x <= this.width; x++) {
-                yield [x, y, this.view.getUint32(offset, false)];
+                yield [x, y, this.__view__.getUint32(offset, false)];
                 offset += 4;
             }
         }
@@ -171,13 +171,6 @@ class Image {
      */
     static hslToColor(h, s, l) {
         return Image.hslaToColor(h, s, l, 1);
-    }
-
-    /**
-     * @private
-     */
-    static rgbaToHsla(r, g, b, a) {
-        return Image.rgbaToHSLA(r, g, b, a);
     }
 
     /**
@@ -291,7 +284,7 @@ class Image {
      */
     __check_boundaries__(x, y) {
         if (isNaN(x)) throw new TypeError(`Invalid pixel coordinates (x=${x})`);
-        if (isNaN(x)) throw new TypeError(`Invalid pixel coordinates (y=${y})`);
+        if (isNaN(y)) throw new TypeError(`Invalid pixel coordinates (y=${y})`);
         if (x < 1)
             throw new RangeError(`${Image.__out_of_bounds__} (x=${x})<1`);
         if (x > this.width)
@@ -470,6 +463,9 @@ class Image {
      * @returns {Image}
      */
     drawBox(x, y, width, height, color) {
+        x -= 1;
+        y -= 1;
+
         if (typeof color === 'function') {
             for (let tY = 1; tY <= height; tY++) {
                 for (let tX = 1; tX <= width; tX++) {
@@ -496,12 +492,12 @@ class Image {
      * @param {number} color
      */
     __fast_box__(x, y, width, height, color) {
-        if (x < 1) {
+        if (x < 0) {
             width += x;
             x = 1;
         }
 
-        if (y < 1) {
+        if (y < 0) {
             height += y;
             y = 1;
         }
@@ -530,11 +526,8 @@ class Image {
      */
     drawCircle(x, y, radius, color) {
         const radSquared = radius ** 2;
-        for (let currentY = Math.max(0, y - radius); currentY < Math.min(y + radius, this.height); currentY++) {
-            for (let currentX = Math.max(0, x - radius); currentX < Math.min(x + radius, this.width); currentX++) {
-                if (Math.min(currentY, currentX) < 1 || currentX > this.width || currentY > this.height)
-                    continue;
-
+        for (let currentY = Math.max(1, y - radius); currentY <= Math.min(y + radius, this.height); currentY++) {
+            for (let currentX = Math.max(1, x - radius); currentX <= Math.min(x + radius, this.width); currentX++) {
                 if ((currentX - x) ** 2 + (currentY - y) ** 2 < radSquared)
                     this.__set_pixel__(currentX, currentY, typeof color === 'function' ? color(currentX - x + radius, currentY - y + radius) : color);
             }
@@ -574,7 +567,7 @@ class Image {
      * @returns {Image}
      */
     opacity(opacity, absolute = false) {
-        if (isNaN(opacity) || opacity < 0 || opacity > 1)
+        if (isNaN(opacity) || opacity < 0)
             throw new RangeError('Invalid opacity value');
 
         this.__set_channel_value__(opacity, absolute, 3);
@@ -645,8 +638,11 @@ class Image {
      * @returns {Image}
      */
     lightness(value, absolute = false) {
+        if (isNaN(value) || value < 0)
+            throw new RangeError('Invalid lightness value');
+
         return this.fill((x, y) => {
-            const [h, s, l, a] = Image.rgbaToHsla(...this.getRGBAAt(x, y));
+            const [h, s, l, a] = Image.rgbaToHSLA(...this.getRGBAAt(x, y));
             return Image.hslaToColor(h, s, value * (absolute ? 1 : l), a);
         });
     }
@@ -658,8 +654,11 @@ class Image {
      * @returns {Image}
      */
     saturation(value, absolute = false) {
+        if (isNaN(value) || value < 0)
+            throw new RangeError('Invalid saturation value');
+
         return this.fill((x, y) => {
-            const [h, s, l, a] = Image.rgbaToHsla(...this.getRGBAAt(x, y));
+            const [h, s, l, a] = Image.rgbaToHSLA(...this.getRGBAAt(x, y));
             return Image.hslaToColor(h, value * (absolute ? 1 : s), l, a);
         });
     }
@@ -674,13 +673,16 @@ class Image {
     composite(source, x = 0, y = 0) {
         for (let yy = 0; yy < source.height; yy++) {
             let y_offset = y + yy;
-            if (y_offset > this.height) break;
+            if (y_offset < 0) continue;
+
             for (let xx = 0; xx < source.width; xx++) {
                 let x_offset = x + xx;
-                if (x_offset > this.width) break;
+                if (x_offset < 0) continue;
+
                 const offset = 4 * (x_offset + y_offset * this.width);
                 const fg = source.__view__.getUint32(4 * (xx + yy * source.width), false);
                 const bg = this.__view__.getUint32(offset, false);
+
                 if ((fg & 0xff) === 0xff) this.__view__.setUint32(offset, fg, false);
                 else if ((fg & 0xff) === 0x00) this.__view__.setUint32(offset, bg, false);
                 else this.__view__.setUint32(offset, Image.__alpha_blend__(fg, bg), false);
@@ -723,7 +725,7 @@ class Image {
      */
     invertValue() {
         for (const [x, y, color] of this.iterateWithColors()) {
-            const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(color));
+            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
             this.__set_pixel__(x, y, Image.hslaToColor(h, s, 1 - l, a));
         }
 
@@ -736,7 +738,7 @@ class Image {
      */
     invertSaturation() {
         for (const [x, y, color] of this.iterateWithColors()) {
-            const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(color));
+            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
             this.__set_pixel__(x, y, Image.hslaToColor(h, 1 - s, l, a));
         }
 
@@ -749,7 +751,7 @@ class Image {
      */
     invertHue() {
         for (const [x, y, color] of this.iterateWithColors()) {
-            const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(color));
+            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
             this.__set_pixel__(x, y, Image.hslaToColor(1 - h, s, l, a));
         }
 
@@ -762,7 +764,7 @@ class Image {
      */
     hueShift(degrees) {
         for (const [x, y, color] of this.iterateWithColors()) {
-            const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(color));
+            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
             this.__set_pixel__(x, y, Image.hslaToColor(h + degrees / 360, s, l, a));
         }
 
@@ -952,7 +954,7 @@ class Image {
 
     /**
      * Creates a new image containing the rendered text.
-     * @param {Uint8Array} font .ttf font buffer to use
+     * @param {Uint8Array} font TrueType (ttf/ttc) or OpenType (otf) font buffer to use
      * @param {number} scale Font size to use
      * @param {string} text Text to render
      * @param {number} color Text color to use
@@ -1048,7 +1050,7 @@ class GIF extends Array {
                 throw new TypeError(`Frame ${frames.indexOf(frame)} is not an instance of Frame`);
         }
 
-        if (loopCount < 0)
+        if (loopCount < 0 || isNaN(loopCount))
             throw new RangeError('Invalid loop count');
 
         super(...frames);
@@ -1102,7 +1104,7 @@ class GIF extends Array {
             width: this.width,
             height: this.height,
             comment: 'powered by ImageScript',
-            loop: isNaN(this.loopCount) ? 0 : this.loopCount
+            loop: this.loopCount
         });
     }
 }
