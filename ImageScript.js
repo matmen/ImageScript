@@ -106,9 +106,11 @@ class Image {
      * @returns {void}
      */
     * iterateWithColors() {
+        let offset = 0;
         for (let y = 1; y <= this.height; y++) {
             for (let x = 1; x <= this.width; x++) {
-                yield [x, y, this.getPixelAt(x, y)];
+                yield [x, y, this.view.getUint32(offset, false)];
+                offset += 4;
             }
         }
     }
