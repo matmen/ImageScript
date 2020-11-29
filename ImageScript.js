@@ -258,9 +258,18 @@ class Image {
      */
     getPixelAt(x, y) {
         this.__check_boundaries__(x, y);
-        const i = (~~y - 1) * this.width * 4 + (~~x - 1) * 4;
-        const [r, g, b, a] = this.bitmap.subarray(i, i + 4);
-        return Image.rgbaToColor(r, g, b, a);
+        return this.__view__.getUint32((~~y - 1) * this.width + (~~x - 1), false);
+    }
+
+    /**
+     * Gets the pixel color at the specified position
+     * @param {number} x
+     * @param {number} y
+     * @returns {Uint8ClampedArray} The RGBA value
+     */
+    getRGBAAt(x, y) {
+        this.__check_boundaries__(x, y);
+        return this.bitmap.subarray(((~~y - 1) * this.width + (~~x - 1)) * 4, 4);
     }
 
     /**
@@ -649,7 +658,7 @@ class Image {
      */
     lightness(value, absolute = false) {
         return this.fill((x, y) => {
-            const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(this.getPixelAt(x, y)));
+            const [h, s, l, a] = Image.rgbaToHsla(...this.getRGBAAt(x, y));
             return Image.hslaToColor(h, s, value * (absolute ? 1 : l), a);
         });
     }
@@ -662,7 +671,7 @@ class Image {
      */
     saturation(value, absolute = false) {
         return this.fill((x, y) => {
-            const [h, s, l, a] = Image.rgbaToHsla(...Image.colorToRGBA(this.getPixelAt(x, y)));
+            const [h, s, l, a] = Image.rgbaToHsla(...this.getRGBAAt(x, y));
             return Image.hslaToColor(h, value * (absolute ? 1 : s), l, a);
         });
     }
