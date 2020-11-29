@@ -36,21 +36,6 @@ class Image {
          * @type {Uint8ClampedArray}
          */
         this.bitmap = new Uint8ClampedArray(this.__buffer__);
-
-        /** @private */
-        this.refs = new Array(this.width);
-
-        {
-            let row = 0;
-            let offset = 0;
-            const row_length = 4 * this.width;
-
-            while (offset < this.bitmap.length) {
-                this.refs[row++] = new Uint32Array(this.bitmap.buffer, offset, this.width);
-
-                offset += row_length;
-            }
-        }
     }
 
     /**
