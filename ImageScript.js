@@ -256,7 +256,8 @@ class Image {
      */
     getRGBAAt(x, y) {
         this.__check_boundaries__(x, y);
-        return this.bitmap.subarray(((~~y - 1) * this.width + (~~x - 1)) * 4, 4);
+        const idx = ((~~y - 1) * this.width + (~~x - 1)) * 4;
+        return this.bitmap.subarray(idx, idx + 4);
     }
 
     /**
