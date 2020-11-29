@@ -25,12 +25,17 @@ class Image {
         this.__width__ = width;
         /** @private */
         this.__height__ = height;
-
+        /** @private */
+        this.__buffer__ = new ArrayBuffer(width * height * 4);
+        /** @private */
+        this.__view__ = new DataView(this.__buffer__);
+        /** @private */
+        this.__u32__ = new Uint32Array(this.__buffer__);
         /**
          * The images RGBA pixel data
          * @type {Uint8ClampedArray}
          */
-        this.bitmap = new Uint8ClampedArray(width * height * 4);
+        this.bitmap = new Uint8ClampedArray(this.__buffer__);
 
         /** @private */
         this.refs = new Array(this.width);
@@ -274,8 +279,7 @@ class Image {
      * @param {number} pixelColor
      */
     __set_pixel__(x, y, pixelColor) {
-        const i = ((y - 1) * this.width + (x - 1)) * 4;
-        this.bitmap.set(Image.colorToRGBA(pixelColor), i);
+        this.__view__.setUint32(((y - 1) * this.width + (x - 1)) * 4, pixelColor, false);
     }
 
     /**
@@ -316,26 +320,21 @@ class Image {
      * @returns {Image}
      */
     fill(color) {
-        const func = typeof color === 'function';
-        if (func) {
-            for (const [x, y] of this)
-                this.__set_pixel__(x, y, color(x, y));
-        } else this.__fast_fill__(Image.colorToRGBA(color));
+        const type = typeof color;
+        if (type !== 'function') {
+            this.__view__.setUint32(0, color, false);
+            this.__u32__.fill(this.__u32__[0]);
+        } else {
+            let offset = 0;
+            for (let y = 1; y <= this.height; y++) {
+                for (let x = 1; x <= this.width; x++) {
+                    this.__view__.setUint32(offset, color(x, y), false);
+                    offset += 4;
+                }
+            }
+        }
 
         return this;
-    }
-
-    /**
-     * @private
-     * @param {number[]} rgba
-     */
-    __fast_fill__(rgba) {
-        let x = this.width;
-        let y = this.height;
-        while (0 <= --x)
-            this.bitmap.set(rgba, 4 * x);
-        while (0 < --y)
-            this.bitmap.copyWithin(4 * (y * this.width), 0, 4 * this.width);
     }
 
     /**
@@ -416,7 +415,7 @@ class Image {
                 const destPos = (y * width + x) * 4;
                 const srcPos = (ySrc * this.width + xSrc) * 4;
 
-                image.bitmap.set(this.bitmap.subarray(srcPos, srcPos + 4), destPos);
+                image.__view__.setUint32(destPos, this.__view__.getUint32(srcPos, false), false);
             }
         }
 
@@ -452,9 +451,8 @@ class Image {
         const image = new Image(width, height);
 
         for (let tY = 0; tY < height; tY++) {
-            const idx = ((tY + y) * this.width + x) * 4;
-            const tIdx = tY * width * 4;
-            image.bitmap.set(this.bitmap.subarray(idx, idx + width * 4), tIdx);
+            const idx = (tY + y) * this.width + x;
+            image.__u32__.set(this.__u32__.subarray(idx, idx + width), tY * width);
         }
 
         return image;
@@ -509,7 +507,7 @@ class Image {
         const right = Math.max(Math.min(x + width, this.width), 1);
         let xPos = right;
         while (x <= --xPos)
-            this.bitmap.set(Image.colorToRGBA(color), 4 * (xPos + y * this.width));
+            this.__view__.setUint32(4 * (xPos + y * this.width), color);
         const end = 4 * (right + y * this.width);
         const start = 4 * (x + y * this.width);
 
@@ -589,7 +587,7 @@ class Image {
      * @returns {Image}
      */
     red(saturation, absolute = false) {
-        if (isNaN(saturation) || saturation < 0 || saturation > 1)
+        if (isNaN(saturation) || saturation < 0)
             throw new RangeError('Invalid saturation value');
 
         this.__set_channel_value__(saturation, absolute, 0);
@@ -604,7 +602,7 @@ class Image {
      * @returns {Image}
      */
     green(saturation, absolute = false) {
-        if (isNaN(saturation) || saturation < 0 || saturation > 1)
+        if (isNaN(saturation) || saturation < 0)
             throw new RangeError('Invalid saturation value');
 
         this.__set_channel_value__(saturation, absolute, 1);
@@ -619,7 +617,7 @@ class Image {
      * @returns {Image}
      */
     blue(saturation, absolute = false) {
-        if (isNaN(saturation) || saturation < 0 || saturation > 1)
+        if (isNaN(saturation) || saturation < 0)
             throw new RangeError('Invalid saturation value');
 
         this.__set_channel_value__(saturation, absolute, 2);
@@ -672,18 +670,19 @@ class Image {
      * @returns {Image}
      */
     composite(source, x = 0, y = 0) {
-        for (const [sX, sY] of source) {
-            const tX = x + sX;
-            const tY = y + sY;
-
-            if (Math.min(tX, tY) < 1 || tX > this.width || tY > this.height)
-                continue;
-
-            const bgPixel = this.getPixelAt(tX, tY);
-            const fgPixel = source.getPixelAt(sX, sY);
-            if ((fgPixel & 0xff) === 0xff) this.__set_pixel__(tX, tY, fgPixel);
-            else if ((fgPixel & 0xff) === 0x00) this.__set_pixel__(tX, tY, bgPixel);
-            else this.__set_pixel__(tX, tY, Image.__alpha_blend__(fgPixel, bgPixel));
+        for (let yy = 0; yy < source.height; yy++) {
+            let y_offset = y + yy;
+            if (y_offset > this.height) break;
+            for (let xx = 0; xx < source.width; xx++) {
+                let x_offset = x + xx;
+                if (x_offset > this.width) break;
+                const offset = 4 * (x_offset + y_offset * this.width);
+                const fg = source.__view__.getUint32(4 * (xx + yy * source.width), false);
+                const bg = this.__view__.getUint32(offset, false);
+                if ((fg & 0xff) === 0xff) this.__view__.setUint32(offset, fg, false);
+                else if ((fg & 0xff) === 0x00) this.__view__.setUint32(offset, bg, false);
+                else this.__view__.setUint32(offset, Image.__alpha_blend__(fg, bg), false);
+            }
         }
 
         return this;
@@ -696,18 +695,13 @@ class Image {
      * @returns {number}
      */
     static __alpha_blend__(fg, bg) {
-        const fgRGBA = Image.colorToRGBA(fg);
-        const bgRGBA = Image.colorToRGBA(bg);
-
-        const alpha = fgRGBA[3] + 1;
-        const inv_alpha = 256 - fgRGBA[3];
-
-        const rR = (alpha * fgRGBA[0] + inv_alpha * bgRGBA[0]) >> 8;
-        const rG = (alpha * fgRGBA[1] + inv_alpha * bgRGBA[1]) >> 8;
-        const rB = (alpha * fgRGBA[2] + inv_alpha * bgRGBA[2]) >> 8;
-        const rA = Math.max(fgRGBA[3], bgRGBA[3]);
-
-        return Image.rgbaToColor(rR, rG, rB, rA);
+        const fa = fg & 0xff;
+        const alpha = fa + 1;
+        const inv_alpha = 256 - fa;
+        const r = (alpha * (fg >>> 24) + inv_alpha * (bg >>> 24)) >> 8;
+        const b = (alpha * (fg >> 8 & 0xff) + inv_alpha * (bg >> 8 & 0xff)) >> 8;
+        const g = (alpha * (fg >> 16 & 0xff) + inv_alpha * (bg >> 16 & 0xff)) >> 8;
+        return (((r & 0xff) << 24) | ((g & 0xff) << 16) | ((b & 0xff) << 8) | (Math.max(fa, bg & 0xff) & 0xff));
     }
 
     /**
@@ -908,6 +902,8 @@ class Image {
     __apply__(image) {
         this.__width__ = image.__width__;
         this.__height__ = image.__height__;
+        this.__view__ = image.__view__;
+        this.__u32__ = image.__u32__;
         this.bitmap = image.bitmap;
         this.refs = image.refs;
 
@@ -959,13 +955,13 @@ class Image {
      * @param {string} text Text to render
      * @param {number} color Text color to use
      * @param {number} wrapWidth Image width before wrapping
-     * @param {boolean} wrap_style Whether to break at words (WRAP_STYLE_WORD) or at characters (WRAP_STYLE_CHAR)
+     * @param {boolean} wrapStyle Whether to break at words (WRAP_STYLE_WORD) or at characters (WRAP_STYLE_CHAR)
      * @return {Promise<Image>} The rendered text
      */
-    static async renderText(font, scale, text, color = 0xffffffff, wrapWidth = Infinity, wrap_style = this.WRAP_STYLE_WORD) {
+    static async renderText(font, scale, text, color = 0xffffffff, wrapWidth = Infinity, wrapStyle = this.WRAP_STYLE_WORD) {
         const [r, g, b, a] = Image.colorToRGBA(color);
         await fontlib.load(0, font, scale);
-        fontlib.render(0, 0, scale, r, g, b, text, wrapWidth === Infinity ? null : wrapWidth, wrap_style);
+        fontlib.render(0, 0, scale, r, g, b, text, wrapWidth === Infinity ? null : wrapWidth, wrapStyle);
         const buffer = fontlib.buffer(0);
         const [width, height] = fontlib.meta(0);
         fontlib.free(0);
@@ -975,6 +971,7 @@ class Image {
 
         return image;
     }
+
 }
 
 /**
@@ -1013,7 +1010,7 @@ class Frame extends Image {
     }
 
     /**
-     * Converts an Image instance to a Frame
+     * Converts an Image instance to a Frame, cloning it in the process
      * @param {Image} image The image to create the frame from
      * @param {number} [duration = 100] The frames duration (in ms)
      * @return {Frame}
