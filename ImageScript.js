@@ -10,10 +10,9 @@ class Image {
      * Creates a new image with the given dimensions
      * @param {number} width
      * @param {number} height
-     * @param {number} [fillColor = 0] (0..0xffffffff)
      * @returns {Image}
      */
-    constructor(width, height, fillColor) {
+    constructor(width, height) {
         width = ~~width;
         height = ~~height;
 
@@ -61,11 +60,10 @@ class Image {
      * Creates a new image with the given dimensions
      * @param {number} width
      * @param {number} height
-     * @param {number} [fillColor = 0] (0..0xffffffff)
      * @returns {Image}
      */
-    static new(width, height, fillColor = 0) {
-        return new Image(width, height, fillColor);
+    static new(width, height) {
+        return new Image(width, height);
     }
 
     /**
@@ -989,14 +987,13 @@ class Frame extends Image {
      * @param {number} width
      * @param {number} height
      * @param {number} [duration = 100] The frames duration (in ms)
-     * @param {number} [fillColor = 0] (0..0xffffffff)
      * @return {Frame}
      */
-    constructor(width, height, duration = 100, fillColor) {
+    constructor(width, height, duration = 100) {
         if (isNaN(duration) || duration < 0)
             throw new RangeError('Invalid frame duration');
 
-        super(width, height, fillColor);
+        super(width, height);
         this.duration = duration;
     }
 
@@ -1009,11 +1006,10 @@ class Frame extends Image {
      * @param {number} width
      * @param {number} height
      * @param {number} [duration = 100] The frames duration (in ms)
-     * @param {number} [fillColor = 0] (0..0xffffffff)
      * @return {Frame}
      */
-    static new(width, height, duration = 100, fillColor) {
-        return new Frame(width, height, duration, fillColor);
+    static new(width, height, duration = 100) {
+        return new Frame(width, height, duration);
     }
 
     /**
