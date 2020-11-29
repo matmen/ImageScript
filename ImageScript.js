@@ -674,10 +674,12 @@ export class Image {
         for (let yy = 0; yy < source.height; yy++) {
             let y_offset = y + yy;
             if (y_offset < 0) continue;
+            if (y_offset >= this.height) break;
 
             for (let xx = 0; xx < source.width; xx++) {
                 let x_offset = x + xx;
                 if (x_offset < 0) continue;
+                if (x_offset >= this.width) break;
 
                 const offset = 4 * (x_offset + y_offset * this.width);
                 const fg = source.__view__.getUint32(4 * (xx + yy * source.width), false);
