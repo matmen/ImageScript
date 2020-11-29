@@ -12,6 +12,6 @@ const {Frame, GIF} = require('../ImageScript');
     const gif = new GIF(frames);
 
     const encoded = await gif.encode();
-    const desired = await fs.readFile('./tests/gif.gif');
+    const desired = await fs.readFile('./tests/targets/gif.gif');
     process.exit(desired.equals(encoded) ? 0 : 1);
 })();

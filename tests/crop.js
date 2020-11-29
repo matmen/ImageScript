@@ -8,6 +8,6 @@ const {Image} = require('../ImageScript');
 
     const encoded = await image.encode();
 
-    const target = await fs.readFile('./tests/crop.png');
+    const target = await fs.readFile('./tests/targets/crop.png');
     if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
 })();
