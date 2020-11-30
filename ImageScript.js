@@ -791,6 +791,42 @@ export class Image {
     }
 
     /**
+     * Gets the images dominant color
+     * @param {boolean} [ignoreBlack=true] Whether to ignore dark colors below the threshold
+     * @param {boolean} [ignoreWhite=true] Whether to ignore light colors above the threshold
+     * @param {number} [bwThreshold=0xf] The black/white threshold (0-64)
+     * @return {number} The images dominant color
+     */
+    dominantColor(ignoreBlack = true, ignoreWhite = true, bwThreshold = 0xf) {
+        const colorCounts = new Array(0x3ffff);
+        for (let i = 0; i < this.bitmap.length; i += 4) {
+            const color = this.__view__.getUint32(i, false);
+            const [h, s, l] = Image.rgbaToHSLA(...Image.colorToRGBA(color)).map(v => (~~(v * 0x3f)));
+            if (ignoreBlack && l < bwThreshold) continue;
+            if (ignoreWhite && l > 0x3f - bwThreshold) continue;
+            const key = h << 12 | s << 6 | l;
+            colorCounts[key] = (colorCounts[key] || 0) + 1;
+        }
+
+        let maxColorCount = 0;
+        let mostProminentValue;
+        colorCounts.forEach((el, i) => {
+            if (el < maxColorCount) return;
+            maxColorCount = el;
+            mostProminentValue = i;
+        });
+
+        if (!mostProminentValue === undefined)
+            return this.dominantColor(ignoreBlack, ignoreWhite, bwThreshold - 1);
+
+        const h = (mostProminentValue >>> 12) & 0x3f;
+        const s = (mostProminentValue >>> 6) & 0x3f;
+        const l = mostProminentValue & 0x3f;
+
+        return Image.hslaToColor(h / 0x3f, s / 0x3f, l / 0x3f, 1);
+    }
+
+    /**
      * Rotates the image the given amount of degrees
      * @param {number} angle The angle to rotate the image for (in degrees)
      * @param {boolean} resize Whether to resize the image so it fits all pixels or just ignore outlying pixels
@@ -911,7 +947,6 @@ export class Image {
         this.__view__ = image.__view__;
         this.__u32__ = image.__u32__;
         this.bitmap = image.bitmap;
-        this.refs = image.refs;
 
         return this;
     }
