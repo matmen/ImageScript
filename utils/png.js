@@ -71,7 +71,7 @@ module.exports = {
 
         const width = view.getUint32(16);
         const height = view.getUint32(20);
-        const channels = ({2: 3, 6: 4})[array[25]];
+        const channels = ({2: 3, 6: 4, 0: 1, 4: 2})[array[25]];
 
         const row_length = width * channels;
         let pixels = new Uint8Array(height * row_length);
@@ -108,11 +108,25 @@ module.exports = {
             p_offset += row_length;
         }
 
-        if (channels === 3) {
+        if (channels !== 4) {
             const newPixels = new Uint8Array(width * height * 4);
-            newPixels.fill(0xff);
-            for (let i = 0; i < width * height; i++)
-                newPixels.set(pixels.subarray(i * 3, i * 3 + 3), i * 4);
+            const view = new DataView(newPixels.buffer);
+
+            if (channels === 1) {
+                for (let i = 0; i < width * height; i++) {
+                    const pixel = pixels[i];
+                    view.setUint32(i * 4, pixel << 24 | pixel << 16 | pixel << 8 | 0xff, false);
+                }
+            } else if (channels === 2) {
+                for (let i = 0; i < width * height * 2; i += 2) {
+                    const pixel = pixels[i];
+                    view.setUint32(i * 2, pixel << 24 | pixel << 16 | pixel << 8 | pixels[i + 1], false);
+                }
+            } else if (channels === 3) {
+                newPixels.fill(0xff);
+                for (let i = 0; i < width * height; i++)
+                    newPixels.set(pixels.subarray(i * 3, i * 3 + 3), i * 4);
+            }
 
             pixels = newPixels;
         }
