@@ -1,13 +1,11 @@
-const {readFile} = require('fs').promises;
-const {join} = require('path');
+let wasm;
 
-let wasm = new Promise(async resolve => {
-    const module = new WebAssembly.Module(await readFile(join(__dirname, './svg.wasm')));
+{
+    const module = new WebAssembly.Module(await fetch('https://github.com/matmen/ImageScript/raw/deno/utils/wasm/svg.wasm').then(r => r.arrayBuffer()));
     const instance = new WebAssembly.Instance(module);
-    const wasm = instance.exports;
 
-    resolve(wasm);
-});
+    wasm = instance.exports;
+}
 
 let WASM_VECTOR_LEN = 0;
 
@@ -110,8 +108,7 @@ module.exports = {
      * @param {number} height
      * @returns {number}
      */
-    async rgba(ptr, svg, fit_kind, zoom, width, height) {
-        wasm = await wasm;
+    rgba(ptr, svg, fit_kind, zoom, width, height) {
         const ptr0 = passStringToWasm0(svg, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         return wasm.rgba(ptr, ptr0, WASM_VECTOR_LEN, fit_kind, zoom, width, height);
     },
