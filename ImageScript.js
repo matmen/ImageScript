@@ -1051,17 +1051,6 @@ class Frame extends Image {
     }
 
     /**
-     * Creates a new, blank frame
-     * @param {number} width
-     * @param {number} height
-     * @param {number} [duration = 100] The frames duration (in ms)
-     * @return {Frame}
-     */
-    static new(width, height, duration = 100) {
-        return new Frame(width, height, duration);
-    }
-
-    /**
      * Converts an Image instance to a Frame, cloning it in the process
      * @param {Image} image The image to create the frame from
      * @param {number} [duration = 100] The frames duration (in ms)
