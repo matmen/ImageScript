@@ -98,7 +98,6 @@ function getArrayU8FromWasm0(ptr, len) {
     return getUint8Memory0().subarray(ptr, ptr + len);
 }
 
-module.exports = {
     /**
      * @param {number} ptr
      * @param {string} svg
@@ -108,50 +107,52 @@ module.exports = {
      * @param {number} height
      * @returns {number}
      */
-    rgba(ptr, svg, fit_kind, zoom, width, height) {
+    export function rgba(ptr, svg, fit_kind, zoom, width, height) {
         const ptr0 = passStringToWasm0(svg, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         return wasm.rgba(ptr, ptr0, WASM_VECTOR_LEN, fit_kind, zoom, width, height);
-    },
-    /**
-     * @param {number} id
-     * @returns {Uint32Array}
-     */
-    meta(id) {
-        try {
-            const retptr = wasm.__wbindgen_export_2.value - 16;
-            wasm.__wbindgen_export_2.value = retptr;
-            wasm.meta(retptr, id);
-            const r0 = getInt32Memory0()[retptr / 4];
-            const r1 = getInt32Memory0()[retptr / 4 + 1];
-            const v0 = getArrayU32FromWasm0(r0, r1).slice();
-            wasm.__wbindgen_free(r0, r1 * 4);
-            return v0;
-        } finally {
-            wasm.__wbindgen_export_2.value += 16;
-        }
-    },
-    /**
-     * @param {number} id
-     * @returns {Uint8Array}
-     */
-    buffer(id) {
-        try {
-            const retptr = wasm.__wbindgen_export_2.value - 16;
-            wasm.__wbindgen_export_2.value = retptr;
-            wasm.buffer(retptr, id);
-            const r0 = getInt32Memory0()[retptr / 4];
-            const r1 = getInt32Memory0()[retptr / 4 + 1];
-            const v0 = getArrayU8FromWasm0(r0, r1).slice();
-            wasm.__wbindgen_free(r0, r1);
-            return v0;
-        } finally {
-            wasm.__wbindgen_export_2.value += 16;
-        }
-    },
-    /**
-     * @param {number} id
-     */
-    free(id) {
-        wasm.free(id);
     }
-};
+
+/**
+ * @param {number} id
+ * @returns {Uint32Array}
+ */
+export function meta(id) {
+    try {
+        const retptr = wasm.__wbindgen_export_2.value - 16;
+        wasm.__wbindgen_export_2.value = retptr;
+        wasm.meta(retptr, id);
+        const r0 = getInt32Memory0()[retptr / 4];
+        const r1 = getInt32Memory0()[retptr / 4 + 1];
+        const v0 = getArrayU32FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_free(r0, r1 * 4);
+        return v0;
+    } finally {
+        wasm.__wbindgen_export_2.value += 16;
+    }
+}
+
+/**
+ * @param {number} id
+ * @returns {Uint8Array}
+ */
+export function buffer(id) {
+    try {
+        const retptr = wasm.__wbindgen_export_2.value - 16;
+        wasm.__wbindgen_export_2.value = retptr;
+        wasm.buffer(retptr, id);
+        const r0 = getInt32Memory0()[retptr / 4];
+        const r1 = getInt32Memory0()[retptr / 4 + 1];
+        const v0 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_free(r0, r1);
+        return v0;
+    } finally {
+        wasm.__wbindgen_export_2.value += 16;
+    }
+}
+
+/**
+ * @param {number} id
+ */
+export function free(id) {
+    wasm.free(id);
+}
