@@ -3,7 +3,7 @@ const fs = require('fs').promises;
 
 (async () => {
     const svg = await fs.readFile('./tests/twemoji.svg');
-    const image = await Image.renderSVG(svg, 1024, 1024);
+    const image = await Image.renderSVG(svg.toString(), 256 / 36, Image.SVG_MODE_SCALE);
     const encoded = await image.encode();
 
     const target = await fs.readFile('./tests/targets/twemoji.png');
