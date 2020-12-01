@@ -1007,7 +1007,7 @@ class Image {
      * @param {string} text Text to render
      * @param {number} color Text color to use
      * @param {number} wrapWidth Image width before wrapping
-     * @param {boolean} wrapStyle Whether to break at words (WRAP_STYLE_WORD) or at characters (WRAP_STYLE_CHAR)
+     * @param {boolean} wrapStyle Whether to break at words ({@link WRAP_STYLE_WORD}) or at characters ({@link WRAP_STYLE_CHAR})
      * @return {Promise<Image>} The rendered text
      */
     static async renderText(font, scale, text, color = 0xffffffff, wrapWidth = Infinity, wrapStyle = this.WRAP_STYLE_WORD) {
