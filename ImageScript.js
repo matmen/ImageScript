@@ -53,7 +53,7 @@ class Image {
      * @returns {Image}
      */
     static new(width, height) {
-        return new Image(width, height);
+        return new this(width, height);
     }
 
     /**
@@ -400,7 +400,7 @@ class Image {
      * @param {number} height The new height
      */
     __resize_nearest_neighbor__(width, height) {
-        const image = new Image(width, height);
+        const image = new this.constructor(width, height);
 
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
@@ -443,7 +443,7 @@ class Image {
         x = ~~x;
         y = ~~y;
 
-        const image = new Image(width, height);
+        const image = new this.constructor(width, height);
 
         for (let tY = 0; tY < height; tY++) {
             const idx = (tY + y) * this.width + x;
@@ -967,7 +967,7 @@ class Image {
      */
     static async decode(buffer) {
         const {width, height, pixels} = await png.decode(new Uint8Array(buffer));
-        const image = new Image(width, height);
+        const image = new this(width, height);
         image.bitmap.set(pixels);
 
         return image;
@@ -1006,7 +1006,7 @@ class Image {
         const buffer = fontlib.buffer(0);
         const [width, height] = fontlib.meta(0);
         fontlib.free(0);
-        const image = new Image(width, height);
+        const image = new this(width, height);
         image.bitmap.set(buffer);
         image.opacity(a / 0xff);
 
