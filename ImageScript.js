@@ -47,12 +47,7 @@ class Image {
         return `Image<${this.width}x${this.height}>`;
     }
 
-    /**
-     * Creates a new image with the given dimensions
-     * @param {number} width
-     * @param {number} height
-     * @returns {Image}
-     */
+    /** @private */
     static new(width, height) {
         return new this(width, height);
     }
@@ -974,9 +969,52 @@ class Image {
         return image;
     }
 
-    static async renderSVG(svg, width, height) {
-        if (typeof svg !== 'string') svg = svg.toString();
-        await svglib.rgba(0, svg, 2, 0, width, height);
+    /**
+     * Scale the SVG by the given amount. For use with {@link Image.renderSVG}
+     * @return {number}
+     */
+    static get SVG_MODE_SCALE() {
+        return 1;
+    }
+
+    /**
+     * Scale the SVG to fit the given width. For use with {@link Image.renderSVG}
+     * @return {number}
+     */
+    static get SVG_MODE_WIDTH() {
+        return 2;
+    }
+
+    /**
+     * Scale the SVG to fit the given height. For use with {@link Image.renderSVG}
+     * @return {number}
+     */
+    static get SVG_MODE_HEIGHT() {
+        return 3;
+    }
+
+    /**
+     * Creates a new image from the given SVG
+     * @param {string} svg The SVG content
+     * @param {number} size The size to use
+     * @param {number} mode The SVG resizing mode to use (one of {@link SVG_MODE_SCALE}, {@link SVG_MODE_WIDTH}, {@link SVG_MODE_HEIGHT})
+     * @return {Promise<Image>} The rendered SVG graphic
+     */
+    static async renderSVG(svg, size = 1, mode = this.SVG_MODE_SCALE) {
+        if (![this.SVG_MODE_WIDTH, this.SVG_MODE_HEIGHT, this.SVG_MODE_SCALE].includes(mode))
+            throw new Error('Invalid SVG scaling mode');
+
+        if (mode === this.SVG_MODE_SCALE && size <= 0)
+            throw new RangeError('SVG scale must be > 0');
+        if (mode !== this.SVG_MODE_SCALE && size < 1)
+            throw new RangeError('SVG size must be >= 1')
+
+        if (typeof svg !== 'string')
+            svg = svg.toString();
+
+        const status = await svglib.rgba(0, svg, mode, size, size, size);
+        if (status === 1) throw new Error('Failed parsing SVG');
+        if (status === 2) throw new Error('Failed rendering SVG');
         const meta = svglib.meta(0);
         const image = new this(...meta);
         image.bitmap.set(svglib.buffer(0));
