@@ -958,7 +958,7 @@ export class Image {
     }
 
     /**
-     * Decodes a PNG image
+     * Decodes an image (PNG or JPEG)
      * @param {Buffer|Uint8Array} buffer The binary data to decode
      * @return {Promise<Image>} The decoded image
      */

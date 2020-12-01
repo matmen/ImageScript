@@ -1,13 +1,11 @@
-const {readFile} = require('fs').promises;
-const {join} = require('path');
+let wasm;
 
-let wasm = new Promise(async resolve => {
-    const module = new WebAssembly.Module(await readFile(join(__dirname, './jpeg.wasm')));
+{
+    const module = new WebAssembly.Module(await fetch('https://github.com/matmen/ImageScript/raw/deno/utils/wasm/jpeg.wasm').then(r => r.arrayBuffer()));
     const instance = new WebAssembly.Instance(module);
-    const wasm = instance.exports;
 
-    resolve(wasm);
-});
+    wasm = instance.exports;
+}
 
 let cachegetUint8Memory0 = null;
 
@@ -53,60 +51,60 @@ function getArrayU8FromWasm0(ptr, len) {
     return getUint8Memory0().subarray(ptr / 1, ptr / 1 + len);
 }
 
-module.exports = {
-    /**
-     * @param {number} ptr
-     * @param {Uint8Array} buffer
-     * @param {number} _width
-     * @param {number} _height
-     * @returns {number}
-     */
-    async decode(ptr, buffer, _width, _height) {
-        wasm = await wasm;
-        const ptr0 = passArray8ToWasm0(buffer, wasm.__wbindgen_malloc);
-        return wasm.decode(ptr, ptr0, WASM_VECTOR_LEN, _width, _height);
-    },
-    /**
-     * @param {number} id
-     * @returns {Uint16Array}
-     */
-    meta(id) {
-        try {
-            const retptr = wasm.__wbindgen_export_1.value - 16;
-            wasm.__wbindgen_export_1.value = retptr;
-            wasm.meta(retptr, id);
-            const r0 = getInt32Memory0()[retptr / 4];
-            const r1 = getInt32Memory0()[retptr / 4 + 1];
-            const v0 = getArrayU16FromWasm0(r0, r1).slice();
-            wasm.__wbindgen_free(r0, r1 * 2);
-            return v0;
-        } finally {
-            wasm.__wbindgen_export_1.value += 16;
-        }
-    },
-    /**
-     * @param {number} id
-     * @returns {Uint8Array}
-     */
-    buffer(id) {
-        try {
-            const retptr = wasm.__wbindgen_export_1.value - 16;
-            wasm.__wbindgen_export_1.value = retptr;
-            wasm.buffer(retptr, id);
-            const r0 = getInt32Memory0()[retptr / 4];
-            const r1 = getInt32Memory0()[retptr / 4 + 1];
-            const v0 = getArrayU8FromWasm0(r0, r1).slice();
-            wasm.__wbindgen_free(r0, r1 * 1);
-            return v0;
-        } finally {
-            wasm.__wbindgen_export_1.value += 16;
-        }
-    },
-    /**
-     * @param {number} id
-     */
-    free(id) {
-        wasm.free(id);
-    }
-};
+/**
+ * @param {number} ptr
+ * @param {Uint8Array} buffer
+ * @param {number} _width
+ * @param {number} _height
+ * @returns {number}
+ */
+export async function decode(ptr, buffer, _width, _height) {
+    wasm = await wasm;
+    const ptr0 = passArray8ToWasm0(buffer, wasm.__wbindgen_malloc);
+    return wasm.decode(ptr, ptr0, WASM_VECTOR_LEN, _width, _height);
+}
 
+/**
+ * @param {number} id
+ * @returns {Uint16Array}
+ */
+export function meta(id) {
+    try {
+        const retptr = wasm.__wbindgen_export_1.value - 16;
+        wasm.__wbindgen_export_1.value = retptr;
+        wasm.meta(retptr, id);
+        const r0 = getInt32Memory0()[retptr / 4];
+        const r1 = getInt32Memory0()[retptr / 4 + 1];
+        const v0 = getArrayU16FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_free(r0, r1 * 2);
+        return v0;
+    } finally {
+        wasm.__wbindgen_export_1.value += 16;
+    }
+}
+
+/**
+ * @param {number} id
+ * @returns {Uint8Array}
+ */
+export function buffer(id) {
+    try {
+        const retptr = wasm.__wbindgen_export_1.value - 16;
+        wasm.__wbindgen_export_1.value = retptr;
+        wasm.buffer(retptr, id);
+        const r0 = getInt32Memory0()[retptr / 4];
+        const r1 = getInt32Memory0()[retptr / 4 + 1];
+        const v0 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_free(r0, r1 * 1);
+        return v0;
+    } finally {
+        wasm.__wbindgen_export_1.value += 16;
+    }
+}
+
+/**
+ * @param {number} id
+ */
+export function free(id) {
+    wasm.free(id);
+}
