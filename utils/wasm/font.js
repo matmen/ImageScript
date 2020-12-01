@@ -89,8 +89,7 @@ export function meta(id) {
     return slice;
 }
 
-export async function load(id, buffer, scale = 128) {
-    wasm = await wasm;
+export function load(id, buffer, scale = 128) {
     wasm.load(id, u8array_to_ptr(buffer), buffer.length, scale);
 }
 

@@ -998,9 +998,9 @@ export class Image {
      * @param {string} svg The SVG content
      * @param {number} size The size to use
      * @param {number} mode The SVG resizing mode to use (one of {@link SVG_MODE_SCALE}, {@link SVG_MODE_WIDTH}, {@link SVG_MODE_HEIGHT})
-     * @return {Promise<Image>} The rendered SVG graphic
+     * @return {Image} The rendered SVG graphic
      */
-    static async renderSVG(svg, size = 1, mode = this.SVG_MODE_SCALE) {
+    static renderSVG(svg, size = 1, mode = this.SVG_MODE_SCALE) {
         if (![this.SVG_MODE_WIDTH, this.SVG_MODE_HEIGHT, this.SVG_MODE_SCALE].includes(mode))
             throw new Error('Invalid SVG scaling mode');
 
@@ -1012,7 +1012,7 @@ export class Image {
         if (typeof svg !== 'string')
             svg = svg.toString();
 
-        const status = await svglib.rgba(0, svg, mode, size, size, size);
+        const status = svglib.rgba(0, svg, mode, size, size, size);
         if (status === 1) throw new Error('Failed parsing SVG');
         if (status === 2) throw new Error('Failed rendering SVG');
         const meta = svglib.meta(0);
@@ -1046,11 +1046,11 @@ export class Image {
      * @param {number} color Text color to use
      * @param {number} wrapWidth Image width before wrapping
      * @param {boolean} wrapStyle Whether to break at words ({@link WRAP_STYLE_WORD}) or at characters ({@link WRAP_STYLE_CHAR})
-     * @return {Promise<Image>} The rendered text
+     * @return {Image} The rendered text
      */
-    static async renderText(font, scale, text, color = 0xffffffff, wrapWidth = Infinity, wrapStyle = this.WRAP_STYLE_WORD) {
+    static renderText(font, scale, text, color = 0xffffffff, wrapWidth = Infinity, wrapStyle = this.WRAP_STYLE_WORD) {
         const [r, g, b, a] = Image.colorToRGBA(color);
-        await fontlib.load(0, font, scale);
+        fontlib.load(0, font, scale);
         fontlib.render(0, 0, scale, r, g, b, text, wrapWidth === Infinity ? null : wrapWidth, wrapStyle);
         const buffer = fontlib.buffer(0);
         const [width, height] = fontlib.meta(0);
