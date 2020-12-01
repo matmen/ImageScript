@@ -71,9 +71,11 @@ module.exports = {
 
         const width = view.getUint32(16);
         const height = view.getUint32(20);
+        const bpc = array[24];
         const channels = ({2: 3, 6: 4, 0: 1, 4: 2})[array[25]];
+        const bytespp = channels * bpc / 8;
 
-        const row_length = width * channels;
+        const row_length = width * bytespp;
         let pixels = new Uint8Array(height * row_length);
 
         let offset = 0;
@@ -100,12 +102,19 @@ module.exports = {
             const slice = array.subarray(offset, offset += row_length);
 
             if (0 === filter) pixels.set(slice, p_offset);
-            else if (1 === filter) this.filter_1(slice, pixels, p_offset, channels, row_length);
-            else if (2 === filter) this.filter_2(slice, pixels, p_offset, channels, row_length);
-            else if (3 === filter) this.filter_3(slice, pixels, p_offset, channels, row_length);
-            else if (4 === filter) this.filter_4(slice, pixels, p_offset, channels, row_length);
+            else if (1 === filter) this.filter_1(slice, pixels, p_offset, bytespp, row_length);
+            else if (2 === filter) this.filter_2(slice, pixels, p_offset, bytespp, row_length);
+            else if (3 === filter) this.filter_3(slice, pixels, p_offset, bytespp, row_length);
+            else if (4 === filter) this.filter_4(slice, pixels, p_offset, bytespp, row_length);
 
             p_offset += row_length;
+        }
+
+        if (bpc !== 8) {
+            const newPixels = new Uint8Array(pixels.length / bpc * 8);
+            for (let i = 0; i < pixels.length; i += 2)
+                newPixels[i / 2] = pixels[i];
+            pixels = newPixels;
         }
 
         if (channels !== 4) {
@@ -134,13 +143,13 @@ module.exports = {
         return {width, height, pixels};
     },
 
-    filter_1(slice, pixels, p_offset, channels, row_length) {
+    filter_1(slice, pixels, p_offset, bytespp, row_length) {
         let i = 0;
-        while (i < channels) pixels[i + p_offset] = slice[i++];
-        while (i < row_length) pixels[i + p_offset] = slice[i] + pixels[i++ + p_offset - channels];
+        while (i < bytespp) pixels[i + p_offset] = slice[i++];
+        while (i < row_length) pixels[i + p_offset] = slice[i] + pixels[i++ + p_offset - bytespp];
     },
 
-    filter_2(slice, pixels, p_offset, channels, row_length) {
+    filter_2(slice, pixels, p_offset, bytespp, row_length) {
         if (0 === p_offset) pixels.set(slice, p_offset);
         else {
             let i = 0;
@@ -148,31 +157,31 @@ module.exports = {
         }
     },
 
-    filter_3(slice, pixels, p_offset, channels, row_length) {
+    filter_3(slice, pixels, p_offset, bytespp, row_length) {
         let i = 0;
 
         if (0 === p_offset) {
-            while (i < channels) pixels[i] = slice[i++];
-            while (i < row_length) pixels[i] = slice[i] + (pixels[i++ - channels] >> 1);
+            while (i < bytespp) pixels[i] = slice[i++];
+            while (i < row_length) pixels[i] = slice[i] + (pixels[i++ - bytespp] >> 1);
         } else {
-            while (i < channels) pixels[i + p_offset] = slice[i] + (pixels[i++ + p_offset - row_length] >> 1);
-            while (i < row_length) pixels[i + p_offset] = slice[i] + (pixels[i + p_offset - channels] + pixels[i++ + p_offset - row_length] >> 1);
+            while (i < bytespp) pixels[i + p_offset] = slice[i] + (pixels[i++ + p_offset - row_length] >> 1);
+            while (i < row_length) pixels[i + p_offset] = slice[i] + (pixels[i + p_offset - bytespp] + pixels[i++ + p_offset - row_length] >> 1);
         }
     },
 
-    filter_4(slice, pixels, p_offset, channels, row_length) {
+    filter_4(slice, pixels, p_offset, bytespp, row_length) {
         let i = 0;
 
         if (0 === p_offset) {
-            while (i < channels) pixels[i] = slice[i++];
-            while (i < row_length) pixels[i] = slice[i] + pixels[i++ - channels];
+            while (i < bytespp) pixels[i] = slice[i++];
+            while (i < row_length) pixels[i] = slice[i] + pixels[i++ - bytespp];
         } else {
-            while (i < channels) pixels[i + p_offset] = slice[i] + pixels[i++ + p_offset - row_length];
+            while (i < bytespp) pixels[i + p_offset] = slice[i] + pixels[i++ + p_offset - row_length];
 
             while (i < row_length) {
-                const a = pixels[i + p_offset - channels];
+                const a = pixels[i + p_offset - bytespp];
                 const b = pixels[i + p_offset - row_length];
-                const c = pixels[i + p_offset - channels - row_length];
+                const c = pixels[i + p_offset - bytespp - row_length];
 
                 const p = a + b - c;
                 const pa = Math.abs(p - a);
