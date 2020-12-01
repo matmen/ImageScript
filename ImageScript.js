@@ -2,6 +2,7 @@ const png = require('./utils/png');
 const gif = require('./utils/gif');
 const fontlib = require('./utils/wasm/font');
 const svglib = require('./utils/wasm/svg');
+const jpeglib = require('./utils/wasm/jpeg');
 
 /**
  * Represents an image; provides utility functions
@@ -962,9 +963,40 @@ class Image {
      * @return {Promise<Image>} The decoded image
      */
     static async decode(buffer) {
-        const {width, height, pixels} = await png.decode(new Uint8Array(buffer));
-        const image = new this(width, height);
-        image.bitmap.set(pixels);
+        let image;
+
+        if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) { // PNG
+            const {width, height, pixels} = await png.decode(new Uint8Array(buffer));
+            image = new this(width, height);
+            image.bitmap.set(pixels);
+        } else if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) { // JPEG
+            const status = await jpeglib.decode(0, buffer, 0, 0);
+            if (status === 1) throw new Error('Failed decoding JPEG image');
+            const [pixelType, width, height] = jpeglib.meta(0);
+            image = new this(width, height);
+            const data = jpeglib.buffer(0);
+            jpeglib.free(0);
+
+            if (pixelType === 0) {
+                const view = new DataView(image.bitmap.buffer);
+
+                for (let i = 0; i < data.length; i++) {
+                    const pixel = data[i];
+                    view.setUint32(i * 4, pixel << 24 | pixel << 16 | pixel << 8 | 0xff, false);
+                }
+            } else if (pixelType === 1) {
+                image.bitmap.fill(0xff);
+                for (let i = 0; i < width * height; i++)
+                    image.bitmap.set(data.subarray(i * 3, i * 3 + 3), i * 4);
+            } else if (pixelType === 2) {
+                for (let i = 0; i < data.length; i += 4) {
+                    image.bitmap[i] = 0xff * (1 - data[i] / 0xff) * (1 - data[i + 3] / 0xff);
+                    image.bitmap[i + 1] = 0xff * (1 - data[i + 1] / 0xff) * (1 - data[i + 3] / 0xff);
+                    image.bitmap[i + 2] = 0xff * (1 - data[i + 2] / 0xff) * (1 - data[i + 3] / 0xff);
+                    image.bitmap[i + 3] = 0xff;
+                }
+            }
+        } else throw new Error('Unsupported image type');
 
         return image;
     }
