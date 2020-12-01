@@ -1,6 +1,7 @@
 const png = require('./utils/png');
 const gif = require('./utils/gif');
 const fontlib = require('./utils/wasm/font');
+const svglib = require('./utils/wasm/svg');
 
 /**
  * Represents an image; provides utility functions
@@ -970,6 +971,16 @@ class Image {
         const image = new this(width, height);
         image.bitmap.set(pixels);
 
+        return image;
+    }
+
+    static async renderSVG(svg, width, height) {
+        if (typeof svg !== 'string') svg = svg.toString();
+        await svglib.rgba(0, svg, 2, 0, width, height);
+        const meta = svglib.meta(0);
+        const image = new this(...meta);
+        image.bitmap.set(svglib.buffer(0));
+        svglib.free(0);
         return image;
     }
 
