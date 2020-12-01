@@ -1,6 +1,7 @@
 const png = require('./utils/png');
 const gif = require('./utils/gif');
 const fontlib = require('./utils/wasm/font');
+const svglib = require('./utils/wasm/svg');
 
 /**
  * Represents an image; provides utility functions
@@ -46,14 +47,9 @@ class Image {
         return `Image<${this.width}x${this.height}>`;
     }
 
-    /**
-     * Creates a new image with the given dimensions
-     * @param {number} width
-     * @param {number} height
-     * @returns {Image}
-     */
+    /** @private */
     static new(width, height) {
-        return new Image(width, height);
+        return new this(width, height);
     }
 
     /**
@@ -400,7 +396,7 @@ class Image {
      * @param {number} height The new height
      */
     __resize_nearest_neighbor__(width, height) {
-        const image = new Image(width, height);
+        const image = new this.constructor(width, height);
 
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
@@ -443,7 +439,7 @@ class Image {
         x = ~~x;
         y = ~~y;
 
-        const image = new Image(width, height);
+        const image = new this.constructor(width, height);
 
         for (let tY = 0; tY < height; tY++) {
             const idx = (tY + y) * this.width + x;
@@ -967,9 +963,62 @@ class Image {
      */
     static async decode(buffer) {
         const {width, height, pixels} = await png.decode(new Uint8Array(buffer));
-        const image = new Image(width, height);
+        const image = new this(width, height);
         image.bitmap.set(pixels);
 
+        return image;
+    }
+
+    /**
+     * Scale the SVG by the given amount. For use with {@link Image.renderSVG}
+     * @return {number}
+     */
+    static get SVG_MODE_SCALE() {
+        return 1;
+    }
+
+    /**
+     * Scale the SVG to fit the given width. For use with {@link Image.renderSVG}
+     * @return {number}
+     */
+    static get SVG_MODE_WIDTH() {
+        return 2;
+    }
+
+    /**
+     * Scale the SVG to fit the given height. For use with {@link Image.renderSVG}
+     * @return {number}
+     */
+    static get SVG_MODE_HEIGHT() {
+        return 3;
+    }
+
+    /**
+     * Creates a new image from the given SVG
+     * @param {string} svg The SVG content
+     * @param {number} size The size to use
+     * @param {number} mode The SVG resizing mode to use (one of {@link SVG_MODE_SCALE}, {@link SVG_MODE_WIDTH}, {@link SVG_MODE_HEIGHT})
+     * @return {Promise<Image>} The rendered SVG graphic
+     */
+    static async renderSVG(svg, size = 1, mode = this.SVG_MODE_SCALE) {
+        if (![this.SVG_MODE_WIDTH, this.SVG_MODE_HEIGHT, this.SVG_MODE_SCALE].includes(mode))
+            throw new Error('Invalid SVG scaling mode');
+
+        if (mode === this.SVG_MODE_SCALE && size <= 0)
+            throw new RangeError('SVG scale must be > 0');
+        if (mode !== this.SVG_MODE_SCALE && size < 1)
+            throw new RangeError('SVG size must be >= 1')
+
+        if (typeof svg !== 'string')
+            svg = svg.toString();
+
+        const status = await svglib.rgba(0, svg, mode, size, size, size);
+        if (status === 1) throw new Error('Failed parsing SVG');
+        if (status === 2) throw new Error('Failed rendering SVG');
+        const meta = svglib.meta(0);
+        const image = new this(...meta);
+        image.bitmap.set(svglib.buffer(0));
+        svglib.free(0);
         return image;
     }
 
@@ -996,7 +1045,7 @@ class Image {
      * @param {string} text Text to render
      * @param {number} color Text color to use
      * @param {number} wrapWidth Image width before wrapping
-     * @param {boolean} wrapStyle Whether to break at words (WRAP_STYLE_WORD) or at characters (WRAP_STYLE_CHAR)
+     * @param {boolean} wrapStyle Whether to break at words ({@link WRAP_STYLE_WORD}) or at characters ({@link WRAP_STYLE_CHAR})
      * @return {Promise<Image>} The rendered text
      */
     static async renderText(font, scale, text, color = 0xffffffff, wrapWidth = Infinity, wrapStyle = this.WRAP_STYLE_WORD) {
@@ -1006,7 +1055,7 @@ class Image {
         const buffer = fontlib.buffer(0);
         const [width, height] = fontlib.meta(0);
         fontlib.free(0);
-        const image = new Image(width, height);
+        const image = new this(width, height);
         image.bitmap.set(buffer);
         image.opacity(a / 0xff);
 
@@ -1037,17 +1086,6 @@ class Frame extends Image {
 
     toString() {
         return `Frame<${this.width}x${this.height}x${this.duration}ms>`;
-    }
-
-    /**
-     * Creates a new, blank frame
-     * @param {number} width
-     * @param {number} height
-     * @param {number} [duration = 100] The frames duration (in ms)
-     * @return {Frame}
-     */
-    static new(width, height, duration = 100) {
-        return new Frame(width, height, duration);
     }
 
     /**
