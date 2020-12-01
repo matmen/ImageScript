@@ -1010,7 +1010,7 @@ export class Image {
             throw new RangeError('SVG size must be >= 1')
 
         if (typeof svg !== 'string')
-            svg = svg.toString();
+            svg = Deno.core.decode(svg);
 
         const status = svglib.rgba(0, svg, mode, size, size, size);
         if (status === 1) throw new Error('Failed parsing SVG');
