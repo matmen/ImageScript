@@ -28,7 +28,7 @@ const panic = message => {
     }
 
     {
-        const binary = await fs.readFile('./tests/targets/external.jpg');
+        const binary = await Deno.readFile('./tests/targets/external.jpg');
         const image = await Image.decode(binary);
 
         if ([image.width, image.height].some(v => v !== 638))
