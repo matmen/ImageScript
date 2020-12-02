@@ -974,25 +974,25 @@ class Image {
             if (status === 1) throw new Error('Failed decoding JPEG image');
             const [pixelType, width, height] = jpeglib.meta(0);
             image = new this(width, height);
-            const data = jpeglib.buffer(0);
+            const buffer = jpeglib.buffer(0);
             jpeglib.free(0);
 
             if (pixelType === 0) {
                 const view = new DataView(image.bitmap.buffer);
 
-                for (let i = 0; i < data.length; i++) {
-                    const pixel = data[i];
+                for (let i = 0; i < buffer.length; i++) {
+                    const pixel = buffer[i];
                     view.setUint32(i * 4, pixel << 24 | pixel << 16 | pixel << 8 | 0xff, false);
                 }
             } else if (pixelType === 1) {
                 image.bitmap.fill(0xff);
                 for (let i = 0; i < width * height; i++)
-                    image.bitmap.set(data.subarray(i * 3, i * 3 + 3), i * 4);
+                    image.bitmap.set(buffer.subarray(i * 3, i * 3 + 3), i * 4);
             } else if (pixelType === 2) {
-                for (let i = 0; i < data.length; i += 4) {
-                    image.bitmap[i] = 0xff * (1 - data[i] / 0xff) * (1 - data[i + 3] / 0xff);
-                    image.bitmap[i + 1] = 0xff * (1 - data[i + 1] / 0xff) * (1 - data[i + 3] / 0xff);
-                    image.bitmap[i + 2] = 0xff * (1 - data[i + 2] / 0xff) * (1 - data[i + 3] / 0xff);
+                for (let i = 0; i < buffer.length; i += 4) {
+                    image.bitmap[i] = 0xff * (1 - buffer[i] / 0xff) * (1 - buffer[i + 3] / 0xff);
+                    image.bitmap[i + 1] = 0xff * (1 - buffer[i + 1] / 0xff) * (1 - buffer[i + 3] / 0xff);
+                    image.bitmap[i + 2] = 0xff * (1 - buffer[i + 2] / 0xff) * (1 - buffer[i + 3] / 0xff);
                     image.bitmap[i + 3] = 0xff;
                 }
             }
