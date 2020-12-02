@@ -67,7 +67,14 @@ module.exports = {
         return array;
     },
     async decode(array) {
-        const view = new DataView(array.buffer);
+        let view;
+        if (!ArrayBuffer.isView(array)) {
+            array = new Uint8Array(array);
+            view = new DataView(array.buffer);
+        } else {
+            array = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+            view = new DataView(array.buffer, array.byteOffset, array.byteLength);
+        }
 
         const width = view.getUint32(16);
         const height = view.getUint32(20);
