@@ -67,13 +67,20 @@ export async function encode(data, {width, height, channels, depth = 8, level = 
 }
 
 export async function decode(array) {
-    const view = new DataView(array.buffer);
+    let view;
+    if (!ArrayBuffer.isView(array)) {
+        array = new Uint8Array(array);
+        view = new DataView(array.buffer);
+    } else {
+        array = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+        view = new DataView(array.buffer, array.byteOffset, array.byteLength);
+    }
 
     const width = view.getUint32(16);
     const height = view.getUint32(20);
     const bpc = array[24];
-        const channels = ({2: 3, 6: 4, 0: 1, 4: 2})[array[25]];
-        const bytespp = channels * bpc / 8;
+    const channels = ({2: 3, 6: 4, 0: 1, 4: 2})[array[25]];
+    const bytespp = channels * bpc / 8;
 
     const row_length = width * bytespp;
     let pixels = new Uint8Array(height * row_length);
