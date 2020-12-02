@@ -965,11 +965,20 @@ export class Image {
     static async decode(data) {
         let image;
 
-        if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) { // PNG
+        let view;
+        if (!ArrayBuffer.isView(data)) {
+            data = new Uint8Array(data);
+            view = new DataView(data.buffer);
+        } else {
+            data = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        }
+
+        if (view.getUint32(0, false) === 0x89504e47) { // PNG
             const {width, height, pixels} = await png.decode(data);
             image = new this(width, height);
             image.bitmap.set(pixels);
-        } else if (data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) { // JPEG
+        } else if ((view.getUint32(0, false) >>> 8) === 0xffd8ff) { // JPEG
             const status = await jpeglib.decode(0, data, 0, 0);
             if (status === 1) throw new Error('Failed decoding JPEG image');
             const [pixelType, width, height] = jpeglib.meta(0);
