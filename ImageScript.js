@@ -959,18 +959,18 @@ class Image {
 
     /**
      * Decodes an image (PNG or JPEG)
-     * @param {Buffer|Uint8Array} buffer The binary data to decode
+     * @param {Buffer|Uint8Array} data The binary data to decode
      * @return {Promise<Image>} The decoded image
      */
-    static async decode(buffer) {
+    static async decode(data) {
         let image;
 
-        if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) { // PNG
-            const {width, height, pixels} = await png.decode(new Uint8Array(buffer));
+        if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) { // PNG
+            const {width, height, pixels} = await png.decode(data);
             image = new this(width, height);
             image.bitmap.set(pixels);
-        } else if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) { // JPEG
-            const status = await jpeglib.decode(0, buffer, 0, 0);
+        } else if (data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) { // JPEG
+            const status = await jpeglib.decode(0, data, 0, 0);
             if (status === 1) throw new Error('Failed decoding JPEG image');
             const [pixelType, width, height] = jpeglib.meta(0);
             image = new this(width, height);
