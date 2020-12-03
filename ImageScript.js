@@ -949,6 +949,80 @@ class Image {
     }
 
     /**
+     * Creates a multi-point gradient generator
+     * @param {Object<number, number>} colors The gradient points to use (e.g. `{0: 0xff0000ff, 1: 0x00ff00ff}`)
+     * @return {(function(number): number)} The gradient generator. The function argument is the position in the gradient (0..1).
+     */
+    static gradient(colors) {
+        const entries = Object.entries(colors).sort((a, b) => a[0] - b[0]);
+        const positions = entries.map(e => parseFloat(e[0]));
+        const values = entries.map(e => e[1]);
+
+        if (positions.length === 0) throw new RangeError('Invalid gradient point count');
+        else if (positions.length === 1) {
+            return () => values[0];
+        } else if (positions.length === 2) {
+            const gradient = this.__gradient__(values[0], values[1]);
+            return position => {
+                if (position <= positions[0]) return values[0];
+                if (position >= positions[1]) return values[1];
+                return gradient((position - positions[0]) / (positions[1] - positions[0]));
+            };
+        }
+
+        const minDef = Math.min(...positions);
+        const maxDef = Math.max(...positions);
+        let gradients = [];
+
+        for (let i = 0; i < positions.length; i++) {
+            let minPos = positions[i - 1];
+            if (minPos === undefined) continue;
+
+            let maxPos = positions[i];
+
+            let minVal = values[i - 1];
+            if (minVal === undefined) minVal = values[i];
+
+            const maxVal = values[i];
+            const gradient = this.__gradient__(minVal, maxVal);
+
+            gradients.push({min: minPos, max: maxPos, gradient});
+        }
+
+        return position => {
+            if (position <= minDef) return gradients[0].gradient(0);
+            if (position >= maxDef) return gradients[gradients.length - 1].gradient(1);
+
+            for (const gradient of gradients)
+                if (position >= gradient.min && position <= gradient.max)
+                    return gradient.gradient((position - gradient.min) / (gradient.max - gradient.min));
+            throw new RangeError(`Invalid gradient position: ${position}`);
+        };
+    }
+
+    /**
+     * @private
+     */
+    static __gradient__(startColor, endColor) {
+        const sr = startColor >>> 24;
+        const sg = startColor >> 16 & 0xff;
+        const sb = startColor >> 8 & 0xff;
+        const sa = startColor & 0xff;
+        const er = (endColor >>> 24) - sr;
+        const eg = (endColor >> 16 & 0xff) - sg;
+        const eb = (endColor >> 8 & 0xff) - sb;
+        const ea = (endColor & 0xff) - sa;
+
+        return position => {
+            const r = sr + position * er;
+            const g = sg + position * eg;
+            const b = sb + position * eb;
+            const a = sa + position * ea;
+            return (((r & 0xff) << 24) | ((g & 0xff) << 16) | ((b & 0xff) << 8) | (a & 0xff));
+        };
+    }
+
+    /**
      * Encodes the image into a PNG
      * @param {number} compression The compression level to use (0-3)
      * @return {Promise<Uint8Array>} The encoded data
