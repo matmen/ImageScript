@@ -1001,6 +1001,48 @@ class Image {
     }
 
     /**
+     * Rounds the images corners
+     * @param {number} [radius=min(width,height)/4] The radius of the corners
+     * @return {Image}
+     */
+    roundCorners(radius = Math.min(this.width, this.height) / 4) {
+        const radSquared = radius ** 2;
+        for (let x = 1; x <= radius; x++) {
+            const xRad = (x - radius) ** 2;
+            for (let y = 1; y <= radius; y++) {
+                if (xRad + (y - radius) ** 2 > radSquared)
+                    this.bitmap[((y - 1) * this.width + x - 1) * 4 + 3] = 0;
+            }
+        }
+
+        for (let x = 1; x <= radius; x++) {
+            const xRad = (x - radius) ** 2;
+            for (let y = this.height - radius; y <= this.height; y++) {
+                if (xRad + ((this.height - y) - radius) ** 2 > radSquared)
+                    this.bitmap[((y - 1) * this.width + x - 1) * 4 + 3] = 0;
+            }
+        }
+
+        for (let x = this.width - radius; x <= this.width; x++) {
+            const xRad = ((this.width - x) - radius) ** 2;
+            for (let y = 1; y <= radius; y++) {
+                if (xRad + (y - radius) ** 2 > radSquared)
+                    this.bitmap[((y - 1) * this.width + x - 1) * 4 + 3] = 0;
+            }
+        }
+
+        for (let x = this.width - radius; x <= this.width; x++) {
+            const xRad = ((this.width - x) - radius) ** 2;
+            for (let y = this.height - radius; y <= this.height; y++) {
+                if (xRad + ((this.height - y) - radius) ** 2 > radSquared)
+                    this.bitmap[((y - 1) * this.width + x - 1) * 4 + 3] = 0;
+            }
+        }
+
+        return this;
+    }
+
+    /**
      * @private
      */
     static __gradient__(startColor, endColor) {
