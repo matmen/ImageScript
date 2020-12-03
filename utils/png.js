@@ -72,7 +72,8 @@ module.exports = {
         const width = view.getUint32(16);
         const height = view.getUint32(20);
         const bpc = array[24];
-        const channels = ({2: 3, 6: 4, 0: 1, 4: 2})[array[25]];
+        const pixel_type = array[25];
+        let channels = ({3: 1, 0: 1, 4: 2, 2: 3, 6: 4})[pixel_type];
         const bytespp = channels * bpc / 8;
 
         const row_length = width * bytespp;
@@ -84,6 +85,10 @@ module.exports = {
         let c_offset = 33;
         const chunks = [];
 
+        let palette;
+        if (array[25] === 3)
+            palette = new Uint32Array(2 ** bpc);
+
         let type;
         while (type !== 1229278788) {
             type = view.getUint32(4 + c_offset);
@@ -91,6 +96,10 @@ module.exports = {
             // IDAT
             if (type === 1229209940)
                 chunks.push(array.subarray(8 + c_offset, 8 + c_offset + view.getUint32(c_offset)));
+            else if (type === 1347179589) {
+                for (let pxlOffset = 0; pxlOffset < palette.length * 8; pxlOffset += 3)
+                    palette[pxlOffset / 3] = array[8 + c_offset + pxlOffset] << 24 | array[8 + c_offset + pxlOffset + 1] << 16 | array[8 + c_offset + pxlOffset + 2] << 8 | 0xff;
+            }
 
             c_offset += 4 + 4 + 4 + view.getUint32(c_offset);
         }
@@ -108,6 +117,15 @@ module.exports = {
             else if (4 === filter) this.filter_4(slice, pixels, p_offset, bytespp, row_length);
 
             p_offset += row_length;
+        }
+
+        if (channels === 1 && palette) {
+            channels = 4;
+            const newPixels = new Uint8Array(width * height * 4);
+            const pixelView = new DataView(newPixels.buffer, newPixels.byteOffset, newPixels.byteLength);
+            for (let i = 0; i < pixels.length; i++)
+                pixelView.setUint32(i * 4, palette[pixels[i]], false);
+            pixels = newPixels;
         }
 
         if (bpc !== 8) {
