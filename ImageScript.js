@@ -425,6 +425,9 @@ class Image {
      * @returns {Image}
      */
     crop(x, y, width, height) {
+        if (width > this.width) width = this.width;
+        if (height > this.height) height = this.height;
+
         return this.__apply__(this.__crop__(x, y, width, height));
     }
 
