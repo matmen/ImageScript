@@ -17,8 +17,10 @@ It can achieve much more performant results by utilizing lower-level memory acce
 - Loading PNGs (grayscale, RGB, indexed colors) with alpha support
 - Loading JPEGs
 - Rendering SVGs
+- Rendering vector fonts
 - Image manipulation functions (crop, rotate, ...)
 - Color manipulation functions (invert, shiftHue, ...)
+- Encoding images as PNGs
 
 ---
 
