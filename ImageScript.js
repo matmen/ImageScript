@@ -671,6 +671,9 @@ export class Image {
      * @returns {Image}
      */
     composite(source, x = 0, y = 0) {
+        x = ~~x;
+        y = ~~y;
+
         for (let yy = 0; yy < source.height; yy++) {
             let y_offset = y + yy;
             if (y_offset < 0) continue;
