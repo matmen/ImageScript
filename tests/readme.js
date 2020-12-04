@@ -2,7 +2,7 @@ import {Image} from '../ImageScript.js';
 
 (async () => {
     const [backgroundSVG, avatarBinary, badges, font] = await Promise.all([
-        Deno.readFile('./tests/svgs/background.svg').then(b => b.toString()),
+        Deno.readFile('./tests/svgs/background.svg').then(b => Deno.core.decode(b)),
         Deno.readFile('./tests/targets/external.png'),
         Promise.all(
             [
