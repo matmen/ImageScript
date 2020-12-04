@@ -1,8 +1,10 @@
 # ImageScript
 ##### zero-dependency JavaScript image manipulation
 [![Discord Server](https://img.shields.io/discord/691713541262147687.svg?label=Discord&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2&style=for-the-badge)](https://discord.gg/8hPrwAH)
-[![Docs](https://img.shields.io/badge/Docs-informational?style=for-the-badge)](https://oss-is.dreadful.tech/)
+[![Documentation](https://img.shields.io/badge/Documentationn-informational?style=for-the-badge)](https://oss-is.dreadful.tech/)
 [![Github](https://img.shields.io/badge/Github-Repository-181717?logo=github&style=for-the-badge)](https://github.com/matmen/ImageScript)
+[![deno.land](https://img.shields.io/badge/deno.land-181717?logo=deno&style=for-the-badge)](https://deno.land/x/imagescript)  
+[![NPM](https://nodei.co/npm/imagescript.png)](https://www.npmjs.com/package/imagescript)
 
 ---
 
@@ -11,30 +13,17 @@ It can achieve much more performant results by utilizing lower-level memory acce
 
 ---
 
+### Features
+- Loading PNGs (grayscale, RGB, indexed colors) with alpha support
+- Loading JPEGs
+- Rendering SVGs
+- Image manipulation functions (crop, rotate, ...)
+- Color manipulation functions (invert, shiftHue, ...)
+
+---
+
 ### Example
-```js
-import {Image} from 'https://deno.land/x/imagescript/mod.ts';
-
-(async () => {
-    const image = await Image.decode(await Deno.readFile('./photo.png'));
-    const overlay = await Image.decode(await Deno.readFile('./overlay.png'));
-
-    image.crop(228, 20, 152, 171);
-
-    overlay.resize(image.width, Image.RESIZE_AUTO);
-    overlay.opacity(0.8, true);
-    image.composite(overlay, 0, image.height - overlay.height);
-
-    await Deno.writeFile('./output.png', await image.encode());
-})();
-```
-
-#### Inputs
-![Photo](./.github/external.png)  
-![Overlay](./.github/issues.png)
-
-#### Output
-![Output](./.github/readme.png)
+[![Output](./tests/targets/readme.png)](./tests/readme.js)
 
 ---
 
