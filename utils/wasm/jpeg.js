@@ -1,5 +1,5 @@
-const {readFile} = require('fs').promises;
 const {join} = require('path');
+const {promises: {readFile}} = require('fs');
 
 let wasm = new Promise(async resolve => {
     const module = new WebAssembly.Module(await readFile(join(__dirname, './jpeg.wasm')));
@@ -10,7 +10,6 @@ let wasm = new Promise(async resolve => {
 });
 
 let cachegetUint8Memory0 = null;
-
 function getUint8Memory0() {
     if (cachegetUint8Memory0 === null || cachegetUint8Memory0.buffer !== wasm.memory.buffer) {
         cachegetUint8Memory0 = new Uint8Array(wasm.memory.buffer);
@@ -36,6 +35,10 @@ function getInt32Memory0() {
     return cachegetInt32Memory0;
 }
 
+function getArrayU8FromWasm0(ptr, len) {
+    return getUint8Memory0().subarray(ptr / 1, ptr / 1 + len);
+}
+
 let cachegetUint16Memory0 = null;
 
 function getUint16Memory0() {
@@ -49,22 +52,43 @@ function getArrayU16FromWasm0(ptr, len) {
     return getUint16Memory0().subarray(ptr / 2, ptr / 2 + len);
 }
 
-function getArrayU8FromWasm0(ptr, len) {
-    return getUint8Memory0().subarray(ptr / 1, ptr / 1 + len);
-}
-
 module.exports = {
+    /**
+     * @param {number} width
+     * @param {number} height
+     * @param {number} quality
+     * @param {Uint8Array|Uint8ClampedArray} buffer
+     * @returns {Uint8Array}
+     */
+    async encode(width, height, quality, buffer) {
+        wasm = await wasm;
+
+        try {
+            const retptr = wasm.__wbindgen_export_0.value - 16;
+            wasm.__wbindgen_export_0.value = retptr;
+            const ptr0 = passArray8ToWasm0(buffer, wasm.__wbindgen_malloc);
+            wasm.encode(retptr, width, height, quality, ptr0, WASM_VECTOR_LEN);
+            const r0 = getInt32Memory0()[retptr / 4];
+            const r1 = getInt32Memory0()[retptr / 4 + 1];
+            const v1 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_free(r0, r1 * 1);
+            return v1;
+        } finally {
+            wasm.__wbindgen_export_0.value += 16;
+        }
+    },
     /**
      * @param {number} ptr
      * @param {Uint8Array} buffer
-     * @param {number} _width
-     * @param {number} _height
+     * @param {number} width
+     * @param {number} height
      * @returns {number}
      */
-    async decode(ptr, buffer, _width, _height) {
+    async decode(ptr, buffer, width, height) {
         wasm = await wasm;
+
         const ptr0 = passArray8ToWasm0(buffer, wasm.__wbindgen_malloc);
-        return wasm.decode(ptr, ptr0, WASM_VECTOR_LEN, _width, _height);
+        return wasm.decode(ptr, ptr0, WASM_VECTOR_LEN, width, height);
     },
     /**
      * @param {number} id
@@ -72,8 +96,8 @@ module.exports = {
      */
     meta(id) {
         try {
-            const retptr = wasm.__wbindgen_export_1.value - 16;
-            wasm.__wbindgen_export_1.value = retptr;
+            const retptr = wasm.__wbindgen_export_0.value - 16;
+            wasm.__wbindgen_export_0.value = retptr;
             wasm.meta(retptr, id);
             const r0 = getInt32Memory0()[retptr / 4];
             const r1 = getInt32Memory0()[retptr / 4 + 1];
@@ -81,7 +105,7 @@ module.exports = {
             wasm.__wbindgen_free(r0, r1 * 2);
             return v0;
         } finally {
-            wasm.__wbindgen_export_1.value += 16;
+            wasm.__wbindgen_export_0.value += 16;
         }
     },
     /**
@@ -90,8 +114,8 @@ module.exports = {
      */
     buffer(id) {
         try {
-            const retptr = wasm.__wbindgen_export_1.value - 16;
-            wasm.__wbindgen_export_1.value = retptr;
+            const retptr = wasm.__wbindgen_export_0.value - 16;
+            wasm.__wbindgen_export_0.value = retptr;
             wasm.buffer(retptr, id);
             const r0 = getInt32Memory0()[retptr / 4];
             const r1 = getInt32Memory0()[retptr / 4 + 1];
@@ -99,7 +123,7 @@ module.exports = {
             wasm.__wbindgen_free(r0, r1 * 1);
             return v0;
         } finally {
-            wasm.__wbindgen_export_1.value += 16;
+            wasm.__wbindgen_export_0.value += 16;
         }
     },
     /**
@@ -108,5 +132,4 @@ module.exports = {
     free(id) {
         wasm.free(id);
     }
-};
-
+}

@@ -1080,6 +1080,19 @@ class Image {
     }
 
     /**
+     * Encodes the image into a JPEG
+     * @param {number} [quality=90] The JPEG quality to use
+     * @return {Promise<Uint8Array>}
+     */
+    async encodeJPEG(quality = 90) {
+        quality = Math.max(1, Math.min(100, quality));
+        const jpegCanvas = new this.constructor(this.width, this.height);
+        jpegCanvas.fill(0xff);
+        jpegCanvas.composite(this);
+        return jpeglib.encode(this.width, this.height, quality, jpegCanvas.bitmap);
+    }
+
+    /**
      * Decodes an image (PNG or JPEG)
      * @param {Buffer|Uint8Array} data The binary data to decode
      * @return {Promise<Image>} The decoded image
