@@ -105,9 +105,11 @@ module.exports = {
      * @returns {number}
      */
     async rgba(ptr, svg, fit_kind, zoom, width, height) {
-        const module = new WebAssembly.Module(await readFile(join(__dirname, './svg.wasm')));
-        const instance = new WebAssembly.Instance(module);
-        wasm = instance.exports;
+        if (!wasm) {
+            const module = new WebAssembly.Module(await readFile(join(__dirname, './svg.wasm')));
+            const instance = new WebAssembly.Instance(module);
+            wasm = instance.exports;
+        }
 
         const ptr0 = passStringToWasm0(svg, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         return wasm.rgba(ptr, ptr0, WASM_VECTOR_LEN, fit_kind, zoom, width, height);

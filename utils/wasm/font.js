@@ -80,13 +80,15 @@ module.exports = {
         return slice;
     },
     async load(id, buffer, scale = 128) {
-        const module = new WebAssembly.Module(await readFile(join(__dirname, './font.wasm')));
-        const instance = new WebAssembly.Instance(module);
+        if (!wasm) {
+            const module = new WebAssembly.Module(await readFile(join(__dirname, './font.wasm')));
+            const instance = new WebAssembly.Instance(module);
 
-        wasm = instance.exports;
-        u8array_ref = new Uint8Array(wasm.memory.buffer);
-        i32array_ref = new Int32Array(wasm.memory.buffer);
-        u32array_ref = new Uint32Array(wasm.memory.buffer);
+            wasm = instance.exports;
+            u8array_ref = new Uint8Array(wasm.memory.buffer);
+            i32array_ref = new Int32Array(wasm.memory.buffer);
+            u32array_ref = new Uint32Array(wasm.memory.buffer);
+        }
 
         wasm.load(id, u8array_to_ptr(buffer), buffer.length, scale);
     },

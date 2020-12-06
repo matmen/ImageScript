@@ -47,6 +47,8 @@ function getArrayU16FromWasm0(ptr, len) {
 }
 
 async function initWASM() {
+    if (wasm) return;
+
     const module = new WebAssembly.Module(await readFile(join(__dirname, './jpeg.wasm')));
     const instance = new WebAssembly.Instance(module);
     wasm = instance.exports;
