@@ -1,13 +1,7 @@
 const {join} = require('path');
 const {promises: {readFile}} = require('fs');
 
-let wasm = new Promise(async resolve => {
-    const module = new WebAssembly.Module(await readFile(join(__dirname, './jpeg.wasm')));
-    const instance = new WebAssembly.Instance(module);
-    const wasm = instance.exports;
-
-    resolve(wasm);
-});
+let wasm;
 
 let cachegetUint8Memory0 = null;
 function getUint8Memory0() {
@@ -52,6 +46,12 @@ function getArrayU16FromWasm0(ptr, len) {
     return getUint16Memory0().subarray(ptr / 2, ptr / 2 + len);
 }
 
+async function initWASM() {
+    const module = new WebAssembly.Module(await readFile(join(__dirname, './jpeg.wasm')));
+    const instance = new WebAssembly.Instance(module);
+    wasm = instance.exports;
+}
+
 module.exports = {
     /**
      * @param {number} width
@@ -61,7 +61,7 @@ module.exports = {
      * @returns {Uint8Array}
      */
     async encode(width, height, quality, buffer) {
-        wasm = await wasm;
+        await initWASM();
 
         try {
             const retptr = wasm.__wbindgen_export_0.value - 16;
@@ -85,7 +85,7 @@ module.exports = {
      * @returns {number}
      */
     async decode(ptr, buffer, width, height) {
-        wasm = await wasm;
+        await initWASM();
 
         const ptr0 = passArray8ToWasm0(buffer, wasm.__wbindgen_malloc);
         return wasm.decode(ptr, ptr0, WASM_VECTOR_LEN, width, height);

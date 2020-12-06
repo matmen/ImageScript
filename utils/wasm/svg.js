@@ -1,13 +1,7 @@
 const {readFile} = require('fs').promises;
 const {join} = require('path');
 
-let wasm = new Promise(async resolve => {
-    const module = new WebAssembly.Module(await readFile(join(__dirname, './svg.wasm')));
-    const instance = new WebAssembly.Instance(module);
-    const wasm = instance.exports;
-
-    resolve(wasm);
-});
+let wasm;
 
 let WASM_VECTOR_LEN = 0;
 
@@ -111,7 +105,10 @@ module.exports = {
      * @returns {number}
      */
     async rgba(ptr, svg, fit_kind, zoom, width, height) {
-        wasm = await wasm;
+        const module = new WebAssembly.Module(await readFile(join(__dirname, './svg.wasm')));
+        const instance = new WebAssembly.Instance(module);
+        wasm = instance.exports;
+
         const ptr0 = passStringToWasm0(svg, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         return wasm.rgba(ptr, ptr0, WASM_VECTOR_LEN, fit_kind, zoom, width, height);
     },

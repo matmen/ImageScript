@@ -1,19 +1,7 @@
 const {join} = require('path');
 const {promises: {readFile}} = require('fs');
 
-let u8array_ref, i32array_ref, u32array_ref;
-
-let wasm = new Promise(async resolve => {
-    const module = new WebAssembly.Module(await readFile(join(__dirname, './font.wasm')));
-    const instance = new WebAssembly.Instance(module);
-    const wasm = instance.exports;
-
-    u8array_ref = new Uint8Array(wasm.memory.buffer);
-    i32array_ref = new Int32Array(wasm.memory.buffer);
-    u32array_ref = new Uint32Array(wasm.memory.buffer);
-
-    resolve(wasm);
-});
+let u8array_ref, i32array_ref, u32array_ref, wasm;
 
 const utf8encoder = new TextEncoder();
 
@@ -92,7 +80,14 @@ module.exports = {
         return slice;
     },
     async load(id, buffer, scale = 128) {
-        wasm = await wasm;
+        const module = new WebAssembly.Module(await readFile(join(__dirname, './font.wasm')));
+        const instance = new WebAssembly.Instance(module);
+
+        wasm = instance.exports;
+        u8array_ref = new Uint8Array(wasm.memory.buffer);
+        i32array_ref = new Int32Array(wasm.memory.buffer);
+        u32array_ref = new Uint32Array(wasm.memory.buffer);
+
         wasm.load(id, u8array_to_ptr(buffer), buffer.length, scale);
     },
     free(id) {
