@@ -1287,10 +1287,6 @@ class Frame extends Image {
 class GIF extends Array {
     /**
      * Creates a new GIF image.
-     * The maximum frame count for a GIF is calculated based on its dimensions:
-     * ```js
-     * const frameCount = Math.max(1, Math.min(240, Math.floor(30 * 512 / Math.sqrt(gif.width * gif.height))));
-     * ```
      * @param {Frame[]} frames The frames to create the GIF from
      * @param {number} [loopCount=0] How often to loop the GIF for (0 = unlimited)
      * @property {number} loopCount How often the GIF will loop for
