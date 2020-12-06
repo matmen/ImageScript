@@ -811,15 +811,15 @@ class Image {
             colorCounts[key] = (colorCounts[key] || 0) + 1;
         }
 
-        let maxColorCount = 0;
-        let mostProminentValue;
+        let maxColorCount = -1;
+        let mostProminentValue = 0;
         colorCounts.forEach((el, i) => {
             if (el < maxColorCount) return;
             maxColorCount = el;
             mostProminentValue = i;
         });
 
-        if (!mostProminentValue === undefined)
+        if (mostProminentValue === -1)
             return this.dominantColor(ignoreBlack, ignoreWhite, bwThreshold - 1);
 
         const h = (mostProminentValue >>> 12) & 0x3f;
