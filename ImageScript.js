@@ -811,15 +811,15 @@ class Image {
             colorCounts[key] = (colorCounts[key] || 0) + 1;
         }
 
-        let maxColorCount = 0;
-        let mostProminentValue;
+        let maxColorCount = -1;
+        let mostProminentValue = 0;
         colorCounts.forEach((el, i) => {
             if (el < maxColorCount) return;
             maxColorCount = el;
             mostProminentValue = i;
         });
 
-        if (!mostProminentValue === undefined)
+        if (mostProminentValue === -1)
             return this.dominantColor(ignoreBlack, ignoreWhite, bwThreshold - 1);
 
         const h = (mostProminentValue >>> 12) & 0x3f;
@@ -1080,6 +1080,19 @@ class Image {
     }
 
     /**
+     * Encodes the image into a JPEG
+     * @param {number} [quality=90] The JPEG quality to use
+     * @return {Promise<Uint8Array>}
+     */
+    async encodeJPEG(quality = 90) {
+        quality = Math.max(1, Math.min(100, quality));
+        const jpegCanvas = new this.constructor(this.width, this.height);
+        jpegCanvas.fill(0xff);
+        jpegCanvas.composite(this);
+        return jpeglib.encode(this.width, this.height, quality, jpegCanvas.bitmap);
+    }
+
+    /**
      * Decodes an image (PNG or JPEG)
      * @param {Buffer|Uint8Array} data The binary data to decode
      * @return {Promise<Image>} The decoded image
@@ -1274,10 +1287,6 @@ class Frame extends Image {
 class GIF extends Array {
     /**
      * Creates a new GIF image.
-     * The maximum frame count for a GIF is calculated based on its dimensions:
-     * ```js
-     * const frameCount = Math.max(1, Math.min(240, Math.floor(30 * 512 / Math.sqrt(gif.width * gif.height))));
-     * ```
      * @param {Frame[]} frames The frames to create the GIF from
      * @param {number} [loopCount=0] How often to loop the GIF for (0 = unlimited)
      * @property {number} loopCount How often the GIF will loop for
