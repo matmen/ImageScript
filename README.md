@@ -18,9 +18,9 @@ It can achieve much more performant results by utilizing lower-level memory acce
 - Loading JPEGs
 - Rendering SVGs
 - Rendering vector fonts
-- Image manipulation functions (crop, rotate, ...)
+- Image manipulation functions (crop, rotate, composite, ...)
 - Color manipulation functions (invert, shiftHue, ...)
-- Encoding images as PNGs
+- Encoding images as PNGs, JPEGs and GIFs
 
 ---
 

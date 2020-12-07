@@ -2,7 +2,7 @@ import {Image} from '../ImageScript.js';
 import { equal } from "https://deno.land/std/bytes/mod.ts";
 
 export default (async () => {
-    const image = Image.new(128, 128);
+    const image = new Image(128, 128);
     image.fill(x => Image.hslToColor(x / image.width, 1, 0.5));
 
     const encoded = await image.encode();

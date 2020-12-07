@@ -69,7 +69,6 @@ export async function encode(data, {width, height, channels, depth = 8, level = 
 export async function decode(array) {
     let view = new DataView(array.buffer, array.byteOffset, array.byteLength);
 
-
     const width = view.getUint32(16);
     const height = view.getUint32(20);
     const bpc = array[24];
@@ -86,7 +85,7 @@ export async function decode(array) {
     let c_offset = 33;
     const chunks = [];
 
-    let palette;
+        let palette;
     if (array[25] === 3)
         palette = new Uint32Array(2 ** bpc);
     let type;
@@ -119,7 +118,7 @@ export async function decode(array) {
         p_offset += row_length;
     }
 
-    if (channels === 1 && palette) {
+        if (channels === 1 && palette) {
         channels = 4;
         const newPixels = new Uint8Array(width * height * 4);
         const pixelView = new DataView(newPixels.buffer, newPixels.byteOffset, newPixels.byteLength);
