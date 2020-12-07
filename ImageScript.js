@@ -3,7 +3,6 @@ import * as gif from './utils/gif.js';
 import * as fontlib from './utils/wasm/font.js';
 import * as svglib from './utils/wasm/svg.js';
 import * as jpeglib from './utils/wasm/jpeg.js';
-const jpeglib = require('./utils/wasm/jpeg');
 
 /**
  * Represents an image; provides utility functions

@@ -8,7 +8,6 @@ let wasm;
 }
 
 let cachegetUint8Memory0 = null;
-
 function getUint8Memory0() {
     if (cachegetUint8Memory0 === null || cachegetUint8Memory0.buffer !== wasm.memory.buffer) {
         cachegetUint8Memory0 = new Uint8Array(wasm.memory.buffer);
@@ -34,6 +33,10 @@ function getInt32Memory0() {
     return cachegetInt32Memory0;
 }
 
+function getArrayU8FromWasm0(ptr, len) {
+    return getUint8Memory0().subarray(ptr / 1, ptr / 1 + len);
+}
+
 let cachegetUint16Memory0 = null;
 
 function getUint16Memory0() {
@@ -47,21 +50,39 @@ function getArrayU16FromWasm0(ptr, len) {
     return getUint16Memory0().subarray(ptr / 2, ptr / 2 + len);
 }
 
-function getArrayU8FromWasm0(ptr, len) {
-    return getUint8Memory0().subarray(ptr / 1, ptr / 1 + len);
+/**
+ * @param {number} width
+ * @param {number} height
+ * @param {number} quality
+ * @param {Uint8Array|Uint8ClampedArray} buffer
+ * @returns {Uint8Array}
+ */
+export function encode(width, height, quality, buffer) {
+    try {
+        const retptr = wasm.__wbindgen_export_0.value - 16;
+        wasm.__wbindgen_export_0.value = retptr;
+        const ptr0 = passArray8ToWasm0(buffer, wasm.__wbindgen_malloc);
+        wasm.encode(retptr, width, height, quality, ptr0, WASM_VECTOR_LEN);
+        const r0 = getInt32Memory0()[retptr / 4];
+        const r1 = getInt32Memory0()[retptr / 4 + 1];
+        const v1 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_free(r0, r1 * 1);
+        return v1;
+    } finally {
+        wasm.__wbindgen_export_0.value += 16;
+    }
 }
 
 /**
  * @param {number} ptr
  * @param {Uint8Array} buffer
- * @param {number} _width
- * @param {number} _height
+ * @param {number} width
+ * @param {number} height
  * @returns {number}
  */
-export async function decode(ptr, buffer, _width, _height) {
-    wasm = await wasm;
+export function decode(ptr, buffer, width, height) {
     const ptr0 = passArray8ToWasm0(buffer, wasm.__wbindgen_malloc);
-    return wasm.decode(ptr, ptr0, WASM_VECTOR_LEN, _width, _height);
+    return wasm.decode(ptr, ptr0, WASM_VECTOR_LEN, width, height);
 }
 
 /**
@@ -70,8 +91,8 @@ export async function decode(ptr, buffer, _width, _height) {
  */
 export function meta(id) {
     try {
-        const retptr = wasm.__wbindgen_export_1.value - 16;
-        wasm.__wbindgen_export_1.value = retptr;
+        const retptr = wasm.__wbindgen_export_0.value - 16;
+        wasm.__wbindgen_export_0.value = retptr;
         wasm.meta(retptr, id);
         const r0 = getInt32Memory0()[retptr / 4];
         const r1 = getInt32Memory0()[retptr / 4 + 1];
@@ -79,7 +100,7 @@ export function meta(id) {
         wasm.__wbindgen_free(r0, r1 * 2);
         return v0;
     } finally {
-        wasm.__wbindgen_export_1.value += 16;
+        wasm.__wbindgen_export_0.value += 16;
     }
 }
 
@@ -89,8 +110,8 @@ export function meta(id) {
  */
 export function buffer(id) {
     try {
-        const retptr = wasm.__wbindgen_export_1.value - 16;
-        wasm.__wbindgen_export_1.value = retptr;
+        const retptr = wasm.__wbindgen_export_0.value - 16;
+        wasm.__wbindgen_export_0.value = retptr;
         wasm.buffer(retptr, id);
         const r0 = getInt32Memory0()[retptr / 4];
         const r1 = getInt32Memory0()[retptr / 4 + 1];
@@ -98,7 +119,7 @@ export function buffer(id) {
         wasm.__wbindgen_free(r0, r1 * 1);
         return v0;
     } finally {
-        wasm.__wbindgen_export_1.value += 16;
+        wasm.__wbindgen_export_0.value += 16;
     }
 }
 
