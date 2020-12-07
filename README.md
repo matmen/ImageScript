@@ -14,18 +14,21 @@ It can achieve much more performant results by utilizing lower-level memory acce
 ---
 
 ### Features
-- Loading PNGs (grayscale, RGB, indexed colors) with alpha support
-- Loading JPEGs
-- Rendering SVGs
-- Rendering vector fonts
-- Image manipulation functions (crop, rotate, composite, ...)
-- Color manipulation functions (invert, shiftHue, ...)
-- Encoding images as PNGs, JPEGs and GIFs
+- [Decoding images](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#decode)
+  - PNGs (grayscale, RGB, indexed colors) with and without alpha channels
+  - JPEGs (grayscale, RGB, CMYK)
+  - TIFFs
+- [Rendering SVGs](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#rendersvg)
+- [Rendering vector fonts](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#rendertext)
+- Image manipulation functions ([crop](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#crop), [rotate](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#rotate), [composite](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#composite), ...)
+- Color manipulation functions ([invert](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#invert), [hueShift](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#hueshift), ...)
+- Color information functions ([averageColor](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#averagecolor), [dominantColor](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#dominantcolor), ...)
+- Encoding images as [PNGs](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#encode), [JPEGs](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#encodeJPEG) and [GIFs](https://oss-is.dreadful.tech/classes/_imagescript_.gif.html#encode)
 
 ---
 
 ### Example
-[![Output](./tests/targets/readme.png)](./tests/readme.js)
+[![Example](./tests/targets/readme.png)](./tests/readme.js)
 
 ---
 
