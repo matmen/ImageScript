@@ -4,8 +4,6 @@ import * as fontlib from './utils/wasm/font.js';
 import * as svglib from './utils/wasm/svg.js';
 import * as jpeglib from './utils/wasm/jpeg.js';
 
-const tifflib = require('./utils/wasm/tiff');
-
 /**
  * Represents an image; provides utility functions
  */
