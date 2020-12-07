@@ -3,6 +3,7 @@ const gif = require('./utils/gif');
 const fontlib = require('./utils/wasm/font');
 const svglib = require('./utils/wasm/svg');
 const jpeglib = require('./utils/wasm/jpeg');
+const tifflib = require('./utils/wasm/tiff');
 
 /**
  * Represents an image; provides utility functions
@@ -1093,7 +1094,7 @@ class Image {
     }
 
     /**
-     * Decodes an image (PNG or JPEG)
+     * Decodes an image (PNG, JPEG or TIFF)
      * @param {Buffer|Uint8Array} data The binary data to decode
      * @return {Promise<Image>} The decoded image
      */
@@ -1140,6 +1141,15 @@ class Image {
                     image.bitmap[i + 3] = 0xff;
                 }
             }
+        } else if (view.getUint32(0, false) === 0x49492a00) {
+            const status = await tifflib.decode(0, data);
+            if (status === 1) throw new Error('Failed decoding TIFF image');
+            const meta = tifflib.meta(0);
+            const buffer = tifflib.buffer(0);
+            tifflib.free(0);
+
+            image = new this(...meta);
+            image.bitmap.set(buffer);
         } else throw new Error('Unsupported image type');
 
         return image;
