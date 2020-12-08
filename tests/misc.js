@@ -204,13 +204,6 @@ try {
 } catch {
 }
 
-try {
-    const frame = new Frame(512, 512);
-    new GIF([frame], -1);
-    panic('gif frame instanceof failed');
-} catch {
-}
-
 {
     const frame = new Frame(512, 128, 123);
     const gif = new GIF([frame]);
