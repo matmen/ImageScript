@@ -1306,9 +1306,9 @@ export class GIF extends Array {
         this.width = frames[0].width;
         this.height = frames[0].height;
 
-        for (const frame of frames) {
+        for (const frame of this) {
             if (!(frame instanceof Frame))
-                throw new TypeError(`Frame ${frames.indexOf(frame)} is not an instance of Frame`);
+                throw new TypeError(`Frame ${this.indexOf(frame)} is not an instance of Frame`);
 
             if (frame.width !== this.width) throw new Error('Frames have different widths');
             if (frame.height !== this.height) throw new Error('Frames have different heights');
