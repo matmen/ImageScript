@@ -1,4 +1,5 @@
 import {Image} from '../ImageScript.js';
+import {equals} from "https://deno.land/std@0.80.0/bytes/mod.ts";
 
 (async () => {
     const binary = await Deno.readFile('./tests/targets/image.png');
