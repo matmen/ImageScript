@@ -1,9 +1,9 @@
 const png = require('./utils/png');
-const gif = require('./utils/gif');
 const fontlib = require('./utils/wasm/font');
 const svglib = require('./utils/wasm/svg');
 const jpeglib = require('./utils/wasm/jpeg');
 const tifflib = require('./utils/wasm/tiff');
+const giflib = require('./utils/wasm/gif');
 
 /**
  * Represents an image; provides utility functions
@@ -1298,19 +1298,26 @@ class GIF extends Array {
     /**
      * Creates a new GIF image.
      * @param {Frame[]} frames The frames to create the GIF from
-     * @param {number} [loopCount=0] How often to loop the GIF for (0 = unlimited)
+     * @param {number} [loopCount=0] How often to loop the GIF for (-1 = unlimited)
      * @property {number} loopCount How often the GIF will loop for
      */
-    constructor(frames, loopCount = 0) {
-        for (const frame of frames) {
+    constructor(frames, loopCount = -1) {
+        super(...frames);
+
+        this.width = frames[0].width;
+        this.height = frames[0].height;
+
+        for (const frame of this) {
             if (!(frame instanceof Frame))
-                throw new TypeError(`Frame ${frames.indexOf(frame)} is not an instance of Frame`);
+                throw new TypeError(`Frame ${this.indexOf(frame)} is not an instance of Frame`);
+
+            if (frame.width !== this.width) throw new Error('Frames have different widths');
+            if (frame.height !== this.height) throw new Error('Frames have different heights');
         }
 
-        if (loopCount < 0 || isNaN(loopCount))
+        if (loopCount < -1 || isNaN(loopCount))
             throw new RangeError('Invalid loop count');
 
-        super(...frames);
         this.loopCount = loopCount;
     }
 
@@ -1327,42 +1334,20 @@ class GIF extends Array {
     }
 
     /**
-     * The GIFs width
-     * @return {number}
-     */
-    get width() {
-        return Math.max(...[...this].map(frame => frame.width));
-    }
-
-    /**
-     * The GIFs height
-     * @return {number}
-     */
-    get height() {
-        return Math.max(...[...this].map(frame => frame.height));
-    }
-
-    /**
      * Encodes the image into a GIF
-     * @return {Uint8Array} The encoded data
+     * @param {number} [quality=10] GIF quality ((best) 1..30 (worst))
+     * @return {Promise<Uint8Array>} The encoded data
      */
-    encode() {
-        const frames = [];
+    async encode(quality = 10) {
+        const encoder = await giflib.GIFEncoder.initialize(this.width, this.height, this.loopCount);
         for (const frame of this) {
-            frames.push({
-                delay: frame.duration,
-                width: frame.width,
-                height: frame.height,
-                pixels: frame.bitmap
-            });
+            if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
+            encoder.add(~~(frame.duration / 10), quality, frame.bitmap);
         }
 
-        return gif(frames, {
-            width: this.width,
-            height: this.height,
-            comment: 'powered by ImageScript',
-            loop: this.loopCount
-        });
+        const encoded = encoder.buffer();
+        encoder.free();
+        return encoded;
     }
 }
 

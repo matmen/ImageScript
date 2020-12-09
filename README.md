@@ -23,7 +23,7 @@ It can achieve much more performant results by utilizing lower-level memory acce
 - Image manipulation functions ([crop](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#crop), [rotate](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#rotate), [composite](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#composite), ...)
 - Color manipulation functions ([invert](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#invert), [hueShift](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#hueshift), ...)
 - Color information functions ([averageColor](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#averagecolor), [dominantColor](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#dominantcolor), ...)
-- Encoding images as [PNGs](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#encode), [JPEGs](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#encodeJPEG) and [GIFs](https://oss-is.dreadful.tech/classes/_imagescript_.gif.html#encode)
+- Encoding images as [PNGs](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#encode), [JPEGs](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#encodejpeg) and [GIFs](https://oss-is.dreadful.tech/classes/_imagescript_.gif.html#encode)
 
 ---
 
