@@ -102,6 +102,6 @@ import {Image} from '../ImageScript.js';
 
     const encoded = await image.encode();
 
-    if (!equal(await Deno.readFile('./tests/targets/readme.png'), encoded))
+    if (!equals(await Deno.readFile('./tests/targets/readme.png'), encoded))
         process.exit(1);
 })();

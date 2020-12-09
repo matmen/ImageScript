@@ -11,7 +11,7 @@ const panic = message => {
 
 	if ([image.width, image.height].some(v => v !== 638))
 		panic('dimensions don\'t match');
-	if (!equal(image.bitmap.slice(0, 4), [70, 65, 61, 255]))
+	if (!equals(image.bitmap.slice(0, 4), [70, 65, 61, 255]))
 		panic('pixel doesn\'t match');
 
 	await image.encodeJPEG(100);

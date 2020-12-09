@@ -13,7 +13,7 @@ const panic = message => {
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/fill-static.png');
-        if (!equal(encoded, target)) panic('fill static doesn\'t equal');
+        if (!equals(encoded, target)) panic('fill static doesn\'t equal');
     }
 
     {
@@ -23,6 +23,6 @@ const panic = message => {
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/fill-func.png');
-        if (!equal(encoded, target)) panic('fill func doesn\'t equal');
+        if (!equals(encoded, target)) panic('fill func doesn\'t equal');
     }
 })();

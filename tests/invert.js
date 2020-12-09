@@ -9,7 +9,7 @@ import {Image} from '../ImageScript.js';
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/invert.png');
-        if (!equal(encoded, target)) process.exit(1);
+        if (!equals(encoded, target)) process.exit(1);
     }
 
     {
@@ -20,7 +20,7 @@ import {Image} from '../ImageScript.js';
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/invert-value.png');
-        if (!equal(encoded, target)) process.exit(1);
+        if (!equals(encoded, target)) process.exit(1);
     }
 
     {
@@ -31,7 +31,7 @@ import {Image} from '../ImageScript.js';
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/invert-saturation.png');
-        if (!equal(encoded, target)) process.exit(1);
+        if (!equals(encoded, target)) process.exit(1);
     }
 
     {
@@ -42,7 +42,7 @@ import {Image} from '../ImageScript.js';
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/invert-hue.png');
-        if (!equal(encoded, target)) process.exit(1);
+        if (!equals(encoded, target)) process.exit(1);
     }
 
     {
@@ -53,6 +53,6 @@ import {Image} from '../ImageScript.js';
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/invert-hueshift.png');
-        if (!equal(encoded, target)) process.exit(1);
+        if (!equals(encoded, target)) process.exit(1);
     }
 })();

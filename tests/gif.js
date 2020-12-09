@@ -12,5 +12,5 @@ import {Frame, GIF} from '../ImageScript.js';
 
     const encoded = await gif.encode();
     const desired = await Deno.readFile('./tests/targets/gif.gif');
-    Deno.exit(equal(desired, encoded) ? 0 : 1);
+    Deno.exit(equals(desired, encoded) ? 0 : 1);
 })();

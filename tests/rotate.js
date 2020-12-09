@@ -14,7 +14,7 @@ const panic = msg => {
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/rotate-45.png');
-        if (!equal(encoded, target)) panic('rotate 45 failed');
+        if (!equals(encoded, target)) panic('rotate 45 failed');
     }
 
     {
@@ -25,7 +25,7 @@ const panic = msg => {
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/rotate-45-noresize.png');
-        if (!equal(encoded, target)) panic('rotate 45 noresize failed');
+        if (!equals(encoded, target)) panic('rotate 45 noresize failed');
     }
 
     {
@@ -36,13 +36,13 @@ const panic = msg => {
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/rotate-180.png');
-        if (!equal(encoded, target)) panic('rotate 180 failed');
+        if (!equals(encoded, target)) panic('rotate 180 failed');
     }
 
     {
         const image = new Image(512, 512);
         image.fill((x) => Image.hslToColor(x / image.width, 1, .5));
-        if (!equal(image.bitmap, image.rotate(360).bitmap))
+        if (!equals(image.bitmap, image.rotate(360).bitmap))
             panic('rotate 360 failed');
     }
 })();

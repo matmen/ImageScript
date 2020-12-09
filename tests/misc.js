@@ -104,7 +104,7 @@ if (Image.hslaToColor(0, 0, 1, 0xff) !== 0xffffffff)
 
     const clone = image.clone();
 
-    if (!equal(clone.bitmap, image.bitmap))
+    if (!equals(clone.bitmap, image.bitmap))
         panic('clone failed');
 }
 

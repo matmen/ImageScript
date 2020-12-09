@@ -1,5 +1,4 @@
 import {Image} from '../ImageScript.js';
-import { equal } from "https://deno.land/std/bytes/mod.ts";
 
 export default (async () => {
     const image = new Image(128, 128);
@@ -7,7 +6,7 @@ export default (async () => {
 
     const encoded = await image.encode();
     const desired = await Deno.readFile('./tests/targets/image.png');
-    if (import.meta.main) Deno.exit(equal(desired, encoded) ? 0 : 1);
+    if (import.meta.main) Deno.exit(equals(desired, encoded) ? 0 : 1);
 
     return image;
 })();

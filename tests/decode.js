@@ -12,7 +12,7 @@ const panic = message => {
         const image = await Image.decode(binary);
 
         const target = await ImageTest.default;
-        if (!equal(target.bitmap, image.bitmap)) panic('arrays are unequal');
+        if (!equals(target.bitmap, image.bitmap)) panic('arrays are unequal');
     }
 
     {
@@ -22,7 +22,7 @@ const panic = message => {
         if ([image.width, image.height].some(v => v !== 638))
             panic('dimensions don\'t match');
 
-        if (!equal(image.bitmap.subarray(0, 4), Uint8Array.from([70, 65, 62, 255])))
+        if (!equals(image.bitmap.subarray(0, 4), Uint8Array.from([70, 65, 62, 255])))
             panic('pixel doesn\'t match');
     }
 

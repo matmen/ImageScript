@@ -8,7 +8,7 @@ import {Image} from '../ImageScript.js';
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/circle.png');
-        if (!equal(encoded, target)) process.exit(1);
+        if (!equals(encoded, target)) process.exit(1);
     }
 
     {
@@ -18,7 +18,7 @@ import {Image} from '../ImageScript.js';
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/circle2.png');
-        if (!equal(encoded, target)) process.exit(1);
+        if (!equals(encoded, target)) process.exit(1);
     }
 
     {
@@ -29,7 +29,7 @@ import {Image} from '../ImageScript.js';
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/circle3.png');
-        if (!equal(encoded, target)) process.exit(1);
+        if (!equals(encoded, target)) process.exit(1);
     }
 
     {
@@ -40,6 +40,6 @@ import {Image} from '../ImageScript.js';
         const encoded = await image.encode();
 
         const target = await Deno.readFile('./tests/targets/circle4.png');
-        if (!equal(encoded, target)) process.exit(1);
+        if (!equals(encoded, target)) process.exit(1);
     }
 })();

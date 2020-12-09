@@ -7,5 +7,5 @@ import {Image} from '../ImageScript.js';
 
     const encoded = await image.encode();
     const target = await Deno.readFile('./tests/targets/resize.png');
-    if (!equal(encoded, target)) process.exit(1);
+    if (!equals(encoded, target)) process.exit(1);
 })();

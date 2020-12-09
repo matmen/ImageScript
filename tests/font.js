@@ -17,7 +17,7 @@ const panic = message => {
         const encoded = await font.encode();
 
         const desired = await Deno.readFile('./tests/targets/font-1.png');
-        if (!equal(desired, encoded)) panic('font 1 doesn\'t match');
+        if (!equals(desired, encoded)) panic('font 1 doesn\'t match');
     }
 
     {
@@ -25,6 +25,6 @@ const panic = message => {
         const encoded = await font.encode();
 
         const desired = await Deno.readFile('./tests/targets/font-2.png');
-        if (!equal(desired, encoded)) panic('font 2 doesn\'t match');
+        if (!equals(desired, encoded)) panic('font 2 doesn\'t match');
     }
 })();
