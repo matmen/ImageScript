@@ -1,5 +1,4 @@
 import {Frame, GIF} from '../ImageScript.js';
-import {equal} from "https://deno.land/std/bytes/mod.ts";
 
 (async () => {
     const frames = [];

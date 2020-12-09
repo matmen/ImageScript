@@ -1,6 +1,5 @@
 import {Image} from '../ImageScript.js';
 import * as ImageTest from './image.js';
-import {equal} from "https://deno.land/std/bytes/mod.ts";
 
 const panic = message => {
     console.error(message);
