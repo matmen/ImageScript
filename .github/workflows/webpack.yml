@@ -21,7 +21,7 @@ jobs:
         uses: actions/setup-node@v1
         with:
           node-version: ${{ matrix.node-version }}
-      - run: npm i --global webpack
+      - run: npm i --global webpack webpack-cli
       - run: npm run build
       - run: git config --local user.name "github-actions[bot]"
       - run: git config --local user.email "github-actions[bot]@users.noreply.github.com"
