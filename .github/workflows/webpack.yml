@@ -26,5 +26,4 @@ jobs:
       - run: git config --local user.name "github-actions[bot]"
       - run: git config --local user.email "github-actions[bot]@users.noreply.github.com"
       - run: git add -A
-      - run: git commit -m "Update bundle"
-      - run: git push
+      - run: git commit -m "Update bundle" && git push || echo "Nothing to bundle!"
