@@ -4,7 +4,7 @@ module.exports = {
 	entry: './ImageScript.js',
 	output: {
 		library: 'ImageScript',
-		libraryTarget: 'var',
+		libraryTarget: 'umd',
 		path: path.resolve('./browser'),
 		filename: 'ImageScript.js'
 	},
