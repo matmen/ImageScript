@@ -28,7 +28,7 @@ It can achieve much more performant results by utilizing lower-level memory acce
 ---
 
 ### Example
-[![Example](./tests/targets/readme.png)](./tests/readme.js)
+An example on how to use ImageScript in your web project can be found in [/example/](/example/).
 
 ---
 

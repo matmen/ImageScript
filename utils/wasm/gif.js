@@ -1,6 +1,4 @@
-const {join} = require('path');
-const {promises: {readFile}} = require('fs');
-
+const {version} = require('../../package.json');
 let wasm;
 
 let cachedTextDecoder = new TextDecoder('utf-8', {ignoreBOM: true, fatal: true});
@@ -54,12 +52,12 @@ class GIFEncoder {
 	 */
 	static async initialize(width, height, repeat) {
 		if (!wasm) {
-			const module = new WebAssembly.Module(await readFile(join(__dirname, './gif.wasm')));
+			const module = new WebAssembly.Module(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/gif.wasm`).then(r => r.arrayBuffer()));
 			const instance = new WebAssembly.Instance(module, {
 				__wbindgen_placeholder__: {
 					__wbindgen_throw: function (arg0, arg1) {
 						throw new Error(getStringFromWasm0(arg0, arg1));
-					},
+					}
 				}
 			});
 			wasm = instance.exports;

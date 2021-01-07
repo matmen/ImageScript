@@ -1,4 +1,4 @@
 .idea/
 .nyc_output/
 coverage/
-.node_modules/
+node_modules/

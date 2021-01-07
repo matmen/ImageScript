@@ -1,0 +1,29 @@
+name: Webpack CI
+
+on:
+  push:
+    branches: [ browser ]
+  pull_request:
+    branches: [ browser ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [ 15.x ]
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v1
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm i --global webpack
+      - run: npm run build
+      - run: git config --local user.name "github-actions[bot]"
+      - run: git config --local user.email "github-actions[bot]@users.noreply.github.com"
+      - run: git commit -m "Update bundle" -a
+      - run: git push

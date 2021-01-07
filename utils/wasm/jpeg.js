@@ -1,6 +1,4 @@
-const {join} = require('path');
-const {promises: {readFile}} = require('fs');
-
+const {version} = require('../../package.json');
 let wasm;
 
 let cachegetUint8Memory0 = null;
@@ -49,7 +47,7 @@ function getArrayU16FromWasm0(ptr, len) {
 async function initWASM() {
     if (wasm) return;
 
-    const module = new WebAssembly.Module(await readFile(join(__dirname, './jpeg.wasm')));
+    const module = new WebAssembly.Module(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/jpeg.wasm`).then(r => r.arrayBuffer()));
     const instance = new WebAssembly.Instance(module);
     wasm = instance.exports;
 }

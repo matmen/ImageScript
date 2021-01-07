@@ -1,6 +1,4 @@
-const {readFile} = require('fs').promises;
-const {join} = require('path');
-
+const {version} = require('../../package.json');
 let wasm;
 
 let WASM_VECTOR_LEN = 0;
@@ -106,7 +104,7 @@ module.exports = {
      */
     async rgba(ptr, svg, fit_kind, zoom, width, height) {
         if (!wasm) {
-            const module = new WebAssembly.Module(await readFile(join(__dirname, './svg.wasm')));
+            const module = new WebAssembly.Module(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/svg.wasm`).then(r => r.arrayBuffer()));
             const instance = new WebAssembly.Instance(module);
             wasm = instance.exports;
         }

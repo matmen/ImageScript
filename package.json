@@ -3,9 +3,9 @@
   "version": "1.1.14",
   "description": "zero-dependency javascript image manipulation",
   "main": "ImageScript.js",
+  "type": "commonjs",
   "scripts": {
-    "test": "node ./tests/run.js",
-    "coverage": "nyc --reporter=html npm test"
+    "build": "webpack"
   },
   "repository": {
     "type": "git",

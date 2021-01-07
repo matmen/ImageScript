@@ -1,6 +1,4 @@
-const {join} = require('path');
-const {promises: {readFile}} = require('fs');
-
+const {version} = require('../../package.json');
 let u8array_ref, i32array_ref, u32array_ref, wasm;
 
 const utf8encoder = new TextEncoder();
@@ -81,7 +79,7 @@ module.exports = {
     },
     async load(id, buffer, scale = 128) {
         if (!wasm) {
-            const module = new WebAssembly.Module(await readFile(join(__dirname, './font.wasm')));
+            const module = new WebAssembly.Module(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/font.wasm`).then(r => r.arrayBuffer()));
             const instance = new WebAssembly.Instance(module);
 
             wasm = instance.exports;
