@@ -1,3 +1,5 @@
+importScripts('https://cdn.jsdelivr.net/gh/matmen/imagescript@browser/browser/ImageScript.js');
+
 (async () => {
 	const avatar = await fetch('https://raw.githubusercontent.com/matmen/ImageScript/master/tests/targets/readme.png').then(r => r.arrayBuffer());
 	const image = await ImageScript.Image.decode(avatar);
