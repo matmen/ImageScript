@@ -52,8 +52,7 @@ class GIFEncoder {
 	 */
 	static async initialize(width, height, repeat) {
 		if (!wasm) {
-			const module = new WebAssembly.Module(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/gif.wasm`).then(r => r.arrayBuffer()));
-			const instance = new WebAssembly.Instance(module, {
+			const { instance } = await WebAssembly.instantiate(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/gif.wasm`.then(r => r.arrayBuffer())), {
 				__wbindgen_placeholder__: {
 					__wbindgen_throw: function (arg0, arg1) {
 						throw new Error(getStringFromWasm0(arg0, arg1));

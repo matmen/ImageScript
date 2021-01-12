@@ -104,8 +104,7 @@ module.exports = {
      */
     async rgba(ptr, svg, fit_kind, zoom, width, height) {
         if (!wasm) {
-            const module = new WebAssembly.Module(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/svg.wasm`).then(r => r.arrayBuffer()));
-            const instance = new WebAssembly.Instance(module);
+            const { instance } = await WebAssembly.instantiate(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/svg.wasm`).then(r => r.arrayBuffer()));
             wasm = instance.exports;
         }
 

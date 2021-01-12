@@ -53,8 +53,7 @@ module.exports = {
 	 */
 	async decode(ptr, buffer) {
 		if (!wasm) {
-			const module = new WebAssembly.Module(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/tiff.wasm`).then(r => r.arrayBuffer()));
-			const instance = new WebAssembly.Instance(module);
+			const { instance } = await WebAssembly.instantiate(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/tiff.wasm`).then(r => r.arrayBuffer()));
 			wasm = instance.exports;
 		}
 

@@ -47,8 +47,7 @@ function getArrayU16FromWasm0(ptr, len) {
 async function initWASM() {
     if (wasm) return;
 
-    const module = new WebAssembly.Module(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/jpeg.wasm`).then(r => r.arrayBuffer()));
-    const instance = new WebAssembly.Instance(module);
+    const { instance } = await WebAssembly.instantiate(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/jpeg.wasm`).then(r => r.arrayBuffer()));
     wasm = instance.exports;
 }
 
