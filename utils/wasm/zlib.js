@@ -3,7 +3,7 @@ async function load() {
     let wasm;
 
     {
-        const { instance } = await WebAssembly.compileStreaming(fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/zlib.wasm`));
+        const { instance } = await WebAssembly.instantiate(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/zlib.wasm`).then(r => r.arrayBuffer()));
 
         wasm = instance.exports;
     }
