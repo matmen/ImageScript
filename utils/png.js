@@ -1,7 +1,7 @@
 /* global SharedArrayBuffer */
 const crc32 = require('./crc32.js');
 const Buffer = require('./buffer');
-const {compress, decompress} = require('./wasm/zlib.js');
+const {init, compress, decompress} = require('./wasm/zlib.js');
 
 const __IHDR__ = new Uint8Array([73, 72, 68, 82]);
 const __IDAT__ = new Uint8Array([73, 68, 65, 84]);
@@ -39,7 +39,8 @@ module.exports = {
             tmp_offset += row_length;
         }
 
-        const compressed = await compress(tmp, level);
+        await init();
+        const compressed = compress(tmp, level);
         const array = new Uint8Array(49 + HEAD.length + compressed.length);
 
         array[26] = 0;
@@ -111,7 +112,8 @@ module.exports = {
             c_offset += 4 + 4 + 4 + view.getUint32(c_offset);
         }
 
-        array = await decompress(chunks.length === 1 ? chunks[0] : Buffer.concat(...chunks));
+        await init();
+        array = decompress(chunks.length === 1 ? chunks[0] : Buffer.concat(...chunks));
 
         while (offset < array.byteLength) {
             const filter = array[offset++];

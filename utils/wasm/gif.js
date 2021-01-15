@@ -2,104 +2,105 @@ const {join} = require('path');
 const {promises: {readFile}} = require('fs');
 
 let wasm;
+const streams = new Map;
 
-let cachedTextDecoder = new TextDecoder('utf-8', {ignoreBOM: true, fatal: true});
+class mem {
+  static alloc(size) { return wasm.walloc(size); }
+  static free(ptr, size) { return wasm.wfree(ptr, size); }
+  static u8(ptr, size) { return new Uint8Array(wasm.memory.buffer, ptr, size); }
+  static u32(ptr, size) { return new Uint32Array(wasm.memory.buffer, ptr, size); }
+  static length() { return new Uint32Array(wasm.memory.buffer, wasm.cur_len.value, 1)[0]; }
 
-cachedTextDecoder.decode();
-
-let cachegetUint8Memory0 = null;
-
-function getUint8Memory0() {
-	if (cachegetUint8Memory0 === null || cachegetUint8Memory0.buffer !== wasm.memory.buffer) {
-		cachegetUint8Memory0 = new Uint8Array(wasm.memory.buffer);
-	}
-	return cachegetUint8Memory0;
+  static copy_and_free(ptr, size) {
+    let slice = mem.u8(ptr, size).slice();
+    return (wasm.wfree(ptr, size), slice);
+  }
 }
 
-function getStringFromWasm0(ptr, len) {
-	return cachedTextDecoder.decode(getUint8Memory0().subarray(ptr, ptr + len));
+class Encoder {
+  constructor(width, height, loops = -1) {
+    this.slices = [];
+    streams.set(0, this);
+    this.ptr = wasm.encoder_new(0, width, height, loops);
+  }
+
+  cb(buffer) { this.slices.push(buffer); }
+  free() { this.ptr = wasm.encoder_free(this.ptr); }
+
+  u8() {
+    this.free();
+    let offset = 0;
+    const u8 = new Uint8Array(this.slices.reduce((sum, array) => sum + array.length, 0));
+
+    for (const x of this.slices) {
+      u8.set(x, offset);
+      offset += x.length;
+    }
+
+    return u8;
+  }
+
+  add(delay, width, height, buffer, quality) {
+    const ptr = mem.alloc(buffer.length);
+    mem.u8(ptr, buffer.length).set(buffer);
+    wasm.encoder_add(this.ptr, ptr, buffer.length, width, height, delay, quality);
+  }
 }
 
-let cachegetInt32Memory0 = null;
+class Decoder {
+  constructor(buffer, limit = 0) {
+    const bptr = mem.alloc(buffer.length);
+    mem.u8(bptr, buffer.length).set(buffer);
+    this.ptr = wasm.decoder_new(bptr, buffer.length, limit);
+    if (0 === this.ptr) throw new Error('gif: failed to parse gif header');
 
-function getInt32Memory0() {
-	if (cachegetInt32Memory0 === null || cachegetInt32Memory0.buffer !== wasm.memory.buffer) {
-		cachegetInt32Memory0 = new Int32Array(wasm.memory.buffer);
-	}
-	return cachegetInt32Memory0;
+    this.width = wasm.decoder_width(this.ptr);
+    this.height = wasm.decoder_height(this.ptr);
+  }
+
+  free() {
+    this.ptr = wasm.decoder_free(this.ptr);
+  }
+
+  *frames() {
+    let frame;
+    while (frame = this.frame()) yield frame;
+
+    this.free();
+  }
+
+  frame() {
+    const ptr = wasm.decoder_frame(this.ptr);
+
+    if (1 === ptr) return null;
+    if (0 === ptr) throw (this.free(), new Error('gif: failed to decode frame'));
+
+    const framebuffer = {
+      delay: wasm.decoder_frame_delay(ptr),
+      width: wasm.decoder_frame_width(ptr),
+      height: wasm.decoder_frame_height(ptr),
+      buffer: mem.u8(wasm.decoder_frame_buffer(ptr), mem.length()).slice(),
+    };
+
+    return (wasm.decoder_frame_free(ptr), framebuffer);
+  }
 }
 
-function getArrayU8FromWasm0(ptr, len) {
-	return getUint8Memory0().subarray(ptr / 1, ptr / 1 + len);
+module.exports = {
+  Encoder,
+  Decoder,
+
+  async init() {
+    if (wasm) return;
+    const module = new WebAssembly.Module(await readFile(join(__dirname, './gif.wasm')));
+    const instance = new WebAssembly.Instance(module, {
+      env: {
+        push_to_stream(id, ptr) {
+          streams.get(id).cb(mem.u8(ptr, mem.length()).slice());
+        },
+      },
+    });
+  
+    wasm = instance.exports;
+  }
 }
-
-let WASM_VECTOR_LEN = 0;
-
-function passArray8ToWasm0(arg, malloc) {
-	const ptr = malloc(arg.length * 1);
-	getUint8Memory0().set(arg, ptr / 1);
-	WASM_VECTOR_LEN = arg.length;
-	return ptr;
-}
-
-class GIFEncoder {
-	free() {
-		wasm.__wbg_gif_encoder_free(this.ptr);
-	}
-
-	/**
-	 * @param {number} width
-	 * @param {number} height
-	 * @param {number} repeat
-	 */
-	static async initialize(width, height, repeat) {
-		if (!wasm) {
-			const module = new WebAssembly.Module(await readFile(join(__dirname, './gif.wasm')));
-			const instance = new WebAssembly.Instance(module, {
-				__wbindgen_placeholder__: {
-					__wbindgen_throw: function (arg0, arg1) {
-						throw new Error(getStringFromWasm0(arg0, arg1));
-					},
-				}
-			});
-			wasm = instance.exports;
-		}
-
-		const ret = wasm.gif_encoder_new(width, height, repeat);
-		return new GIFEncoder(ret);
-	}
-
-	constructor(ptr) {
-		this.ptr = ptr;
-	}
-
-	/**
-	 * @returns {Uint8Array}
-	 */
-	buffer() {
-		try {
-			const retptr = wasm.__wbindgen_export_0.value - 16;
-			wasm.__wbindgen_export_0.value = retptr;
-			wasm.gif_encoder_buffer(retptr, this.ptr);
-			const r0 = getInt32Memory0()[retptr / 4];
-			const r1 = getInt32Memory0()[retptr / 4 + 1];
-			const v0 = getArrayU8FromWasm0(r0, r1).slice();
-			wasm.__wbindgen_free(r0, r1 * 1);
-			return v0;
-		} finally {
-			wasm.__wbindgen_export_0.value += 16;
-		}
-	}
-
-	/**
-	 * @param {number} delay
-	 * @param {number} quality
-	 * @param {Uint8Array} buffer
-	 */
-	add(delay, quality, buffer) {
-		const ptr0 = passArray8ToWasm0(buffer, wasm.__wbindgen_malloc);
-		wasm.gif_encoder_add(this.ptr, delay, quality, ptr0, WASM_VECTOR_LEN);
-	}
-}
-
-module.exports = {GIFEncoder};
