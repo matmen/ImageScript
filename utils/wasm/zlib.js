@@ -1,127 +1,76 @@
 let wasm;
 
 {
-    const module = new WebAssembly.Module(await fetch('https://github.com/matmen/ImageScript/raw/deno/utils/wasm/zlib.wasm').then(r => r.arrayBuffer()));
-    const instance = new WebAssembly.Instance(module);
+  const path = new URL(import.meta.url.replace('.js', '.wasm'));
+  const module = new WebAssembly.Module(await ('file:' === path.protocol ? Deno.readFile(path) : fetch(path).then(r => r.arrayBuffer())));
+  const instance = new WebAssembly.Instance(module);
 
-    wasm = instance.exports;
+  wasm = instance.exports;
 }
 
-let u8array_ref = new Uint8Array(wasm.memory.buffer);
-let i32array_ref = new Int32Array(wasm.memory.buffer);
+class mem {
+  static alloc(size) { return wasm.walloc(size); }
+  static free(ptr, size) { return wasm.wfree(ptr, size); }
+  static u8(ptr, size) { return new Uint8Array(wasm.memory.buffer, ptr, size); }
+  static u32(ptr, size) { return new Uint32Array(wasm.memory.buffer, ptr, size); }
+  static length() { return new Uint32Array(wasm.memory.buffer, wasm.cur_len.value, 1)[0]; }
 
-function u8array() {
-    return u8array_ref.buffer === wasm.memory.buffer ? u8array_ref : (u8array_ref = new Uint8Array(wasm.memory.buffer));
+  static copy_and_free(ptr, size) {
+    let slice = mem.u8(ptr, size).slice();
+    return (wasm.wfree(ptr, size), slice);
+  }
 }
 
-function i32array() {
-    return i32array_ref.buffer === wasm.memory.buffer ? i32array_ref : (i32array_ref = new Int32Array(wasm.memory.buffer));
+export function compress(buffer, level = 3) {
+  const ptr = mem.alloc(buffer.length);
+  mem.u8(ptr, buffer.length).set(buffer);
+  return mem.copy_and_free(wasm.compress(ptr, buffer.length, level), mem.length());
 }
 
-function ptr_to_u8array(ptr, len) {
-    return u8array().subarray(ptr, ptr + len);
+export function compress_raw(buffer, level = 3) {
+  const ptr = mem.alloc(buffer.length);
+  mem.u8(ptr, buffer.length).set(buffer);
+  return mem.copy_and_free(wasm.compress_raw(ptr, buffer.length, level), mem.length());
 }
 
-function u8array_to_ptr(buffer) {
-    const ptr = wasm.__wbindgen_malloc(buffer.length);
-    u8array().set(buffer, ptr);
-    return ptr;
+export function decompress(buffer, limit = 0) {
+  const ptr = mem.alloc(buffer.length);
+  mem.u8(ptr, buffer.length).set(buffer);
+  const x = wasm.decompress(ptr, buffer.length, limit);
+  if (0 === x) throw new Error('zlib: failed to decompress');
+
+  return mem.copy_and_free(x, mem.length());
 }
 
-export function compress(buffer, level) {
-    const ptr = u8array_to_ptr(buffer);
-    wasm.compress(8, ptr, buffer.length, level);
+export function decompress_raw(buffer, limit = 0) {
+  const ptr = mem.alloc(buffer.length);
+  mem.u8(ptr, buffer.length).set(buffer);
+  const x = wasm.decompress_raw(ptr, buffer.length, limit);
+  if (0 === x) throw new Error('zlib: failed to decompress (raw)');
 
-    const i32 = i32array();
-    const slice = ptr_to_u8array(i32[2], i32[3]).slice();
-    wasm.__wbindgen_free(i32[2], i32[3]);
-    return slice;
+  return mem.copy_and_free(x, mem.length());
 }
 
-export function compress_raw(buffer, level) {
-    const ptr = u8array_to_ptr(buffer);
-    wasm.compress_raw(8, ptr, buffer.length, level);
+export function decompress_with(buffer, limit = 0, transform) {
+  const ptr = mem.alloc(buffer.length);
+  mem.u8(ptr, buffer.length).set(buffer);
+  const x = wasm.decompress(ptr, buffer.length, limit);
+  if (0 === x) throw new Error('zlib: failed to decompress');
 
-    const i32 = i32array();
-    const slice = ptr_to_u8array(i32[2], i32[3]).slice();
-    wasm.__wbindgen_free(i32[2], i32[3]);
-    return slice;
+  const u8 = mem.u8(x, mem.length());
+
+  const value = transform(u8);
+  return (mem.free(x, u8.length), value);
 }
 
-export function decompress(buffer, limit) {
-    const ptr = u8array_to_ptr(buffer);
+export function decompress_raw_with(buffer, limit = 0, transform) {
+  const ptr = mem.alloc(buffer.length);
+  mem.u8(ptr, buffer.length).set(buffer);
+  const x = wasm.decompress_raw(ptr, buffer.length, limit);
+  if (0 === x) throw new Error('zlib: failed to decompress (raw)');
 
-    try {
-        wasm.decompress(8, ptr, buffer.length, limit);
+  const u8 = mem.u8(x, mem.length());
 
-        const i32 = i32array();
-        const slice = ptr_to_u8array(i32[2], i32[3]).slice();
-        wasm.__wbindgen_free(i32[2], i32[3]);
-        return slice;
-    } catch {
-        wasm.__wbindgen_free(ptr, buffer.length);
-        throw new Error('zlib: panic');
-    }
-}
-
-export function decompress_raw(buffer, limit) {
-    const ptr = u8array_to_ptr(buffer);
-
-    try {
-        wasm.decompress_raw(8, ptr, buffer.length, limit);
-
-        const i32 = i32array();
-        const slice = ptr_to_u8array(i32[2], i32[3]).slice();
-        wasm.__wbindgen_free(i32[2], i32[3]);
-        return slice;
-    } catch {
-        wasm.__wbindgen_free(ptr, buffer.length);
-        throw new Error('zlib: panic');
-    }
-}
-
-export function decompress_with(buffer, limit, transform) {
-    const ptr = u8array_to_ptr(buffer);
-
-    try {
-        wasm.decompress(8, ptr, buffer.length, limit);
-
-        const i32 = i32array();
-        const slice = ptr_to_u8array(i32[2], i32[3]);
-
-        try {
-            const value = transform(slice);
-            wasm.__wbindgen_free(i32[2], i32[3]);
-            return value;
-        } catch (err) {
-            wasm.__wbindgen_free(i32[2], i32[3]);
-            throw err;
-        }
-    } catch {
-        wasm.__wbindgen_free(ptr, buffer.length);
-        throw new Error('zlib: panic');
-    }
-}
-
-export function decompress_raw_with(buffer, limit, transform) {
-    const ptr = u8array_to_ptr(buffer);
-
-    try {
-        wasm.decompress_raw(8, ptr, buffer.length, limit);
-
-        const i32 = i32array();
-        const slice = ptr_to_u8array(i32[2], i32[3]);
-
-        try {
-            const value = transform(slice);
-            wasm.__wbindgen_free(i32[2], i32[3]);
-            return value;
-        } catch (err) {
-            wasm.__wbindgen_free(i32[2], i32[3]);
-            throw err;
-        }
-    } catch {
-        wasm.__wbindgen_free(ptr, buffer.length);
-        throw new Error('zlib: panic');
-    }
+  const value = transform(u8);
+  return (mem.free(x, u8.length), value);
 }

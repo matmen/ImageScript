@@ -104,5 +104,5 @@ import {equals} from "https://deno.land/std@0.80.0/bytes/mod.ts";
     const encoded = await image.encode();
 
     if (!equals(await Deno.readFile('./tests/targets/readme.png'), encoded))
-        process.exit(1);
+        Deno.exit(1);
 })();

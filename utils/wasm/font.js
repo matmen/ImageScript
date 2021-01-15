@@ -1,98 +1,131 @@
 let wasm;
+let registry = null;
 
 {
-    const module = new WebAssembly.Module(await fetch('https://github.com/matmen/ImageScript/raw/deno/utils/wasm/font.wasm').then(r => r.arrayBuffer()));
-    const instance = new WebAssembly.Instance(module);
+  const path = new URL(import.meta.url.replace('.js', '.wasm'));
+  const module = new WebAssembly.Module(await ('file:' === path.protocol ? Deno.readFile(path) : fetch(path).then(r => r.arrayBuffer())));
+  const instance = new WebAssembly.Instance(module);
 
-    wasm = instance.exports;
+  wasm = instance.exports;
 }
 
-let u8array_ref = new Uint8Array(wasm.memory.buffer);
-let i32array_ref = new Int32Array(wasm.memory.buffer);
-let u32array_ref = new Uint32Array(wasm.memory.buffer);
+class mem {
+  static alloc(size) { return wasm.walloc(size); }
+  static free(ptr, size) { return wasm.wfree(ptr, size); }
+  static u8(ptr, size) { return new Uint8Array(wasm.memory.buffer, ptr, size); }
+  static u32(ptr, size) { return new Uint32Array(wasm.memory.buffer, ptr, size); }
+  static length() { return new Uint32Array(wasm.memory.buffer, wasm.cur_len.value, 1)[0]; }
 
-const utf8encoder = new TextEncoder();
-
-function u8array() {
-    return u8array_ref.buffer === wasm.memory.buffer ? u8array_ref : (u8array_ref = new Uint8Array(wasm.memory.buffer));
+  static copy_and_free(ptr, size) {
+    let slice = mem.u8(ptr, size).slice();
+    return (wasm.wfree(ptr, size), slice);
+  }
 }
 
-function i32array() {
-    return i32array_ref.buffer === wasm.memory.buffer ? i32array_ref : (i32array_ref = new Int32Array(wasm.memory.buffer));
+const encode_utf8 = 'Deno' in globalThis ? Deno.core.encode : (() => {
+  const encoder = new TextEncoder();
+  return string => encoder.encode(string);
+})();
+
+const decode_utf8 = 'Deno' in globalThis ? Deno.core.decode : (() => {
+  const decoder = new TextDecoder();
+  return buffer => decoder.decode(buffer);
+})();
+
+if ('FinalizationRegistry' in globalThis) {
+  registry = new FinalizationRegistry(([t, ptr]) => {
+    if (t === 0) wasm.font_free(ptr);
+    if (t === 1) wasm.layout_free(ptr);
+  });
 }
 
-function u32array() {
-    return u32array_ref.buffer === wasm.memory.buffer ? u32array_ref : (u32array_ref = new Uint32Array(wasm.memory.buffer));
-}
+export class Font {
+  constructor(scale, buffer) {
+    this.scale = scale;
+    const ptr = mem.alloc(buffer.length);
+    mem.u8(ptr, buffer.length).set(buffer);
+    this.ptr = wasm.font_new(ptr, buffer.length, scale);
 
-function ptr_to_u8array(ptr, len) {
-    return u8array().subarray(ptr, ptr + len);
-}
+    if (!this.ptr) throw new Error('invalid font');
+    if (registry) registry.register(this, [0, this.ptr]);
+  }
 
-function ptr_to_u32array(ptr, len) {
-    return u32array().subarray(ptr / 4, ptr / 4 + len);
-}
+  free() {
+    this.ptr = wasm.font_free(this.ptr);
+    if (registry) registry.unregister(this);
+  }
 
-function u8array_to_ptr(buffer) {
-    const ptr = wasm.__wbindgen_malloc(buffer.length);
-    u8array().set(buffer, ptr);
+  has(char) {
+    return wasm.font_has(this.ptr, String.prototype.charCodeAt.call(char, 0));
+  }
 
-    return ptr;
-}
+  metrics(char, scale = this.scale) {
+    const ptr = wasm.font_metrics(this.ptr, String.prototype.charCodeAt.call(char, 0), scale);
+    const metrics = JSON.parse(decode_utf8(mem.u8(wasm.font_metrics_buffer(ptr), mem.length())));
 
-function string_to_ptr(string) {
-    let offset = 0;
-    let len = string.length;
-    let ptr = wasm.__wbindgen_malloc(string.length);
+    return (wasm.font_metrics_free(ptr), metrics);
+  }
 
-    const u8 = u8array();
-    while (len > offset) {
-        const code = string.charCodeAt(offset);
+  rasterize(char, scale = this.scale) {
+    const ptr = wasm.font_rasterize(this.ptr, String.prototype.charCodeAt.call(char, 0), scale);
 
-        if (code > 0x7F) break;
-        u8[ptr + offset++] = code;
+    const glyph = {
+      buffer: mem.u8(wasm.font_rasterize_buffer(ptr), mem.length()).slice(),
+      metrics: JSON.parse(decode_utf8(mem.u8(wasm.font_rasterize_metrics(ptr), mem.length()))),
     }
 
-    if (offset !== len) {
-        if (offset !== 0) string = string.substring(offset);
-        ptr = wasm.__wbindgen_realloc(ptr, len, len = offset + string.length * 3);
-        const ret = utf8encoder.encodeInto(string, u8array().subarray(ptr + offset, ptr + len));
+    return (wasm.font_rasterize_free(ptr), glyph);
+  }
+}
 
-        offset += ret.written;
+export class Layout {
+  constructor() {
+    this.ptr = wasm.layout_new();
+    if (registry) this.refs = [];
+    if (registry) registry.register(this, [1, this.ptr]);
+  }
+
+  clear() {
+    wasm.layout_clear(this.ptr);
+    if (registry) this.refs.length = 0;
+  }
+
+  lines() {
+    return wasm.layout_lines(this.ptr);
+  }
+
+  free() {
+    if (registry) this.refs.length = 0;
+    this.ptr = wasm.layout_free(this.ptr);
+    if (registry) registry.unregister(this);
+  }
+
+  reset(options = {}) {
+    options = encode_utf8(JSON.stringify(options));
+
+    if (registry) this.refs.length = 0;
+    const ptr = mem.alloc(options.length);
+    mem.u8(ptr, options.length).set(options);
+    wasm.layout_reset(this.ptr, ptr, options.length);
+  }
+
+  append(font, text, scale) {
+    text = encode_utf8(text);
+    if (registry) this.refs.push(font);
+    const ptr = mem.alloc(text.length);
+    mem.u8(ptr, text.length).set(text);
+    wasm.layout_append(this.ptr, font.ptr, ptr, text.length, scale ?? font.scale);
+  }
+
+  rasterize(r, g, b) {
+    const ptr = wasm.layout_rasterize(this.ptr, r, g, b);
+
+    const framebuffer = {
+      width: wasm.layout_rasterize_width(ptr),
+      height: wasm.layout_rasterize_height(ptr),
+      buffer: mem.u8(wasm.layout_rasterize_buffer(ptr), mem.length()).slice(),
     }
 
-    return [ptr, offset];
-}
-
-const nullish = x => x == null;
-
-export function render(ptr, id, scale, r, g, b, text, max_width, wrap_style = false) {
-    const str = string_to_ptr(text);
-    wasm.render(ptr, id, scale, r, g, b, str[0], str[1], !nullish(max_width), max_width || 0, wrap_style);
-}
-
-export function buffer(id) {
-    wasm.buffer(8, id);
-    const i32 = i32array();
-    const slice = ptr_to_u8array(i32[2], i32[3]).slice();
-    wasm.__wbindgen_free(i32[2], i32[3]);
-
-    return slice;
-}
-
-export function meta(id) {
-    wasm.meta(8, id);
-    const i32 = i32array();
-    const slice = ptr_to_u32array(i32[2], i32[3]).slice();
-    wasm.__wbindgen_free(i32[2], 4 * i32[3]);
-
-    return slice;
-}
-
-export function load(id, buffer, scale = 128) {
-    wasm.load(id, u8array_to_ptr(buffer), buffer.length, scale);
-}
-
-export function free(id) {
-    wasm.free(id);
+    return (wasm.layout_rasterize_free(ptr), framebuffer);
+  }
 }

@@ -7,5 +7,5 @@ import {equals} from "https://deno.land/std@0.80.0/bytes/mod.ts";
     const encoded = await image.encode();
 
     const target = await Deno.readFile('./tests/targets/potato.png');
-    if (!equals(encoded, target)) process.exit(1);
+    if (!equals(encoded, target)) Deno.exit(1);
 })();
