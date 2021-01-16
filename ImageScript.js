@@ -1154,7 +1154,7 @@ class Image {
             }
         } else if (view.getUint32(0, false) === 0x49492a00) {
             await tifflib.init();
-            const framebuffer = await tifflib.decode(data);
+            const framebuffer = tifflib.decode(data);
             image = new this(framebuffer.width, framebuffer.height);
 
             image.bitmap.set(framebuffer.buffer);
@@ -1258,6 +1258,8 @@ class Image {
 
         image.bitmap.set(framebuffer.buffer);
 
+        font.free();
+        layout.free();
         return image.opacity(a / 0xff);
     }
 
