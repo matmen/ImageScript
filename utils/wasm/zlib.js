@@ -1,71 +1,46 @@
 const {version} = require('../../package.json');
-async function load() {
-    let wasm;
 
-    {
-        const module = new WebAssembly.Module(await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/zlib.wasm`).then(r => r.arrayBuffer()));
-        const instance = new WebAssembly.Instance(module);
+let wasm;
 
-        wasm = instance.exports;
-    }
+class mem {
+  static alloc(size) { return wasm.walloc(size); }
+  static free(ptr, size) { return wasm.wfree(ptr, size); }
+  static u8(ptr, size) { return new Uint8Array(wasm.memory.buffer, ptr, size); }
+  static u32(ptr, size) { return new Uint32Array(wasm.memory.buffer, ptr, size); }
+  static length() { return new Uint32Array(wasm.memory.buffer, wasm.cur_len.value, 1)[0]; }
 
-    let u8array_ref = new Uint8Array(wasm.memory.buffer);
-    let i32array_ref = new Int32Array(wasm.memory.buffer);
+  static copy_and_free(ptr, size) {
+    let slice = mem.u8(ptr, size).slice();
+    return (wasm.wfree(ptr, size), slice);
+  }
+}
 
-    function u8array() {
-        return u8array_ref.buffer === wasm.memory.buffer ? u8array_ref : (u8array_ref = new Uint8Array(wasm.memory.buffer));
-    }
 
-    function i32array() {
-        return i32array_ref.buffer === wasm.memory.buffer ? i32array_ref : (i32array_ref = new Int32Array(wasm.memory.buffer));
-    }
+function compress(buffer, level = 3) {
+  const ptr = mem.alloc(buffer.length);
+  mem.u8(ptr, buffer.length).set(buffer);
+  return mem.copy_and_free(wasm.compress(ptr, buffer.length, level), mem.length());
+}
 
-    function ptr_to_u8array(ptr, len) {
-        return u8array().subarray(ptr, ptr + len);
-    }
+function decompress(buffer, limit = 0) {
+  const ptr = mem.alloc(buffer.length);
+  mem.u8(ptr, buffer.length).set(buffer);
+  const x = wasm.decompress(ptr, buffer.length, limit);
+  if (0 === x) throw new Error('zlib: failed to decompress');
 
-    function u8array_to_ptr(buffer) {
-        const ptr = wasm.__wbindgen_malloc(buffer.length);
-        u8array().set(buffer, ptr);
-        return ptr;
-    }
-
-    return {
-        compress(buffer, level) {
-            const ptr = u8array_to_ptr(buffer);
-            wasm.compress(8, ptr, buffer.length, level);
-
-            const i32 = i32array();
-            const slice = ptr_to_u8array(i32[2], i32[3]).slice();
-            wasm.__wbindgen_free(i32[2], i32[3]);
-            return slice;
-        }, decompress(buffer, limit) {
-            const ptr = u8array_to_ptr(buffer);
-
-            try {
-                wasm.decompress(8, ptr, buffer.length, limit);
-
-                const i32 = i32array();
-                const slice = ptr_to_u8array(i32[2], i32[3]).slice();
-                wasm.__wbindgen_free(i32[2], i32[3]);
-                return slice;
-            } catch {
-                wasm.__wbindgen_free(ptr, buffer.length);
-                throw new Error('zlib: panic');
-            }
-        }
-    };
+  return mem.copy_and_free(x, mem.length());
 }
 
 module.exports = {
-    async compress(buffer, level) {
-        const {compress} = module.exports = await load();
+  compress,
+  decompress,
 
-        return compress(buffer, level);
-    },
-    async decompress(buffer, limit) {
-        const {decompress} = module.exports = await load();
+  async init() {
+    if (wasm) return;
+    const streaming = 'compileStreaming' in WebAssembly;
+    const module = await WebAssembly[!streaming ? 'compile' : 'compileStreaming'](await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/zlib.wasm`).then(x => streaming ? x : x.arrayBuffer()));
+    const instance = new WebAssembly.Instance(module);
 
-        return decompress(buffer, limit);
-    }
-};
+    wasm = instance.exports;
+  }
+}

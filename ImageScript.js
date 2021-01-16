@@ -1097,11 +1097,8 @@ class Image {
      * @return {Promise<Uint8Array>}
      */
     async encodeJPEG(quality = 90) {
-        quality = Math.max(1, Math.min(100, quality));
-        const jpegCanvas = new this.constructor(this.width, this.height);
-        jpegCanvas.fill(0xff);
-        jpegCanvas.composite(this);
-        return jpeglib.encode(this.width, this.height, quality, jpegCanvas.bitmap);
+        await jpeglib.init();
+        return jpeglib.encode(this.bitmap, this.width, this.height, Math.max(1, Math.min(100, quality)));
     }
 
     /**
@@ -1126,12 +1123,15 @@ class Image {
             image = new this(width, height);
             image.bitmap.set(pixels);
         } else if ((view.getUint32(0, false) >>> 8) === 0xffd8ff) { // JPEG
-            const status = await jpeglib.decode(0, data, 0, 0);
-            if (status === 1) throw new Error('Failed decoding JPEG image');
-            const [pixelType, width, height] = jpeglib.meta(0);
+            await jpeglib.init();
+            const framebuffer = jpeglib.decode(data);
+
+            const width = framebuffer.width;
+            const height = framebuffer.height;
+            const pixelType = framebuffer.format;
+
             image = new this(width, height);
-            const buffer = jpeglib.buffer(0);
-            jpeglib.free(0);
+            const buffer = framebuffer.buffer;
 
             if (pixelType === 0) {
                 const view = new DataView(image.bitmap.buffer);
@@ -1153,14 +1153,11 @@ class Image {
                 }
             }
         } else if (view.getUint32(0, false) === 0x49492a00) {
-            const status = await tifflib.decode(0, data);
-            if (status === 1) throw new Error('Failed decoding TIFF image');
-            const meta = tifflib.meta(0);
-            const buffer = tifflib.buffer(0);
-            tifflib.free(0);
+            await tifflib.init();
+            const framebuffer = tifflib.decode(data);
+            image = new this(framebuffer.width, framebuffer.height);
 
-            image = new this(...meta);
-            image.bitmap.set(buffer);
+            image.bitmap.set(framebuffer.buffer);
         } else throw new Error('Unsupported image type');
 
         return image;
@@ -1206,17 +1203,15 @@ class Image {
         if (mode !== this.SVG_MODE_SCALE && size < 1)
             throw new RangeError('SVG size must be >= 1')
 
-        if (typeof svg !== 'string')
-            svg = svg.toString();
+            if (typeof svg === 'string') svg = new TextEncoder().encode(svg);
 
-        const status = await svglib.rgba(0, svg, mode, size, size, size);
-        if (status === 1) throw new Error('Failed parsing SVG');
-        if (status === 2) throw new Error('Failed rendering SVG');
-        const meta = svglib.meta(0);
-        const image = new this(...meta);
-        image.bitmap.set(svglib.buffer(0));
-        svglib.free(0);
-        return image;
+            await svglib.init();
+            const framebuffer = svglib.rasterize(svg, mode, size);
+            const image = new this(framebuffer.width, framebuffer.height);
+    
+            image.bitmap.set(framebuffer.buffer);
+    
+            return image;
     }
 
     /**
@@ -1246,17 +1241,26 @@ class Image {
      * @return {Promise<Image>} The rendered text
      */
     static async renderText(font, scale, text, color = 0xffffffff, wrapWidth = Infinity, wrapStyle = this.WRAP_STYLE_WORD) {
+        await fontlib.init();
+        font = new fontlib.Font(scale, font);
         const [r, g, b, a] = Image.colorToRGBA(color);
-        await fontlib.load(0, font, scale);
-        fontlib.render(0, 0, scale, r, g, b, text, wrapWidth === Infinity ? null : wrapWidth, wrapStyle);
-        const buffer = fontlib.buffer(0);
-        const [width, height] = fontlib.meta(0);
-        fontlib.free(0);
-        const image = new this(width, height);
-        image.bitmap.set(buffer);
-        image.opacity(a / 0xff);
 
-        return image;
+        const layout = new fontlib.Layout();
+
+        layout.reset({
+            wrap_style: wrapStyle ? 'word' : 'letter',
+            max_width: Infinity === wrapWidth ? null : wrapWidth,
+        });
+
+        layout.append(font, text, scale);
+        const framebuffer = layout.rasterize(r, g, b);
+        const image = new this(framebuffer.width, framebuffer.height);
+
+        image.bitmap.set(framebuffer.buffer);
+
+        font.free();
+        layout.free();
+        return image.opacity(a / 0xff);
     }
 
 }
@@ -1350,15 +1354,15 @@ class GIF extends Array {
      * @return {Promise<Uint8Array>} The encoded data
      */
     async encode(quality = 10) {
-        const encoder = await giflib.GIFEncoder.initialize(this.width, this.height, this.loopCount);
+        await giflib.init();
+        const encoder = new giflib.Encoder(this.width, this.height, this.loopCount);
+
         for (const frame of this) {
             if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
-            encoder.add(~~(frame.duration / 10), quality, frame.bitmap);
+            encoder.add(~~(frame.duration / 10), frame.width, frame.height, frame.bitmap, quality);
         }
 
-        const encoded = encoder.buffer();
-        encoder.free();
-        return encoded;
+        return encoder.u8();
     }
 }
 
