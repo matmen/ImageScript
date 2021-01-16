@@ -42,7 +42,7 @@ class Font {
     this.ptr = wasm.font_new(ptr, buffer.length, scale);
 
     if (!this.ptr) throw new Error('invalid font');
-    if (registry) registry.register(this, [0, this.ptr]);
+    if (registry) registry.register(this, [0, this.ptr], this);
   }
 
   free() {
@@ -77,7 +77,7 @@ class Layout {
   constructor() {
     this.ptr = wasm.layout_new();
     if (registry) this.refs = [];
-    if (registry) registry.register(this, [1, this.ptr]);
+    if (registry) registry.register(this, [1, this.ptr], this);
   }
 
   clear() {
