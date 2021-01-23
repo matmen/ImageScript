@@ -1364,6 +1364,38 @@ class GIF extends Array {
 
         return encoder.u8();
     }
+
+    /**
+     * Decodes a GIF image
+     * @param {Buffer|Uint8Array} data The binary data to decode
+     * @return {Promise<GIF>} The decoded GIF
+     */
+    static async decode(data) {
+        let image;
+
+        let view;
+        if (!ArrayBuffer.isView(data)) {
+            data = new Uint8Array(data);
+            view = new DataView(data.buffer);
+        } else {
+            data = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        }
+
+        if ((view.getUint32(0, false) >>> 8) === 0x474946) { // GIF
+            const decoder = new giflib.Decoder(data);
+            const frames = [];
+            for (const frameData of decoder.frames()) {
+                const frame = new Frame(frameData.width, frameData.height, frameData.delay);
+                frame.bitmap.set(frameData.buffer);
+                frames.push(frame);
+            }
+
+            image = new GIF(frames);
+        } else throw new Error('Unsupported image type');
+
+        return image;
+    }
 }
 
 module.exports = {Image, GIF, Frame};
