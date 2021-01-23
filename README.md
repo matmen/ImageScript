@@ -18,6 +18,7 @@ It can achieve much more performant results by utilizing lower-level memory acce
   - PNGs (grayscale, RGB, indexed colors) with and without alpha channels
   - JPEGs (grayscale, RGB, CMYK)
   - TIFFs
+- [Decoding GIFs](https://oss-is.dreadful.tech/classes/_imagescript_.gif.html#decode)
 - [Rendering SVGs](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#rendersvg)
 - [Rendering vector fonts](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#rendertext)
 - Image manipulation functions ([crop](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#crop), [rotate](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#rotate), [composite](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#composite), ...)

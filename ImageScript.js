@@ -367,6 +367,7 @@ class Image {
         return this.__apply__(image);
     }
 
+    /** @private */
     __scale__(factor, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
         if (factor === 1) return this;
         return this.__resize__(this.width * factor, this.height * factor, mode);
@@ -385,6 +386,7 @@ class Image {
         return this.__apply__(image);
     }
 
+    /** @private */
     __resize__(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
         if (width === Image.RESIZE_AUTO && height === Image.RESIZE_AUTO) throw new Error('RESIZE_AUTO can only be used for either width or height, not for both');
         else if (width === Image.RESIZE_AUTO) width = this.width / this.height * height;
