@@ -23,8 +23,14 @@ class Encoder {
     this.ptr = wasm.encoder_new(0, width, height, loops);
   }
 
-  cb(buffer) { this.slices.push(buffer); }
-  free() { this.ptr = wasm.encoder_free(this.ptr); }
+  cb(buffer) {
+    this.slices.push(buffer);
+  }
+
+  free() {
+    this.ptr = wasm.encoder_free(this.ptr);
+    streams.delete(0);
+  }
 
   u8() {
     this.free();
