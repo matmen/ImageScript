@@ -37,7 +37,7 @@ module.exports = {
 		if (wasm) return;
 		const streaming = 'compileStreaming' in WebAssembly;
 		const module = await WebAssembly[!streaming ? 'compile' : 'compileStreaming'](await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/tiff.wasm`).then(x => streaming ? x : x.arrayBuffer()));
-		const instance = new WebAssembly.Instance(module);
+		const instance = await WebAssembly.instantiate(module);
 
 		wasm = instance.exports;
 	}
