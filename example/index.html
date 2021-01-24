@@ -8,6 +8,20 @@
     display)</p>
 <p>You can find more examples on <a href="https://github.com/matmen/ImageScript/tree/master/tests">GitHub</a></p>
 <img alt="ImageScript Example Result" id="image" src="https://via.placeholder.com/100x100">
-<script src="runner.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/matmen/imagescript@browser/browser/ImageScript.js"></script>
+<script>
+	(async () => {
+		const avatar = await fetch('https://raw.githubusercontent.com/matmen/ImageScript/master/tests/targets/readme.png').then(r => r.arrayBuffer());
+		const image = await ImageScript.Image.decode(avatar);
+
+		image.saturation(0);
+
+		const encoded = await image.encode();
+
+		// need to pass data to main thread as blob URI, cannot access document directly
+		const blob = new Blob([encoded], {type: 'image/png'});
+		document.querySelector('#image').src = URL.createObjectURL(blob);
+	})();
+</script>
 </body>
 </html>
