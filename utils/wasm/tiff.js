@@ -3,16 +3,16 @@ const {version} = require('../../package.json');
 let wasm;
 
 class mem {
-	static alloc(size) { return wasm.walloc(size); }
-	static free(ptr, size) { return wasm.wfree(ptr, size); }
-	static u8(ptr, size) { return new Uint8Array(wasm.memory.buffer, ptr, size); }
-	static u32(ptr, size) { return new Uint32Array(wasm.memory.buffer, ptr, size); }
-	static length() { return new Uint32Array(wasm.memory.buffer, wasm.cur_len.value, 1)[0]; }
+  static length() { return wasm.wlen(); }
+  static alloc(size) { return wasm.walloc(size); }
+  static free(ptr, size) { return wasm.wfree(ptr, size); }
+  static u8(ptr, size) { return new Uint8Array(wasm.memory.buffer, ptr, size); }
+  static u32(ptr, size) { return new Uint32Array(wasm.memory.buffer, ptr, size); }
 
-	static copy_and_free(ptr, size) {
-		let slice = mem.u8(ptr, size).slice();
-		return (wasm.wfree(ptr, size), slice);
-	}
+  static copy_and_free(ptr, size) {
+    let slice = mem.u8(ptr, size).slice();
+    return (wasm.wfree(ptr, size), slice);
+  }
 }
 
 function decode(buffer) {

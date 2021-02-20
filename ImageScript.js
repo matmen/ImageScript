@@ -1252,7 +1252,7 @@ class Image {
             max_width: Infinity === wrapWidth ? null : wrapWidth,
         });
 
-        layout.append(font, text, scale);
+        layout.append(font, text, { scale });
         const framebuffer = layout.rasterize(r, g, b);
         const image = new this(framebuffer.width, framebuffer.height);
 
