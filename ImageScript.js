@@ -1234,8 +1234,8 @@ export class Image {
         const layout = new fontlib.Layout();
 
         layout.reset({
-            wrap_style: wrapStyle ? 'word' : 'letter',
-            max_width: Infinity === wrapWidth ? null : wrapWidth,
+            wrap_style: wrapStyle === this.WRAP_STYLE_WORD ? 'word' : 'letter',
+            max_width: Infinity === wrapWidth ? null : wrapWidth
         });
 
         layout.append(font, text, { scale });
