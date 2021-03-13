@@ -442,7 +442,7 @@ class Image {
         if (width > this.width) width = this.width;
         if (height > this.height) height = this.height;
 
-        return this.__apply__(this.__crop__(x, y, width, height));
+        return this.__apply__(this.__crop__(~~x, ~~y, ~~width, ~~height));
     }
 
     /**
@@ -1217,51 +1217,40 @@ class Image {
     }
 
     /**
-     * Wrap at individual characters. For use with {@link Image.renderText}
-     * @return {boolean}
-     */
-    static get WRAP_STYLE_CHAR() {
-        return true;
-    }
-
-    /**
-     * Wrap at word ends. For use with {@link Image.renderText}
-     * @return {boolean}
-     */
-    static get WRAP_STYLE_WORD() {
-        return false;
-    }
-
-    /**
      * Creates a new image containing the rendered text.
      * @param {Uint8Array} font TrueType (ttf/ttc) or OpenType (otf) font buffer to use
      * @param {number} scale Font size to use
      * @param {string} text Text to render
      * @param {number} color Text color to use
-     * @param {number} wrapWidth Image width before wrapping
-     * @param {boolean} wrapStyle Whether to break at words ({@link WRAP_STYLE_WORD}) or at characters ({@link WRAP_STYLE_CHAR})
+     * @param {TextLayout} layout The text layout to use
      * @return {Promise<Image>} The rendered text
      */
-    static async renderText(font, scale, text, color = 0xffffffff, wrapWidth = Infinity, wrapStyle = this.WRAP_STYLE_WORD) {
+    static async renderText(font, scale, text, color = 0xffffffff, layout = new TextLayout()) {
         await fontlib.init();
         font = new fontlib.Font(scale, font);
         const [r, g, b, a] = Image.colorToRGBA(color);
 
-        const layout = new fontlib.Layout();
-
-        layout.reset({
-            wrap_style: wrapStyle === this.WRAP_STYLE_WORD ? 'word' : 'letter',
-            max_width: Infinity === wrapWidth ? null : wrapWidth,
+        const layoutOptions = new fontlib.Layout();
+        layoutOptions.reset({
+            max_width: layout.maxWidth,
+            max_height: layout.maxHeight,
+            wrap_style: layout.wrapStyle,
+            vertical_align: layout.verticalAlign,
+            horizontal_align: layout.horizontalAlign,
+            wrap_hard_breaks: layout.wrapHardBreaks
         });
 
-        layout.append(font, text, { scale });
-        const framebuffer = layout.rasterize(r, g, b);
+        layoutOptions.append(font, text, {scale});
+        const framebuffer = layoutOptions.rasterize(r, g, b);
         const image = new this(framebuffer.width, framebuffer.height);
 
         image.bitmap.set(framebuffer.buffer);
 
+        if (image.height > layout.maxHeight)
+            image.crop(0, 0, image.width, Math.floor(layoutOptions.lines() / image.height * layout.maxHeight) * (image.height / layoutOptions.lines()));
+
         font.free();
-        layout.free();
+        layoutOptions.free();
         return image.opacity(a / 0xff);
     }
 
@@ -1400,4 +1389,32 @@ class GIF extends Array {
     }
 }
 
-module.exports = {Image, GIF, Frame};
+class TextLayout {
+    constructor({maxWidth, maxHeight, wrapStyle, verticalAlign, horizontalAlign, wrapHardBreaks} = {}) {
+        this.maxWidth = maxWidth ?? Infinity;
+        if (isNaN(this.maxWidth) || this.maxWidth < 1)
+            throw new RangeError('Invalid maxWidth');
+
+        this.maxHeight = maxHeight ?? Infinity;
+        if (isNaN(this.maxHeight) || this.maxHeight < 1)
+            throw new RangeError('Invalid maxHeight');
+
+        this.wrapStyle = wrapStyle ?? 'word';
+        if (!['word', 'char'].includes(this.wrapStyle))
+            throw new RangeError('Invalid wrapStyle');
+
+        this.verticalAlign = verticalAlign ?? 'left';
+        if (!['left', 'center', 'right'].includes(this.verticalAlign))
+            throw new RangeError('Invalid verticalAlign');
+
+        this.horizontalAlign = horizontalAlign ?? 'top';
+        if (!['top', 'middle', 'bottom'].includes(this.horizontalAlign))
+            throw new RangeError('Invalid horizontalAlign');
+
+        this.wrapHardBreaks = wrapHardBreaks ?? true;
+        if (typeof this.wrapHardBreaks !== 'boolean')
+            throw new TypeError('Invalid wrapHardBreaks');
+    }
+}
+
+module.exports = {Image, GIF, Frame, TextLayout};
