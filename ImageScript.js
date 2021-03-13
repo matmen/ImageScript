@@ -1248,7 +1248,7 @@ class Image {
         const layout = new fontlib.Layout();
 
         layout.reset({
-            wrap_style: wrapStyle ? 'word' : 'letter',
+            wrap_style: wrapStyle === this.WRAP_STYLE_WORD ? 'word' : 'letter',
             max_width: Infinity === wrapWidth ? null : wrapWidth,
         });
 
