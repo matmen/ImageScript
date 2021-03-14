@@ -1297,16 +1297,14 @@ export class GIF extends Array {
     constructor(frames, loopCount = -1) {
         super(...frames);
 
-        this.width = frames[0].width;
-        this.height = frames[0].height;
+        this.width = Math.max(...frames.map(frame => frame.width));
+        this.height = Math.max(...frames.map(frame => frame.height));
 
-        for (const frame of this) {
+        // TODO: needs decoder and encoder implementation (frame offset for non-uniform sized frames)
+
+        for (const frame of this)
             if (!(frame instanceof Frame))
                 throw new TypeError(`Frame ${this.indexOf(frame)} is not an instance of Frame`);
-
-            if (frame.width !== this.width) throw new Error('Frames have different widths');
-            if (frame.height !== this.height) throw new Error('Frames have different heights');
-        }
 
         if (loopCount < -1 || isNaN(loopCount))
             throw new RangeError('Invalid loop count');
@@ -1363,7 +1361,7 @@ export class GIF extends Array {
             const decoder = new giflib.Decoder(data);
             const frames = [];
             for (const frameData of decoder.frames()) {
-                const frame = new Frame(frameData.width, frameData.height, frameData.delay);
+                const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10);
                 frame.bitmap.set(frameData.buffer);
                 frames.push(frame);
             }
