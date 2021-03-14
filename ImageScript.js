@@ -852,7 +852,7 @@ export class Image {
             ? Math.abs(this.width * cos) + Math.abs(this.height * sin)
             : this.height;
 
-        const out = Image.new(width, height);
+        const out = new Image(width, height);
 
         const out_cx = width / 2 - .5;
         const out_cy = height / 2 - .5;
