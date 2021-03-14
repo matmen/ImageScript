@@ -4,6 +4,13 @@ import * as svglib from './utils/wasm/svg.js';
 import * as jpeglib from './utils/wasm/jpeg.js';
 import * as giflib from './utils/wasm/gif.js';
 
+const MAGIC_NUMBERS = {
+    PNG: 0x89504e47,
+    JPEG: 0xffd8ff,
+    TIFF: 0x49492a00,
+    GIF: 0x474946
+};
+
 /**
  * Represents an image; provides utility functions
  */
@@ -46,11 +53,6 @@ export class Image {
      */
     toString() {
         return `Image<${this.width}x${this.height}>`;
-    }
-
-    /** @private */
-    static new(width, height) {
-        return new this(width, height);
     }
 
     /**
@@ -334,7 +336,7 @@ export class Image {
      * @returns {Image}
      */
     clone() {
-        const image = Image.new(this.width, this.height);
+        const image = new Image(this.width, this.height);
         image.bitmap.set(this.bitmap);
         return image;
     }
@@ -1105,18 +1107,19 @@ export class Image {
             view = new DataView(data.buffer, data.byteOffset, data.byteLength);
         }
 
-        if (view.getUint32(0, false) === 0x89504e47) { // PNG
+        if (ImageType.isPNG(view)) { // PNG
             const {width, height, pixels} = await png.decode(data);
-            image = new this(width, height);
+            image = new Image(width, height);
             image.bitmap.set(pixels);
-        } else if ((view.getUint32(0, false) >>> 8) === 0xffd8ff) { // JPEG
+        } else if (ImageType.isJPEG(view)) { // JPEG
             const framebuffer = jpeglib.decode(data);
 
             const width = framebuffer.width;
             const height = framebuffer.height;
-            const buffer = framebuffer.buffer;
             const pixelType = framebuffer.format;
-            image = new this(framebuffer.width, framebuffer.height);
+
+            image = new Image(width, height);
+            const buffer = framebuffer.buffer;
 
             if (pixelType === 0) {
                 const view = new DataView(image.bitmap.buffer);
@@ -1137,7 +1140,7 @@ export class Image {
                     image.bitmap[i + 3] = 0xff;
                 }
             }
-        } else if (view.getUint32(0, false) === 0x49492a00) {
+        } else if (ImageType.isTIFF(view)) { // TIFF
             const status = await tifflib.decode(0, data);
             if (status === 1) throw new Error('Failed decoding TIFF image');
             const meta = tifflib.meta(0);
@@ -1194,7 +1197,7 @@ export class Image {
         if (typeof svg === 'string') svg = Deno.core.encode(svg);
 
         const framebuffer = svglib.rasterize(svg, mode, size);
-        const image = new this(framebuffer.width, framebuffer.height);
+        const image = new Image(framebuffer.width, framebuffer.height);
 
         image.bitmap.set(framebuffer.buffer);
 
@@ -1226,7 +1229,7 @@ export class Image {
 
         layoutOptions.append(font, text, {scale});
         const framebuffer = layoutOptions.rasterize(r, g, b);
-        const image = new this(framebuffer.width, framebuffer.height);
+        const image = new Image(framebuffer.width, framebuffer.height);
 
         image.bitmap.set(framebuffer.buffer);
 
@@ -1412,4 +1415,72 @@ class TextLayout {
     }
 }
 
-module.exports = {Image, GIF, Frame, TextLayout};
+class ImageType {
+    /**
+     * Gets an images type (png, jpeg, tiff, gif)
+     * @param {Buffer|Uint8Array} data The image binary to get the type of
+     * @returns {string|null} The image type (png, jpeg, tiff, gif, null)
+     */
+    static getType(data) {
+        let view;
+        if (!ArrayBuffer.isView(data)) {
+            data = new Uint8Array(data);
+            view = new DataView(data.buffer);
+        } else {
+            data = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        }
+
+        if (this.isPNG(view)) return 'png';
+        if (this.isJPEG(view)) return 'jpeg';
+        if (this.isTIFF(view)) return 'tiff';
+        if (this.isGIF(view)) return 'gif';
+        return null;
+    }
+
+    /**
+     * @param {DataView} view
+     * @returns {boolean}
+     */
+    static isPNG(view) {
+        return view.getUint32(0, false) === MAGIC_NUMBERS.PNG;
+    }
+
+    /**
+     * @param {DataView} view
+     * @returns {boolean}
+     */
+    static isJPEG(view) {
+        return (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.JPEG;
+    }
+
+    /**
+     * @param {DataView} view
+     * @returns {boolean}
+     */
+    static isTIFF(view) {
+        return view.getUint32(0, false) === MAGIC_NUMBERS.TIFF;
+    }
+
+    /**
+     * @param {DataView} view
+     * @returns {boolean}
+     */
+    static isGIF(view) {
+        return (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.GIF;
+    }
+}
+
+/**
+ * Decodes the given image binary
+ * @param {Uint8Array|Buffer} data The image data
+ * @returns {Promise<GIF>|Promise<Image>} The decoded image
+ */
+function decode(data) {
+    const type = ImageType.getType(data);
+
+    if (type === 'gif') return GIF.decode(data);
+    return Image.decode(data);
+}
+
+module.exports = {Image, GIF, Frame, TextLayout, ImageType, decode};
