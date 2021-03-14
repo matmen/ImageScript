@@ -1390,7 +1390,19 @@ class GIF extends Array {
 }
 
 class TextLayout {
-    constructor({maxWidth, maxHeight, wrapStyle, verticalAlign, horizontalAlign, wrapHardBreaks} = {}) {
+    /**
+     * Layout options for {@link renderText}
+     * @param {object} options
+     * @param {number} [options.maxWidth=Infinity] The texts max width
+     * @param {number} [options.maxHeight=Infinity] The texts max height
+     * @param {string} [options.wrapStyle='string'] The texts wrap style when reaching the max width (word, char)
+     * @param {string} [options.verticalAlign='left'] The vertical align mode (left, center, right)
+     * @param {string} [options.horizontalAlign='top'] The horizontal align mode (top, middle, bottom)
+     * @param {string} [options.wrapHardBreaks=true] Whether to force wrap at new line characters
+     */
+    constructor(options) {
+        const {maxWidth, maxHeight, wrapStyle, verticalAlign, horizontalAlign, wrapHardBreaks} = options ?? {};
+
         this.maxWidth = maxWidth ?? Infinity;
         if (isNaN(this.maxWidth) || this.maxWidth < 1)
             throw new RangeError('Invalid maxWidth');
