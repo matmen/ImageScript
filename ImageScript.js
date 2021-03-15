@@ -235,7 +235,7 @@ export class Image {
      */
     getPixelAt(x, y) {
         this.__check_boundaries__(x, y);
-        return this.__view__.getUint32((~~y - 1) * this.width + (~~x - 1), false);
+        return this.__view__.getUint32(((~~y - 1) * this.width + (~~x - 1)) * 4, false);
     }
 
     /**
