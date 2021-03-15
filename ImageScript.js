@@ -1370,6 +1370,8 @@ export class GIF extends Array {
                 frames.push(frame);
             }
 
+            decoder.free();
+
             image = new GIF(frames);
         } else throw new Error('Unsupported image type');
 
