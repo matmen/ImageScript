@@ -1359,9 +1359,10 @@ class GIF extends Array {
     /**
      * Decodes a GIF image
      * @param {Buffer|Uint8Array} data The binary data to decode
+     * @param {number} [frameLimit=Infinity] How many frames to limit the GIF decoding to
      * @return {Promise<GIF>} The decoded GIF
      */
-    static async decode(data) {
+    static async decode(data, frameLimit = Infinity) {
         let image;
 
         let view;
@@ -1379,6 +1380,9 @@ class GIF extends Array {
             const decoder = new giflib.Decoder(data);
             const frames = [];
             for (const frameData of decoder.frames()) {
+                if (frames.length >= frameLimit)
+                    break;
+
                 const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10);
                 frame.bitmap.set(frameData.buffer);
                 frames.push(frame);
@@ -1490,12 +1494,13 @@ class ImageType {
 /**
  * Decodes the given image binary
  * @param {Uint8Array|Buffer} data The image data
+ * @param {number} [frameLimit=Infinity] How many frames to limit the GIF decoding to
  * @returns {Promise<GIF>|Promise<Image>} The decoded image
  */
-function decode(data) {
+function decode(data, frameLimit = Infinity) {
     const type = ImageType.getType(data);
 
-    if (type === 'gif') return GIF.decode(data);
+    if (type === 'gif') return GIF.decode(data, frameLimit);
     return Image.decode(data);
 }
 
