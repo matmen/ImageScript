@@ -70,8 +70,6 @@ class Decoder {
   *frames() {
     let frame;
     while (frame = this.frame()) yield frame;
-
-    this.free();
   }
 
   frame() {
