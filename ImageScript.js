@@ -1334,7 +1334,7 @@ export class GIF extends Array {
 
         for (const frame of this) {
             if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
-            encoder.add(~~(frame.duration / 10), frame.width, frame.height, frame.bitmap, quality);
+            encoder.add(~~(frame.duration / 10), 0, 0, frame.width, frame.height, frame.bitmap, quality);
         }
 
         return encoder.u8();
