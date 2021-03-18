@@ -46,10 +46,10 @@ class Encoder {
     return u8;
   }
 
-  add(delay, width, height, buffer, quality) {
+  add(x, y, delay, width, height, buffer, quality) {
     const ptr = mem.alloc(buffer.length);
     mem.u8(ptr, buffer.length).set(buffer);
-    wasm.encoder_add(this.ptr, ptr, buffer.length, width, height, delay, quality);
+    wasm.encoder_add(this.ptr, ptr, buffer.length, x, y, width, height, delay, quality);
   }
 }
 
@@ -80,6 +80,8 @@ class Decoder {
     if (0 === ptr) throw (this.free(), new Error('gif: failed to decode frame'));
 
     const framebuffer = {
+      x: wasm.decoder_frame_x(ptr),
+      y: wasm.decoder_frame_y(ptr),
       delay: wasm.decoder_frame_delay(ptr),
       width: wasm.decoder_frame_width(ptr),
       height: wasm.decoder_frame_height(ptr),
