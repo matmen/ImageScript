@@ -1268,14 +1268,18 @@ class Frame extends Image {
      * @param {number} width
      * @param {number} height
      * @param {number} [duration = 100] The frames duration (in ms)
+     * @param {number} [xOffset=0] The frames offset on the x-axis
+     * @param {number} [yOffset=0] The frames offset on the y-axis
      * @return {Frame}
      */
-    constructor(width, height, duration = 100) {
+    constructor(width, height, duration = 100, xOffset = 0, yOffset = 0) {
         if (isNaN(duration) || duration < 0)
             throw new RangeError('Invalid frame duration');
 
         super(width, height);
         this.duration = duration;
+        this.xOffset = xOffset;
+        this.yOffset = yOffset;
     }
 
     toString() {
@@ -1286,12 +1290,14 @@ class Frame extends Image {
      * Converts an Image instance to a Frame, cloning it in the process
      * @param {Image} image The image to create the frame from
      * @param {number} [duration = 100] The frames duration (in ms)
+     * @param {number} [xOffset=0] The frames offset on the x-axis
+     * @param {number} [yOffset=0] The frames offset on the y-axis
      * @return {Frame}
      */
-    static from(image, duration) {
+    static from(image, duration, xOffset, yOffset) {
         if (!(image instanceof Image))
             throw new TypeError('Invalid image passed');
-        const frame = new Frame(image.width, image.height, duration);
+        const frame = new Frame(image.width, image.height, duration, xOffset, yOffset);
         frame.bitmap.set(image.bitmap);
 
         return frame;
@@ -1350,7 +1356,7 @@ class GIF extends Array {
 
         for (const frame of this) {
             if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
-            encoder.add(0, 0, ~~(frame.duration / 10), frame.width, frame.height, frame.bitmap, quality);
+            encoder.add(frame.xOffset, frame.yOffset, ~~(frame.duration / 10), frame.width, frame.height, frame.bitmap, quality);
         }
 
         return encoder.u8();
@@ -1383,7 +1389,7 @@ class GIF extends Array {
                 if (frames.length >= frameLimit)
                     break;
 
-                const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10);
+                const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10, frameData.x, frameData.y);
                 frame.bitmap.set(frameData.buffer);
                 frames.push(frame);
             }
