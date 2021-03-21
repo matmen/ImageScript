@@ -1085,6 +1085,36 @@ class Image {
         };
     }
 
+    fisheye(radius = 2) {
+        const r = new Image(this.width, this.height);
+
+        const w = this.width;
+        const h = this.height;
+        const tu32 = this.__u32__;
+        const ru32 = r.__u32__;
+        const iw = 1 / w;
+        const ih = 1 / h;
+
+        for (const [x, y] of this) {
+            const xco = x * iw - .5;
+            const yco = y * ih - .5;
+            const dfc = Math.sqrt(xco ** 2 + yco ** 2);
+            const dis = 2 * dfc ** radius;
+            const nx = ((dis * xco / dfc + 0.5) * w) | 0;
+            const ny = ((dis * yco / dfc + 0.5) * h) | 0;
+
+            if (nx < 1 || nx > w || ny < 1 || ny > h || isNaN(nx) || isNaN(ny))
+                continue;
+
+            ru32[y * w + x] = tu32[w * ny + nx];
+        }
+
+        const cO = tu32.length * .5 + w / 2;
+        ru32[cO] = tu32[cO];
+
+        return this.__apply__(r);
+    }
+
     /**
      * Encodes the image into a PNG
      * @param {number} compression The compression level to use (0-3)
