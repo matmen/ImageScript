@@ -87,7 +87,6 @@ export class Image {
     /**
      * Yields an [x,y,color] array for every pixel in the image
      * @yields {[number, number, number]} The coordinates and color of the pixel
-     * @returns {void}
      */
     * iterateWithColors() {
         let offset = 0;
@@ -1320,12 +1319,17 @@ export class GIF extends Array {
         return `GIF<${this.width}x${this.height}x${this.duration}ms>`;
     }
 
+    * [Symbol.iterator]() {
+        for (let i = 0; i < this.length; i++)
+            yield this[i];
+    }
+
     /**
      * The GIFs duration (in ms)
      * @return {number}
      */
     get duration() {
-        return [...this].reduce((acc, frame) => acc + frame.duration, 0);
+        return this.reduce((acc, frame) => acc + frame.duration, 0);
     }
 
     /**
