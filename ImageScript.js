@@ -1319,8 +1319,6 @@ class GIF extends Array {
         this.width = Math.max(...frames.map(frame => frame.width));
         this.height = Math.max(...frames.map(frame => frame.height));
 
-        // TODO: needs decoder and encoder implementation (frame offset for non-uniform sized frames)
-
         for (const frame of this)
             if (!(frame instanceof Frame))
                 throw new TypeError(`Frame ${this.indexOf(frame)} is not an instance of Frame`);
@@ -1363,10 +1361,10 @@ class GIF extends Array {
     /**
      * Decodes a GIF image
      * @param {Buffer|Uint8Array} data The binary data to decode
-     * @param {number} [frameLimit=Infinity] How many frames to limit the GIF decoding to
+     * @param {boolean} [onlyExtractFirstFrame=false] Whether to end GIF decoding after the first frame
      * @return {Promise<GIF>} The decoded GIF
      */
-    static async decode(data, frameLimit = Infinity) {
+    static async decode(data, onlyExtractFirstFrame = false) {
         let image;
 
         let view;
@@ -1383,14 +1381,14 @@ class GIF extends Array {
         if (ImageType.isGIF(view)) { // GIF
             await giflib.init();
             const decoder = new giflib.Decoder(data);
-            const frames = [];
+            let frames = [];
             for (const frameData of decoder.frames()) {
-                if (frames.length >= frameLimit)
-                    break;
-
                 const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10, frameData.x, frameData.y);
                 frame.bitmap.set(frameData.buffer);
                 frames.push(frame);
+
+                if (onlyExtractFirstFrame)
+                    break;
             }
 
             decoder.free();
@@ -1501,13 +1499,14 @@ class ImageType {
 /**
  * Decodes the given image binary
  * @param {Uint8Array|Buffer} data The image data
- * @param {number} [frameLimit=Infinity] How many frames to limit the GIF decoding to
- * @returns {Promise<GIF>|Promise<Image>} The decoded image
+ * @param {boolean} [onlyExtractFirstFrame] Whether to end GIF decoding after the first frame
+ * @returns {Promise<GIF|Image>} The decoded image
  */
-function decode(data, frameLimit = Infinity) {
+function decode(data, onlyExtractFirstFrame) {
     const type = ImageType.getType(data);
 
-    if (type === 'gif') return GIF.decode(data, frameLimit);
+    if (type === 'gif')
+        return GIF.decode(data, onlyExtractFirstFrame);
     return Image.decode(data);
 }
 
