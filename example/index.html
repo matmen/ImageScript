@@ -18,7 +18,6 @@
 
 		const encoded = await image.encode();
 
-		// need to pass data to main thread as blob URI, cannot access document directly
 		const blob = new Blob([encoded], {type: 'image/png'});
 		document.querySelector('#image').src = URL.createObjectURL(blob);
 	})();
