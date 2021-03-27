@@ -1367,6 +1367,8 @@ export class GIF extends Array {
             view = new DataView(data.buffer, data.byteOffset, data.byteLength);
         }
 
+        await giflib.init();
+
         if ((view.getUint32(0, false) >>> 8) === 0x474946) { // GIF
             const decoder = new giflib.Decoder(data);
             const frames = [];
