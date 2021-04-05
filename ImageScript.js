@@ -956,8 +956,8 @@ class Image {
 
     /**
      * @private
-     * @param {Image} image
-     * @returns {Image}
+     * @param {Image|Frame} image
+     * @returns {Image|Frame}
      */
     __apply__(image) {
         this.__width__ = image.__width__;
@@ -965,6 +965,9 @@ class Image {
         this.__view__ = image.__view__;
         this.__u32__ = image.__u32__;
         this.bitmap = image.bitmap;
+
+        if (image instanceof Frame)
+            return Frame.from(this, image.duration);
 
         return this;
     }
