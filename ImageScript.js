@@ -1522,12 +1522,10 @@ class ImageType {
  * @param {boolean} [onlyExtractFirstFrame] Whether to end GIF decoding after the first frame
  * @returns {Promise<GIF|Image>} The decoded image
  */
-function decode(data, onlyExtractFirstFrame) {
+export function decode(data, onlyExtractFirstFrame) {
     const type = ImageType.getType(data);
 
     if (type === 'gif')
         return GIF.decode(data, onlyExtractFirstFrame);
     return Image.decode(data);
 }
-
-module.exports = {Image, GIF, Frame, TextLayout, ImageType, decode};
