@@ -14,23 +14,27 @@ It can achieve much more performant results by utilizing lower-level memory acce
 ---
 
 ### Features
-- [Decoding images](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#decode)
+- [Decoding images](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.image.html#decode)
   - PNGs (grayscale, RGB, indexed colors) with and without alpha channels
   - JPEGs (grayscale, RGB, CMYK)
   - TIFFs
-- [Rendering SVGs](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#rendersvg)
-- [Rendering vector fonts](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#rendertext)
-- Image manipulation functions ([crop](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#crop)
-  , [rotate](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#rotate)
-  , [composite](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#composite), ...)
-- Color manipulation functions ([invert](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#invert)
-  , [hueShift](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#hueshift), ...)
+- [Decoding GIFs](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.gif.html#decode)
+- [Rendering SVGs](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.image.html#rendersvg)
+- [Rendering vector fonts](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.image.html#rendertext)
+- Image manipulation
+  functions ([crop](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.image.html#crop)
+  , [rotate](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.image.html#rotate)
+  , [composite](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.image.html#composite), ...)
+- Color manipulation
+  functions ([invert](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.image.html#invert)
+  , [hueShift](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.image.html#hueshift), ...)
 - Color information
-  functions ([averageColor](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#averagecolor)
-  , [dominantColor](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#dominantcolor), ...)
-- Encoding images as [PNGs](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#encode)
-  , [JPEGs](https://oss-is.dreadful.tech/classes/_imagescript_.image.html#encodejpeg)
+  functions ([averageColor](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.image.html#averagecolor)
+  , [dominantColor](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.image.html#dominantcolor), ...)
+- Encoding images as [PNGs](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.image.html#encode)
+  , [JPEGs](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.image.html#encodejpeg)
   and [GIFs](https://oss-is.dreadful.tech/classes/_imagescript_.gif.html#encode)
+- [Encoding GIFs](https://oss-is.dreadful.tech/classes/_imagescript_._imagescript_-1.gif.html#encode)
 
 ---
 
