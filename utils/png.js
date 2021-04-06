@@ -1,4 +1,3 @@
-/* global SharedArrayBuffer */
 const crc32 = require('./crc32.js');
 const BufferUtils = require('./buffer');
 const {init, compress, decompress} = require('./wasm/zlib.js');
