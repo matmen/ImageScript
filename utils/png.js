@@ -43,6 +43,8 @@ module.exports = {
         if (text) {
             let chunks = [];
             for (const key in text) {
+                if (!text[key])
+                    continue;
                 const kb = utf8encoder.encode(key);
                 const tb = utf8encoder.encode(text[key]);
                 const chunk = new Uint8Array(1 + 12 + kb.length + tb.length);

@@ -4,6 +4,7 @@ const svglib = require('./utils/wasm/svg');
 const jpeglib = require('./utils/wasm/jpeg');
 const tifflib = require('./utils/wasm/tiff');
 const giflib = require('./utils/wasm/gif');
+const {version} = require('./package.json');
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -1119,12 +1120,55 @@ class Image {
     }
 
     /**
+     * @typedef {object} PNGMetadata
+     * @property {string} [title] The images title
+     * @property {string} [author] The images author
+     * @property {string} [description] The images description
+     * @property {string} [copyright] The images copyright info
+     * @property {string|number|Date} [creationTime=Date.now()] The images creation timestamp
+     * @property {string} [software="github.com/matmen/ImageScript vX.X.X"] The software used to create this image
+     * @property {string} [disclaimer] A disclaimer for the image
+     * @property {string} [warning] A warning for the image
+     * @property {string} [source] The images source
+     * @property {string} [comment] A comment for the image
+     */
+
+    /**
      * Encodes the image into a PNG
      * @param {number} compression The compression level to use (0-3)
+     * @param {PNGMetadata} [meta={}] Image metadata
      * @return {Promise<Uint8Array>} The encoded data
      */
-    async encode(compression = 1) {
-        return await png.encode(this.bitmap, {width: this.width, height: this.height, level: compression, channels: 4});
+    async encode(compression = 1, {
+        title,
+        author,
+        description,
+        copyright,
+        creationTime,
+        software,
+        disclaimer,
+        warning,
+        source,
+        comment
+    } = {}) {
+        return await png.encode(this.bitmap, {
+            width: this.width,
+            height: this.height,
+            level: compression,
+            channels: 4,
+            text: {
+                Title: title,
+                Author: author,
+                Description: description,
+                Copyright: copyright,
+                'Creation Time': new Date(creationTime ?? Date.now()).toUTCString(),
+                Software: software ?? `github.com/matmen/ImageScript v${version}`,
+                Disclaimer: disclaimer,
+                Warning: warning,
+                Source: source,
+                Comment: comment
+            }
+        });
     }
 
     /**
