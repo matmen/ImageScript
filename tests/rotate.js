@@ -11,7 +11,10 @@ const panic = msg => {
         const image = await Image.decode(binary);
         image.rotate(45);
 
-        const encoded = await image.encode();
+        const encoded = await image.encode(1, {creationTime: 0, software: ''});
+
+        if (process.env.OVERWRITE_TEST)
+            await fs.writeFile('./tests/targets/rotate-45.png', encoded);
 
         await fs.writeFile('./tests/targets/rotate-45.png', encoded);
         const target = await fs.readFile('./tests/targets/rotate-45.png');
@@ -23,9 +26,11 @@ const panic = msg => {
         const image = await Image.decode(binary);
         image.rotate(45, false);
 
-        const encoded = await image.encode();
+        const encoded = await image.encode(1, {creationTime: 0, software: ''});
 
-        await fs.writeFile('./tests/targets/rotate-45-noresize.png', encoded);
+        if (process.env.OVERWRITE_TEST)
+            await fs.writeFile('./tests/targets/rotate-45-noresize.png', encoded);
+
         const target = await fs.readFile('./tests/targets/rotate-45-noresize.png');
         if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('rotate 45 noresize failed');
     }
@@ -35,7 +40,10 @@ const panic = msg => {
         const image = await Image.decode(binary);
         image.rotate(180);
 
-        const encoded = await image.encode();
+        const encoded = await image.encode(1, {creationTime: 0, software: ''});
+
+        if (process.env.OVERWRITE_TEST)
+            await fs.writeFile('./tests/targets/rotate-180.png', encoded);
 
         await fs.writeFile('./tests/targets/rotate-180.png', encoded);
         const target = await fs.readFile('./tests/targets/rotate-180.png');

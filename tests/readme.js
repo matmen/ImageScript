@@ -101,7 +101,10 @@ const fs = require('fs').promises;
 
     image.roundCorners(32);
 
-    const encoded = await image.encode();
+    const encoded = await image.encode(1, {creationTime: 0, software: ''});
+
+    if (process.env.OVERWRITE_TEST)
+        await fs.writeFile('./tests/targets/readme.png', encoded);
 
     if (!(await fs.readFile('./tests/targets/readme.png')).equals(Buffer.from(encoded)))
         process.exit(1);

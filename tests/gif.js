@@ -18,6 +18,10 @@ const panic = message => {
 
     {
         const encoded = await gif.encode();
+
+        if (process.env.OVERWRITE_TEST)
+            await fs.writeFile('./tests/targets/gif.gif', encoded);
+
         const desired = await fs.readFile('./tests/targets/gif.gif');
         if (!desired.equals(encoded))
             panic('encoding failed');
