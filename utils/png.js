@@ -25,6 +25,8 @@ const channels_to_color_type = {
     4: color_types.TRUECOLOR_ALPHA
 };
 
+const utf8encoder = new TextEncoder; // replace with latin1 encoder or iext
+
 module.exports = {
     async encode(data, {text, width, height, channels, depth = 8, level = 0}) {
         let offset = 0;
@@ -42,8 +44,8 @@ module.exports = {
         if (text) {
             let chunks = [];
             for (const key in text) {
-                const kb = Buffer.from(key);
-                const tb = Buffer.from(text[key]);
+                const kb = utf8encoder.encode(key);
+                const tb = utf8encoder.encode(text[key]);
                 const chunk = new Uint8Array(1 + 12 + kb.length + tb.length);
 
                 const view = new DataView(chunk.buffer);
@@ -59,7 +61,7 @@ module.exports = {
                 view.setUint32(chunk.length - 4, crc32(chunk.subarray(4, chunk.length - 4)));
             }
 
-            text = Buffer.concat(chunks);
+            text = BufferUtils.concat(...chunks);
         }
 
         await init();
