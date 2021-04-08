@@ -1462,9 +1462,10 @@ class GIF extends Array {
             view = new DataView(data.buffer, data.byteOffset, data.byteLength);
         }
 
+        await giflib.init();
+
         if (ImageType.isGIF(view)) { // GIF
             await giflib.init();
-
             const decoder = new giflib.Decoder(data);
             let frames = [];
             for (const frameData of decoder.frames()) {
