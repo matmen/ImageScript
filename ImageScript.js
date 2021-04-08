@@ -1367,6 +1367,9 @@ class GIF extends Array {
         return `GIF<${this.width}x${this.height}x${this.duration}ms>`;
     }
 
+    /**
+     * @returns {Generator<Frame, void, *>}
+     */
     * [Symbol.iterator]() {
         for (let i = 0; i < this.length; i++)
             yield this[i];
