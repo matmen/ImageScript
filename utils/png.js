@@ -1,6 +1,6 @@
 /* global SharedArrayBuffer */
 const crc32 = require('./crc32.js');
-const Buffer = require('./buffer');
+const BufferUtils = require('./buffer');
 const {init, compress, decompress} = require('./wasm/zlib.js');
 
 const __IHDR__ = new Uint8Array([73, 72, 68, 82]);
@@ -44,15 +44,18 @@ module.exports = {
             for (const key in text) {
                 const kb = Buffer.from(key);
                 const tb = Buffer.from(text[key]);
-                const chunk = new Uint8Array(1 + 4 + 4 + kb.length + tb.length);
+                const chunk = new Uint8Array(1 + 12 + kb.length + tb.length);
 
                 const view = new DataView(chunk.buffer);
 
+                chunk[4] = 0x74;
+                chunk[5] = 0x45;
+                chunk[6] = 0x58;
+                chunk[7] = 0x74;
                 chunk.set(kb, 8);
-                chunk[8 + kb.length] = 0;
+                chunks.push(chunk);
                 chunk.set(tb, 9 + kb.length);
-                view.setUint32(4, 1107296256);
-                view.setUint32(0, chunk.length);
+                view.setUint32(0, chunk.length - 12);
                 view.setUint32(chunk.length - 4, crc32(chunk.subarray(4, chunk.length - 4)));
             }
 
@@ -60,9 +63,9 @@ module.exports = {
         }
 
         await init();
-        offset = 33 + (text ? text.length : 0);
+        offset = text ? text.length : 0;
         const compressed = compress(tmp, level);
-        const array = new Uint8Array(16 + offset + HEAD.length + compressed.length);
+        const array = new Uint8Array(49 + offset + HEAD.length + compressed.length);
 
         array[26] = 0;
         array[27] = 0;
@@ -70,22 +73,22 @@ module.exports = {
         array[24] = depth;
         array.set(HEAD, 0);
         array.set(__IHDR__, 12);
-        array.set(__IDAT__, 4 + offset);
-        array.set(compressed, 8 + offset);
+        array.set(__IDAT__, 37);
+        array.set(compressed, 41);
         array[25] = channels_to_color_type[channels];
-        if (text) array.set(text, offset - text.length);
-        array.set(__IEND__, 16 + offset + compressed.length);
+        if (text) array.set(text, 45 + compressed.length);
+        array.set(__IEND__, 49 + offset + compressed.length);
 
         const view = new DataView(array.buffer);
 
         view.setUint32(8, 13);
         view.setUint32(16, width);
         view.setUint32(20, height);
-        view.setUint32(offset, compressed.length);
-        view.setUint32(12 + offset + compressed.length, 0);
-        view.setUint32(20 + offset + compressed.length, __IEND_CRC__);
+        view.setUint32(33, compressed.length);
+        view.setUint32(45 + offset + compressed.length, 0);
+        view.setUint32(53 + offset + compressed.length, __IEND_CRC__);
         view.setUint32(29, crc32(new Uint8Array(array.buffer, 12, 17)));
-        view.setUint32(8 + offset + compressed.length, crc32(new Uint8Array(array.buffer, 4 + offset, 4 + compressed.length)));
+        view.setUint32(41 + compressed.length, crc32(new Uint8Array(array.buffer, 37, 4 + compressed.length)));
 
         return array;
     },
@@ -135,7 +138,7 @@ module.exports = {
         }
 
         await init();
-        array = decompress(chunks.length === 1 ? chunks[0] : Buffer.concat(...chunks));
+        array = decompress(chunks.length === 1 ? chunks[0] : BufferUtils.concat(...chunks));
 
         while (offset < array.byteLength) {
             const filter = array[offset++];
