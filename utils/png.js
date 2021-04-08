@@ -116,12 +116,11 @@ module.exports = {
 
         let palette, alphaPalette;
 
-        let type;
-        while (type !== 1229278788) {
-            type = view.getUint32(4 + c_offset);
+        const maxSearchOffset = array.length - 5;
 
-            // IDAT
-            if (type === 1229209940)
+        let type;
+        while ((type = view.getUint32(4 + c_offset)) !== 1229278788) { // IEND
+            if (type === 1229209940) // IDAT
                 chunks.push(array.subarray(8 + c_offset, 8 + c_offset + view.getUint32(c_offset)));
             else if (type === 1347179589) { // PLTE
                 if (palette)
@@ -138,6 +137,8 @@ module.exports = {
             }
 
             c_offset += 4 + 4 + 4 + view.getUint32(c_offset);
+            if (c_offset > maxSearchOffset) // missing IEND
+                break;
         }
 
         await init();
