@@ -26,7 +26,7 @@ const channels_to_color_type = {
 };
 
 module.exports = {
-    async encode(data, {width, height, channels, depth = 8, level = 0}) {
+    async encode(data, {text, width, height, channels, depth = 8, level = 0}) {
         let offset = 0;
         let tmp_offset = 0;
         const row_length = width * channels;
@@ -39,9 +39,30 @@ module.exports = {
             tmp_offset += row_length;
         }
 
+        if (text) {
+            let chunks = [];
+            for (const key in text) {
+                const kb = Buffer.from(key);
+                const tb = Buffer.from(text[key]);
+                const chunk = new Uint8Array(1 + 4 + 4 + kb.length + tb.length);
+
+                const view = new DataView(chunk.buffer);
+
+                chunk.set(kb, 8);
+                chunk[8 + kb.length] = 0;
+                chunk.set(tb, 9 + kb.length);
+                view.setUint32(4, 1107296256);
+                view.setUint32(0, chunk.length);
+                view.setUint32(chunk.length - 4, crc32(chunk.subarray(4, chunk.length - 4)));
+            }
+
+            text = Buffer.concat(chunks);
+        }
+
         await init();
+        offset = 33 + (text ? text.length : 0);
         const compressed = compress(tmp, level);
-        const array = new Uint8Array(49 + HEAD.length + compressed.length);
+        const array = new Uint8Array(16 + offset + HEAD.length + compressed.length);
 
         array[26] = 0;
         array[27] = 0;
@@ -49,21 +70,22 @@ module.exports = {
         array[24] = depth;
         array.set(HEAD, 0);
         array.set(__IHDR__, 12);
-        array.set(__IDAT__, 37);
-        array.set(compressed, 41);
-        array.set(__IEND__, 49 + compressed.length);
+        array.set(__IDAT__, 4 + offset);
+        array.set(compressed, 8 + offset);
         array[25] = channels_to_color_type[channels];
+        if (text) array.set(text, offset - text.length);
+        array.set(__IEND__, 16 + offset + compressed.length);
 
         const view = new DataView(array.buffer);
 
         view.setUint32(8, 13);
         view.setUint32(16, width);
         view.setUint32(20, height);
-        view.setUint32(33, compressed.length);
-        view.setUint32(45 + compressed.length, 0);
-        view.setUint32(53 + compressed.length, __IEND_CRC__);
+        view.setUint32(offset, compressed.length);
+        view.setUint32(12 + offset + compressed.length, 0);
+        view.setUint32(20 + offset + compressed.length, __IEND_CRC__);
         view.setUint32(29, crc32(new Uint8Array(array.buffer, 12, 17)));
-        view.setUint32(41 + compressed.length, crc32(new Uint8Array(array.buffer, 37, 4 + compressed.length)));
+        view.setUint32(8 + offset + compressed.length, crc32(new Uint8Array(array.buffer, offset, 4 + compressed.length)));
 
         return array;
     },
