@@ -85,7 +85,7 @@ module.exports = {
         view.setUint32(12 + offset + compressed.length, 0);
         view.setUint32(20 + offset + compressed.length, __IEND_CRC__);
         view.setUint32(29, crc32(new Uint8Array(array.buffer, 12, 17)));
-        view.setUint32(8 + offset + compressed.length, crc32(new Uint8Array(array.buffer, offset, 4 + compressed.length)));
+        view.setUint32(8 + offset + compressed.length, crc32(new Uint8Array(array.buffer, 4 + offset, 4 + compressed.length)));
 
         return array;
     },
