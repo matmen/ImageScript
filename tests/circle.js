@@ -1,6 +1,11 @@
 const fs = require('fs').promises;
 const {Image} = require('../ImageScript');
 
+const panic = message => {
+    console.error(message);
+    process.exit(1);
+};
+
 (async () => {
     {
         const image = new Image(512, 512);
@@ -9,7 +14,7 @@ const {Image} = require('../ImageScript');
         const encoded = await image.encode();
 
         const target = await fs.readFile('./tests/targets/circle.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('drawCircle 128 failed');
     }
 
     {
@@ -19,7 +24,7 @@ const {Image} = require('../ImageScript');
         const encoded = await image.encode();
 
         const target = await fs.readFile('./tests/targets/circle2.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('drawCircle 320 failed');
     }
 
     {
@@ -30,7 +35,7 @@ const {Image} = require('../ImageScript');
         const encoded = await image.encode();
 
         const target = await fs.readFile('./tests/targets/circle3.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('cropCircle failed');
     }
 
     {
@@ -41,6 +46,6 @@ const {Image} = require('../ImageScript');
         const encoded = await image.encode();
 
         const target = await fs.readFile('./tests/targets/circle4.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('cropCircle max feathering failed');
     }
 })();
