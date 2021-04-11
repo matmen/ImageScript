@@ -1,5 +1,6 @@
 let wasm;
 const streams = new Map;
+const utf8encoder = new TextEncoder;
 
 {
   const path = new URL(import.meta.url.replace('.js', '.wasm'));
@@ -64,7 +65,7 @@ export class Encoder {
   }
 
   set comment(comment) {
-    const buffer = Deno.core.encode(comment);
+    const buffer = utf8encoder.encode(comment);
 
     const ptr = mem.alloc(buffer.length);
     mem.u8(ptr, buffer.length).set(buffer);
@@ -72,7 +73,7 @@ export class Encoder {
   }
 
   set application(application) {
-    const buffer = Deno.core.encode(application);
+    const buffer = utf8encoder.encode(application);
 
     const ptr = mem.alloc(buffer.length);
     mem.u8(ptr, buffer.length).set(buffer);
