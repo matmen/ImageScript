@@ -100,7 +100,7 @@ class Decoder {
       delay: wasm.decoder_frame_delay(ptr),
       width: wasm.decoder_frame_width(ptr),
       height: wasm.decoder_frame_height(ptr),
-      dispose: wasm.decode_frame_dispose(ptr),
+      dispose: wasm.decoder_frame_dispose(ptr),
       buffer: mem.u8(wasm.decoder_frame_buffer(ptr), mem.length()).slice(),
     };
 
