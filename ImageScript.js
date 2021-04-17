@@ -1332,6 +1332,18 @@ class Frame extends Image {
 
         return frame;
     }
+
+    resize(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+        const originalWidth = this.width;
+        const originalHeight = this.height;
+
+        const result = super.resize(width, height, mode);
+
+        this.xOffset *= result.width / originalWidth;
+        this.yOffset *= result.height / originalHeight;
+
+        return result;
+    }
 }
 
 /**
@@ -1348,9 +1360,6 @@ class GIF extends Array {
     constructor(frames, loopCount = -1) {
         super(...frames);
 
-        this.width = Math.max(...frames.map(frame => frame.width));
-        this.height = Math.max(...frames.map(frame => frame.height));
-
         for (const frame of this)
             if (!(frame instanceof Frame))
                 throw new TypeError(`Frame ${this.indexOf(frame)} is not an instance of Frame`);
@@ -1359,6 +1368,28 @@ class GIF extends Array {
             throw new RangeError('Invalid loop count');
 
         this.loopCount = loopCount;
+    }
+
+    get width() {
+        let max = 0;
+        for (const frame of this) {
+            let width = frame.width + frame.xOffset;
+            if (max < width)
+                max = width;
+        }
+
+        return max;
+    }
+
+    get height() {
+        let max = 0;
+        for (const frame of this) {
+            let height = frame.height + frame.yOffset;
+            if (max < height)
+                max = height;
+        }
+
+        return max;
     }
 
     toString() {
@@ -1434,6 +1465,11 @@ class GIF extends Array {
         } else throw new Error('Unsupported image type');
 
         return image;
+    }
+
+    resize(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+        for (const frame of this)
+            frame.resize(width, height, mode);
     }
 }
 
