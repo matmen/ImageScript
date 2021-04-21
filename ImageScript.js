@@ -1161,8 +1161,8 @@ class Image {
                 Author: author,
                 Description: description,
                 Copyright: copyright,
-                'Creation Time': new Date(creationTime ?? Date.now()).toUTCString(),
-                Software: software ?? `github.com/matmen/ImageScript v${version}`,
+                'Creation Time': new Date(creationTime === undefined ? Date.now() : creationTime).toUTCString(),
+                Software: software === undefined ? `github.com/matmen/ImageScript v${version}` : software,
                 Disclaimer: disclaimer,
                 Warning: warning,
                 Source: source,
@@ -1487,38 +1487,38 @@ class GIF extends Array {
 class TextLayout {
     /**
      * Layout options for {@link renderText}
-     * @param {object} options
+     * @param {object} [options]
      * @param {number} [options.maxWidth=Infinity] The texts max width
      * @param {number} [options.maxHeight=Infinity] The texts max height
-     * @param {string} [options.wrapStyle='string'] The texts wrap style when reaching the max width (word, char)
+     * @param {string} [options.wrapStyle='word'] The texts wrap style when reaching the max width (word, char)
      * @param {string} [options.verticalAlign='left'] The vertical align mode (left, center, right)
      * @param {string} [options.horizontalAlign='top'] The horizontal align mode (top, middle, bottom)
      * @param {string} [options.wrapHardBreaks=true] Whether to force wrap at new line characters
      */
     constructor(options) {
-        const {maxWidth, maxHeight, wrapStyle, verticalAlign, horizontalAlign, wrapHardBreaks} = options ?? {};
+        const {maxWidth, maxHeight, wrapStyle, verticalAlign, horizontalAlign, wrapHardBreaks} = options || {};
 
-        this.maxWidth = maxWidth ?? Infinity;
+        this.maxWidth = maxWidth || Infinity;
         if (isNaN(this.maxWidth) || this.maxWidth < 1)
             throw new RangeError('Invalid maxWidth');
 
-        this.maxHeight = maxHeight ?? Infinity;
+        this.maxHeight = maxHeight || Infinity;
         if (isNaN(this.maxHeight) || this.maxHeight < 1)
             throw new RangeError('Invalid maxHeight');
 
-        this.wrapStyle = wrapStyle ?? 'word';
+        this.wrapStyle = wrapStyle || 'word';
         if (!['word', 'char'].includes(this.wrapStyle))
             throw new RangeError('Invalid wrapStyle');
 
-        this.verticalAlign = verticalAlign ?? 'left';
+        this.verticalAlign = verticalAlign || 'left';
         if (!['left', 'center', 'right'].includes(this.verticalAlign))
             throw new RangeError('Invalid verticalAlign');
 
-        this.horizontalAlign = horizontalAlign ?? 'top';
+        this.horizontalAlign = horizontalAlign || 'top';
         if (!['top', 'middle', 'bottom'].includes(this.horizontalAlign))
             throw new RangeError('Invalid horizontalAlign');
 
-        this.wrapHardBreaks = wrapHardBreaks ?? true;
+        this.wrapHardBreaks = wrapHardBreaks || true;
         if (typeof this.wrapHardBreaks !== 'boolean')
             throw new TypeError('Invalid wrapHardBreaks');
     }
