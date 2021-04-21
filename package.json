@@ -23,6 +23,6 @@
   },
   "homepage": "https://github.com/matmen/ImageScript#readme",
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=12.0.0"
   }
 }
