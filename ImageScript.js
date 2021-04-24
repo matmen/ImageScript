@@ -4,6 +4,7 @@ const svglib = require('./utils/wasm/svg');
 const jpeglib = require('./utils/wasm/jpeg');
 const tifflib = require('./utils/wasm/tiff');
 const giflib = require('./utils/wasm/gif');
+const {version} = require('./package.json');
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
