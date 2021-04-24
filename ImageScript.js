@@ -968,7 +968,7 @@ class Image {
         this.bitmap = image.bitmap;
 
         if (image instanceof Frame)
-            return Frame.from(this, image.duration);
+            return Frame.from(this, image.duration, image.xOffset, image.yOffset, image.disposalMode);
 
         return this;
     }
@@ -1340,15 +1340,40 @@ class Image {
  */
 class Frame extends Image {
     /**
+     * GIF frame disposal mode KEEP. For use with {@link Frame}
+     * @returns {number}
+     */
+    static get DISPOSAL_KEEP() {
+        return 1;
+    }
+
+    /**
+     * GIF frame disposal mode PREVIOUS. For use with {@link Frame}
+     * @returns {number}
+     */
+    static get DISPOSAL_PREVIOUS() {
+        return 2;
+    }
+
+    /**
+     * GIF frame disposal mode BACKGROUND. For use with {@link Frame}
+     * @returns {number}
+     */
+    static get DISPOSAL_BACKGROUND() {
+        return 3;
+    }
+
+    /**
      * Creates a new, blank frame
      * @param {number} width
      * @param {number} height
      * @param {number} [duration = 100] The frames duration (in ms)
      * @param {number} [xOffset=0] The frames offset on the x-axis
      * @param {number} [yOffset=0] The frames offset on the y-axis
+     * @param {number} [disposalMode=Frame.DISPOSAL_KEEP] The frames disposal mode
      * @return {Frame}
      */
-    constructor(width, height, duration = 100, xOffset = 0, yOffset = 0) {
+    constructor(width, height, duration = 100, xOffset = 0, yOffset = 0, disposalMode = Frame.DISPOSAL_KEEP) {
         if (isNaN(duration) || duration < 0)
             throw new RangeError('Invalid frame duration');
 
@@ -1356,6 +1381,7 @@ class Frame extends Image {
         this.duration = duration;
         this.xOffset = xOffset;
         this.yOffset = yOffset;
+        this.disposalMode = disposalMode;
     }
 
     toString() {
@@ -1368,15 +1394,28 @@ class Frame extends Image {
      * @param {number} [duration = 100] The frames duration (in ms)
      * @param {number} [xOffset=0] The frames offset on the x-axis
      * @param {number} [yOffset=0] The frames offset on the y-axis
+     * @param {number} [disposalMode=Frame.DISPOSAL_KEEP] The frames disposal mode
      * @return {Frame}
      */
-    static from(image, duration, xOffset, yOffset) {
+    static from(image, duration, xOffset, yOffset, disposalMode = Frame.DISPOSAL_KEEP) {
         if (!(image instanceof Image))
             throw new TypeError('Invalid image passed');
-        const frame = new Frame(image.width, image.height, duration, xOffset, yOffset);
+        const frame = new Frame(image.width, image.height, duration, xOffset, yOffset, disposalMode);
         frame.bitmap.set(image.bitmap);
 
         return frame;
+    }
+
+    resize(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+        const originalWidth = this.width;
+        const originalHeight = this.height;
+
+        const result = super.resize(width, height, mode);
+
+        this.xOffset *= result.width / originalWidth;
+        this.yOffset *= result.height / originalHeight;
+
+        return result;
     }
 }
 
@@ -1394,9 +1433,6 @@ class GIF extends Array {
     constructor(frames, loopCount = -1) {
         super(...frames);
 
-        this.width = Math.max(...frames.map(frame => frame.width));
-        this.height = Math.max(...frames.map(frame => frame.height));
-
         for (const frame of this)
             if (!(frame instanceof Frame))
                 throw new TypeError(`Frame ${this.indexOf(frame)} is not an instance of Frame`);
@@ -1405,6 +1441,28 @@ class GIF extends Array {
             throw new RangeError('Invalid loop count');
 
         this.loopCount = loopCount;
+    }
+
+    get width() {
+        let max = 0;
+        for (const frame of this) {
+            let width = frame.width + frame.xOffset;
+            if (max < width)
+                max = width;
+        }
+
+        return max;
+    }
+
+    get height() {
+        let max = 0;
+        for (const frame of this) {
+            let height = frame.height + frame.yOffset;
+            if (max < height)
+                max = height;
+        }
+
+        return max;
     }
 
     toString() {
@@ -1438,7 +1496,7 @@ class GIF extends Array {
 
         for (const frame of this) {
             if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
-            encoder.add(frame.xOffset, frame.yOffset, ~~(frame.duration / 10), frame.width, frame.height, frame.bitmap, quality);
+            encoder.add(frame.xOffset, frame.yOffset, ~~(frame.duration / 10), frame.width, frame.height, frame.bitmap, frame.disposalMode, quality);
         }
 
         return encoder.u8();
@@ -1467,7 +1525,7 @@ class GIF extends Array {
             const decoder = new giflib.Decoder(data);
             let frames = [];
             for (const frameData of decoder.frames()) {
-                const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10, frameData.x, frameData.y);
+                const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10, frameData.x, frameData.y, frameData.dispose);
                 frame.bitmap.set(frameData.buffer);
                 frames.push(frame);
 
@@ -1481,6 +1539,11 @@ class GIF extends Array {
         } else throw new Error('Unsupported image type');
 
         return image;
+    }
+
+    resize(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+        for (const frame of this)
+            frame.resize(width, height, mode);
     }
 }
 

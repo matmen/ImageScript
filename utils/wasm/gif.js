@@ -3,6 +3,7 @@ const {promises: {readFile}} = require('fs');
 
 let wasm;
 const streams = new Map;
+const utf8encoder = new TextEncoder;
 
 class mem {
   static length() { return wasm.wlen(); }
@@ -46,10 +47,26 @@ class Encoder {
     return u8;
   }
 
-  add(x, y, delay, width, height, buffer, quality) {
+  add(x, y, delay, width, height, buffer, dispose, quality) {
     const ptr = mem.alloc(buffer.length);
     mem.u8(ptr, buffer.length).set(buffer);
-    wasm.encoder_add(this.ptr, ptr, buffer.length, x, y, width, height, delay, quality);
+    wasm.encoder_add(this.ptr, ptr, buffer.length, x, y, width, height, delay, dispose, quality);
+  }
+
+  set comment(comment) {
+    const buffer = utf8encoder.encode(comment);
+
+    const ptr = mem.alloc(buffer.length);
+    mem.u8(ptr, buffer.length).set(buffer);
+    wasm.encoder_add_comment(this.ptr, ptr, buffer.length);
+  }
+
+  set application(application) {
+    const buffer = utf8encoder.encode(application);
+
+    const ptr = mem.alloc(buffer.length);
+    mem.u8(ptr, buffer.length).set(buffer);
+    wasm.encoder_add_application(this.ptr, ptr, buffer.length);
   }
 }
 
@@ -85,6 +102,7 @@ class Decoder {
       delay: wasm.decoder_frame_delay(ptr),
       width: wasm.decoder_frame_width(ptr),
       height: wasm.decoder_frame_height(ptr),
+      dispose: wasm.decoder_frame_dispose(ptr),
       buffer: mem.u8(wasm.decoder_frame_buffer(ptr), mem.length()).slice(),
     };
 
