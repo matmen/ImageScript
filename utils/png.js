@@ -1,6 +1,6 @@
 const crc32 = require('./crc32.js');
 const BufferUtils = require('./buffer');
-const {init, compress, decompress} = require('./wasm/zlib.js');
+const {compress, decompress} = require('./zlib.js');
 
 const __IHDR__ = new Uint8Array([73, 72, 68, 82]);
 const __IDAT__ = new Uint8Array([73, 68, 65, 84]);
@@ -27,7 +27,7 @@ const channels_to_color_type = {
 const utf8encoder = new TextEncoder; // replace with latin1 encoder or iext
 
 module.exports = {
-    async encode(data, {text, width, height, channels, depth = 8, level = 0}) {
+    encode(data, {text, width, height, channels, depth = 8, level = 0}) {
         let offset = 0;
         let tmp_offset = 0;
         const row_length = width * channels;
@@ -65,7 +65,6 @@ module.exports = {
             text = BufferUtils.concat(...chunks);
         }
 
-        await init();
         offset = text ? text.length : 0;
         const compressed = compress(tmp, level);
         const array = new Uint8Array(49 + offset + HEAD.length + compressed.length);
@@ -95,7 +94,7 @@ module.exports = {
 
         return array;
     },
-    async decode(array) {
+    decode(array) {
         let view = new DataView(array.buffer, array.byteOffset, array.byteLength);
 
         const width = view.getUint32(16);
@@ -141,7 +140,6 @@ module.exports = {
                 break;
         }
 
-        await init();
         array = decompress(chunks.length === 1 ? chunks[0] : BufferUtils.concat(...chunks));
 
         while (offset < array.byteLength) {

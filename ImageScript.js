@@ -1135,7 +1135,7 @@ class Image {
 
     /**
      * Encodes the image into a PNG
-     * @param {number} compression The compression level to use (0-3)
+     * @param {number} compression The compression level to use (0-9)
      * @param {PNGMetadata} [meta={}] Image metadata
      * @return {Promise<Uint8Array>} The encoded data
      */
@@ -1151,7 +1151,7 @@ class Image {
         source,
         comment
     } = {}) {
-        return await png.encode(this.bitmap, {
+        return png.encode(this.bitmap, {
             width: this.width,
             height: this.height,
             level: compression,
