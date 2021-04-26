@@ -17,7 +17,7 @@ const panic = message => {
     const gif = new GIF(frames);
 
     {
-        const encoded = await gif.encode();
+        const encoded = await gif.encode(1);
 
         if (process.env.OVERWRITE_TEST)
             await fs.writeFile('./tests/targets/gif.gif', encoded);
