@@ -1,10 +1,12 @@
 const png = require('./utils/png');
+const codecs = require('./node/index.js');
 const fontlib = require('./utils/wasm/font');
 const svglib = require('./utils/wasm/svg');
 const jpeglib = require('./utils/wasm/jpeg');
 const tifflib = require('./utils/wasm/tiff');
 const giflib = require('./utils/wasm/gif');
 const {version} = require('./package.json');
+const { getHeapCodeStatistics } = require('node:v8');
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -1173,13 +1175,29 @@ class Image {
 
     /**
      * Encodes the image into a JPEG
-     * @param {number} [quality=90] The JPEG quality to use
+     * @param {number} [quality=90] The JPEG quality to use (1-100)
      * @return {Promise<Uint8Array>}
      */
     async encodeJPEG(quality = 90) {
-        await jpeglib.init();
-        return jpeglib.encode(this.bitmap, this.width, this.height, Math.max(1, Math.min(100, quality)));
+        return codecs.jpeg.encode_async(this.bitmap, {
+            quality,
+            width: this.width,
+            height: this.height,
+        });
     }
+
+        /**
+     * Encodes the image into a WEBP
+     * @param {null|number} [quality=null] The WEBP quality to use (0-100) (null is lossless)
+     * @return {Promise<Uint8Array>}
+     */
+         async encodeWEBP(quality = null) {
+            return codecs.webp.encode_async(this.bitmap, {
+                quality,
+                width: this.width,
+                height: this.height,
+            });
+        }
 
     /**
      * Decodes an image (PNG, JPEG or TIFF)
@@ -1487,19 +1505,29 @@ class GIF extends Array {
 
     /**
      * Encodes the image into a GIF
-     * @param {number} [quality=10] GIF quality ((best) 1..30 (worst))
+     * @param {number} [quality=95] GIF quality 0-100
      * @return {Promise<Uint8Array>} The encoded data
      */
-    async encode(quality = 10) {
-        await giflib.init();
-        const encoder = new giflib.Encoder(this.width, this.height, this.loopCount);
+    async encode(quality = 95) {
+        const encoder = new codecs.gif.encoder(this.width, this.height);
 
         for (const frame of this) {
             if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
-            encoder.add(frame.xOffset, frame.yOffset, ~~(frame.duration / 10), frame.width, frame.height, frame.bitmap, frame.disposalMode, quality);
+
+            encoder.add(frame.bitmap, {
+                quality,
+                x: frame.xOffset,
+                y: frame.yOffset,
+                width: frame.width,
+                speed: null, // 1-10
+                height: frame.height,
+                colors: null, // 2-256
+                delay: ~~(frame.duration / 10),
+                dispose: ['any', 'keep', 'previous', 'background'][frame.disposalMode],
+            });
         }
 
-        return encoder.u8();
+        return encoder.finish({ repeat: -1 === this.loopCount ? null : this.loopCount });
     }
 
     /**
