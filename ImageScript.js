@@ -1,10 +1,14 @@
 const png = require('./utils/png');
-const fontlib = require('./utils/wasm/font');
+const mem = require('./utils/buffer.js');
+const codecs = require('./node/index.js');
+const {version} = require('./package.json');
+
+// old
 const svglib = require('./utils/wasm/svg');
+const giflib = require('./utils/wasm/gif');
+const fontlib = require('./utils/wasm/font');
 const jpeglib = require('./utils/wasm/jpeg');
 const tifflib = require('./utils/wasm/tiff');
-const giflib = require('./utils/wasm/gif');
-const {version} = require('./package.json');
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -1135,7 +1139,7 @@ class Image {
 
     /**
      * Encodes the image into a PNG
-     * @param {number} compression The compression level to use (0-3)
+     * @param {number} compression The compression level to use (0-9)
      * @param {PNGMetadata} [meta={}] Image metadata
      * @return {Promise<Uint8Array>} The encoded data
      */
@@ -1151,7 +1155,7 @@ class Image {
         source,
         comment
     } = {}) {
-        return await png.encode(this.bitmap, {
+        return png.encode(this.bitmap, {
             width: this.width,
             height: this.height,
             level: compression,
@@ -1173,12 +1177,28 @@ class Image {
 
     /**
      * Encodes the image into a JPEG
-     * @param {number} [quality=90] The JPEG quality to use
+     * @param {number} [quality=90] The JPEG quality to use (1-100)
      * @return {Promise<Uint8Array>}
      */
     async encodeJPEG(quality = 90) {
-        await jpeglib.init();
-        return jpeglib.encode(this.bitmap, this.width, this.height, Math.max(1, Math.min(100, quality)));
+        return codecs.jpeg.encode_async(this.bitmap, {
+            quality,
+            width: this.width,
+            height: this.height,
+        });
+    }
+
+    /**
+     * Encodes the image into a WEBP
+     * @param {null|number} [quality=null] The WEBP quality to use (0-100) (null is lossless)
+     * @return {Promise<Uint8Array>}
+     */
+    async encodeWEBP(quality = null) {
+        return codecs.webp.encode_async(this.bitmap, {
+            quality,
+            width: this.width,
+            height: this.height,
+        });
     }
 
     /**
@@ -1189,22 +1209,15 @@ class Image {
     static async decode(data) {
         let image;
 
-        let view;
-        if (!ArrayBuffer.isView(data)) {
-            data = new Uint8Array(data);
-            view = new DataView(data.buffer);
-        } else {
-            data = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-            view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        }
+        data = mem.view(data);
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
         if (ImageType.isPNG(view)) { // PNG
             const {width, height, pixels} = await png.decode(data);
             image = new Image(width, height);
             image.bitmap.set(pixels);
         } else if (ImageType.isJPEG(view)) { // JPEG
-            await jpeglib.init();
-            const framebuffer = jpeglib.decode(data);
+            const framebuffer = (await jpeglib.init()).decode(data);
 
             const width = framebuffer.width;
             const height = framebuffer.height;
@@ -1233,8 +1246,7 @@ class Image {
                 }
             }
         } else if (ImageType.isTIFF(view)) { // TIFF
-            await tifflib.init();
-            const framebuffer = tifflib.decode(data);
+            const framebuffer = (await tifflib.init()).decode(data);
             image = new Image(framebuffer.width, framebuffer.height);
 
             image.bitmap.set(framebuffer.buffer);
@@ -1284,9 +1296,8 @@ class Image {
             throw new RangeError('SVG size must be >= 1')
 
         if (typeof svg === 'string') svg = Buffer.from(svg);
+        const framebuffer = (await svglib.init()).rasterize(svg, mode, size);
 
-        await svglib.init();
-        const framebuffer = svglib.rasterize(svg, mode, size);
         const image = new Image(framebuffer.width, framebuffer.height);
 
         image.bitmap.set(framebuffer.buffer);
@@ -1304,11 +1315,13 @@ class Image {
      * @return {Promise<Image>} The rendered text
      */
     static async renderText(font, scale, text, color = 0xffffffff, layout = new TextLayout()) {
-        await fontlib.init();
-        font = new fontlib.Font(scale, font);
+        const { Font, Layout } = await fontlib.init();
+
+        font = new Font(scale, font);
         const [r, g, b, a] = Image.colorToRGBA(color);
 
-        const layoutOptions = new fontlib.Layout();
+        const layoutOptions = new Layout();
+
         layoutOptions.reset({
             max_width: layout.maxWidth,
             max_height: layout.maxHeight,
@@ -1487,19 +1500,29 @@ class GIF extends Array {
 
     /**
      * Encodes the image into a GIF
-     * @param {number} [quality=10] GIF quality ((best) 1..30 (worst))
+     * @param {number} [quality=95] GIF quality 0-100
      * @return {Promise<Uint8Array>} The encoded data
      */
-    async encode(quality = 10) {
-        await giflib.init();
-        const encoder = new giflib.Encoder(this.width, this.height, this.loopCount);
+    async encode(quality = 95) {
+        const encoder = new codecs.gif.encoder(this.width, this.height);
 
         for (const frame of this) {
             if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
-            encoder.add(frame.xOffset, frame.yOffset, ~~(frame.duration / 10), frame.width, frame.height, frame.bitmap, frame.disposalMode, quality);
+
+            encoder.add(frame.bitmap, {
+                quality,
+                x: frame.xOffset,
+                y: frame.yOffset,
+                width: frame.width,
+                speed: null, // 1-10
+                height: frame.height,
+                colors: null, // 2-256
+                delay: ~~(frame.duration / 10),
+                dispose: ['any', 'keep', 'previous', 'background'][frame.disposalMode],
+            });
         }
 
-        return encoder.u8();
+        return encoder.finish({ repeat: -1 === this.loopCount ? null : this.loopCount });
     }
 
     /**
@@ -1510,20 +1533,13 @@ class GIF extends Array {
      */
     static async decode(data, onlyExtractFirstFrame = false) {
         let image;
-
-        let view;
-        if (!ArrayBuffer.isView(data)) {
-            data = new Uint8Array(data);
-            view = new DataView(data.buffer);
-        } else {
-            data = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-            view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        }
+        data = mem.view(data);
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
         if (ImageType.isGIF(view)) { // GIF
-            await giflib.init();
-            const decoder = new giflib.Decoder(data);
-            let frames = [];
+            const frames = [];
+            const decoder = new (await giflib.init()).Decoder(data);
+
             for (const frameData of decoder.frames()) {
                 const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10, frameData.x, frameData.y, frameData.dispose);
                 frame.bitmap.set(frameData.buffer);
