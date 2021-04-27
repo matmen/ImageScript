@@ -96,10 +96,10 @@ for (var i = 280; i < 288; ++i)
 var fdt = new u8(32);
 for (var i = 0; i < 32; ++i)
   fdt[i] = 5;
-var flm = /* @__PURE__ */ hMap(flt, 9, 0);
-var flrm = /* @__PURE__ */ hMap(flt, 9, 1);
-var fdm = /* @__PURE__ */ hMap(fdt, 5, 0);
-var fdrm = /* @__PURE__ */ hMap(fdt, 5, 1);
+var flm = hMap(flt, 9, 0);
+var flrm = hMap(flt, 9, 1);
+var fdm = hMap(fdt, 5, 0);
+var fdrm = hMap(fdt, 5, 1);
 var max = function (a) {
   var m = a[0];
   for (var i = 1; i < a.length; ++i) {
@@ -109,15 +109,15 @@ var max = function (a) {
   return m;
 };
 var bits = function (d, p, m) {
-  var o = p / 8 | 0;
+  var o = p >> 3 | 0;
   return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
 };
 var bits16 = function (d, p) {
-  var o = p / 8 | 0;
+  var o = p >> 3 | 0;
   return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
 };
 var shft = function (p) {
-  return (p / 8 | 0) + (p & 7 && 1);
+  return (p >> 3 | 0) + (p & 7 && 1);
 };
 var slc = function (v, s, e) {
   if (s == null || s < 0)
@@ -165,9 +165,9 @@ var inflt = function (dat, buf, st) {
         buf.set(dat.subarray(s, t), bt);
         st.b = bt += l, st.p = pos = t * 8;
         continue;
-      } else if (type == 1)
+      } else if (type === 1)
         lm = flrm, dm = fdrm, lbt = 9, dbt = 5;
-      else if (type == 2) {
+      else if (type === 2) {
         var hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
         var tl = hLit + bits(dat, pos + 5, 31) + 1;
         pos += 14;
@@ -187,11 +187,11 @@ var inflt = function (dat, buf, st) {
             ldt[i++] = s;
           } else {
             var c = 0, n = 0;
-            if (s == 16)
+            if (s === 16)
               n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
-            else if (s == 17)
+            else if (s === 17)
               n = 3 + bits(dat, pos, 7), pos += 3;
-            else if (s == 18)
+            else if (s === 18)
               n = 11 + bits(dat, pos, 127), pos += 7;
             while (n--)
               ldt[i++] = c;
@@ -226,7 +226,7 @@ var inflt = function (dat, buf, st) {
         throw "invalid length/literal";
       if (sym < 256)
         buf[bt++] = sym;
-      else if (sym == 256) {
+      else if (sym === 256) {
         lpos = pos, lm = null;
         break;
       } else {
@@ -266,17 +266,17 @@ var inflt = function (dat, buf, st) {
     if (lm)
       final = 1, st.m = lbt, st.d = dm, st.n = dbt;
   } while (!final);
-  return bt == buf.length ? buf : slc(buf, 0, bt);
+  return bt === buf.length ? buf : slc(buf, 0, bt);
 };
 var wbits = function (d, p, v) {
   v <<= p & 7;
-  var o = p / 8 | 0;
+  var o = p >> 3 | 0;
   d[o] |= v;
   d[o + 1] |= v >>> 8;
 };
 var wbits16 = function (d, p, v) {
   v <<= p & 7;
-  var o = p / 8 | 0;
+  var o = p >> 3 | 0;
   d[o] |= v;
   d[o + 1] |= v >>> 8;
   d[o + 2] |= v >>> 16;
@@ -291,7 +291,7 @@ var hTree = function (d, mb) {
   var t2 = t.slice();
   if (!s)
     return [et, 0];
-  if (s == 1) {
+  if (s === 1) {
     var v = new u8(t[0].s + 1);
     v[t[0].s] = 1;
     return [v, 1];
@@ -302,9 +302,9 @@ var hTree = function (d, mb) {
   t.push({ s: -1, f: 25001 });
   var l = t[0], r = t[1], i0 = 0, i1 = 1, i2 = 2;
   t[0] = { s: -1, f: l.f + r.f, l, r };
-  while (i1 != s - 1) {
+  while (i1 !== s - 1) {
     l = t[t[i0].f < t[i2].f ? i0++ : i2++];
-    r = t[i0 != i1 && t[i0].f < t[i2].f ? i0++ : i2++];
+    r = t[i0 !== i1 && t[i0].f < t[i2].f ? i0++ : i2++];
     t[i1++] = { s: -1, f: l.f + r.f, l, r };
   }
   var maxSym = t2[0].s;
@@ -338,7 +338,7 @@ var hTree = function (d, mb) {
     }
     for (; i >= 0 && dt; --i) {
       var i2_3 = t2[i].s;
-      if (tr[i2_3] == mb) {
+      if (tr[i2_3] === mb) {
         --tr[i2_3];
         ++dt;
       }
@@ -348,7 +348,7 @@ var hTree = function (d, mb) {
   return [new u8(tr), mbt];
 };
 var ln = function (n, l, d) {
-  return n.s == -1 ? Math.max(ln(n.l, l, d + 1), ln(n.r, l, d + 1)) : l[n.s] = d;
+  return n.s === -1 ? Math.max(ln(n.l, l, d + 1), ln(n.r, l, d + 1)) : l[n.s] = d;
 };
 var lc = function (c) {
   var s = c.length;
@@ -360,7 +360,7 @@ var lc = function (c) {
     cl[cli++] = v;
   };
   for (var i = 1; i <= s; ++i) {
-    if (c[i] == cln && i != s)
+    if (c[i] === cln && i !== s)
       ++cls;
     else {
       if (!cln && cls > 2) {
@@ -465,8 +465,8 @@ var wblk = function (dat, out, final, syms, lf, df, eb, li, bs, bl, p) {
   wbits16(out, p, lm[256]);
   return p + ll[256];
 };
-var deo = /* @__PURE__ */ new u32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
-var et = /* @__PURE__ */ new u8(0);
+var deo = new u32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
+var et = new u8(0);
 var dflt = function (dat, lvl, plvl, pre, post, lst) {
   var s = dat.length;
   var o = new u8(pre + s + 5 * (1 + Math.ceil(s / 7e3)) + post);
@@ -510,14 +510,14 @@ var dflt = function (dat, lvl, plvl, pre, post, lst) {
             df[j] = 0;
         }
         var l = 2, d = 0, ch_1 = c, dif = imod - pimod & 32767;
-        if (rem > 2 && hv == hsh(i - dif)) {
+        if (rem > 2 && hv === hsh(i - dif)) {
           var maxn = Math.min(n, rem) - 1;
           var maxd = Math.min(32767, i);
           var ml = Math.min(258, rem);
-          while (dif <= maxd && --ch_1 && imod != pimod) {
-            if (dat[i + l] == dat[i + l - dif]) {
+          while (dif <= maxd && --ch_1 && imod !== pimod) {
+            if (dat[i + l] === dat[i + l - dif]) {
               var nl = 0;
-              for (; nl < ml && dat[i + nl] == dat[i + nl - dif]; ++nl)
+              for (; nl < ml && dat[i + nl] === dat[i + nl - dif]; ++nl)
                 ;
               if (nl > l) {
                 l = nl, d = dif;
@@ -564,7 +564,7 @@ var adler = function () {
     p: function (d) {
       var n = a, m = b;
       var l = d.length;
-      for (var i = 0; i != l;) {
+      for (var i = 0; i !== l;) {
         var e = Math.min(i + 2655, l);
         for (; i < e; ++i)
           m += n += d[i];
@@ -586,11 +586,11 @@ var wbytes = function (d, b, v) {
     d[b] = v, v >>>= 8;
 };
 var zlh = function (c, o) {
-  var lv = o.level, fl2 = lv == 0 ? 0 : lv < 6 ? 1 : lv == 9 ? 3 : 2;
+  var lv = o.level, fl2 = lv === 0 ? 0 : lv < 6 ? 1 : lv === 9 ? 3 : 2;
   c[0] = 120, c[1] = fl2 << 6 | (fl2 ? 32 - 2 * fl2 : 1);
 };
 var zlv = function (d) {
-  if ((d[0] & 15) != 8 || d[0] >>> 4 > 7 || (d[0] << 8 | d[1]) % 31)
+  if ((d[0] & 15) !== 8 || d[0] >>> 4 > 7 || (d[0] << 8 | d[1]) % 31)
     throw "invalid zlib data";
   if (d[1] & 32)
     throw "invalid zlib data: preset dictionaries not supported";
