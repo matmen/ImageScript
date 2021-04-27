@@ -1185,18 +1185,18 @@ class Image {
         });
     }
 
-        /**
+    /**
      * Encodes the image into a WEBP
      * @param {null|number} [quality=null] The WEBP quality to use (0-100) (null is lossless)
      * @return {Promise<Uint8Array>}
      */
-         async encodeWEBP(quality = null) {
-            return codecs.webp.encode_async(this.bitmap, {
-                quality,
-                width: this.width,
-                height: this.height,
-            });
-        }
+    async encodeWEBP(quality = null) {
+        return codecs.webp.encode_async(this.bitmap, {
+            quality,
+            width: this.width,
+            height: this.height,
+        });
+    }
 
     /**
      * Decodes an image (PNG, JPEG or TIFF)

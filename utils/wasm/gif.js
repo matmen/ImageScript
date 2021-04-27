@@ -2,8 +2,8 @@ const {join} = require('path');
 const {promises: {readFile}} = require('fs');
 
 let wasm;
-const streams = new Map;
-const utf8encoder = new TextEncoder;
+// const streams = new Map;
+// const utf8encoder = new TextEncoder;
 
 class mem {
   static length() { return wasm.wlen(); }
@@ -18,57 +18,57 @@ class mem {
   }
 }
 
-class Encoder {
-  constructor(width, height, loops = -1) {
-    this.slices = [];
-    streams.set(0, this);
-    this.ptr = wasm.encoder_new(0, width, height, loops);
-  }
+// class Encoder {
+//   constructor(width, height, loops = -1) {
+//     this.slices = [];
+//     streams.set(0, this);
+//     this.ptr = wasm.encoder_new(0, width, height, loops);
+//   }
 
-  cb(buffer) {
-    this.slices.push(buffer);
-  }
+//   cb(buffer) {
+//     this.slices.push(buffer);
+//   }
 
-  free() {
-    this.ptr = wasm.encoder_free(this.ptr);
-    streams.delete(0);
-  }
+//   free() {
+//     this.ptr = wasm.encoder_free(this.ptr);
+//     streams.delete(0);
+//   }
 
-  u8() {
-    this.free();
-    let offset = 0;
-    const u8 = new Uint8Array(this.slices.reduce((sum, array) => sum + array.length, 0));
+//   u8() {
+//     this.free();
+//     let offset = 0;
+//     const u8 = new Uint8Array(this.slices.reduce((sum, array) => sum + array.length, 0));
 
-    for (const x of this.slices) {
-      u8.set(x, offset);
-      offset += x.length;
-    }
+//     for (const x of this.slices) {
+//       u8.set(x, offset);
+//       offset += x.length;
+//     }
 
-    return u8;
-  }
+//     return u8;
+//   }
 
-  add(x, y, delay, width, height, buffer, dispose, quality) {
-    const ptr = mem.alloc(buffer.length);
-    mem.u8(ptr, buffer.length).set(buffer);
-    wasm.encoder_add(this.ptr, ptr, buffer.length, x, y, width, height, delay, dispose, quality);
-  }
+//   add(x, y, delay, width, height, buffer, dispose, quality) {
+//     const ptr = mem.alloc(buffer.length);
+//     mem.u8(ptr, buffer.length).set(buffer);
+//     wasm.encoder_add(this.ptr, ptr, buffer.length, x, y, width, height, delay, dispose, quality);
+//   }
 
-  set comment(comment) {
-    const buffer = utf8encoder.encode(comment);
+//   set comment(comment) {
+//     const buffer = utf8encoder.encode(comment);
 
-    const ptr = mem.alloc(buffer.length);
-    mem.u8(ptr, buffer.length).set(buffer);
-    wasm.encoder_add_comment(this.ptr, ptr, buffer.length);
-  }
+//     const ptr = mem.alloc(buffer.length);
+//     mem.u8(ptr, buffer.length).set(buffer);
+//     wasm.encoder_add_comment(this.ptr, ptr, buffer.length);
+//   }
 
-  set application(application) {
-    const buffer = utf8encoder.encode(application);
+//   set application(application) {
+//     const buffer = utf8encoder.encode(application);
 
-    const ptr = mem.alloc(buffer.length);
-    mem.u8(ptr, buffer.length).set(buffer);
-    wasm.encoder_add_application(this.ptr, ptr, buffer.length);
-  }
-}
+//     const ptr = mem.alloc(buffer.length);
+//     mem.u8(ptr, buffer.length).set(buffer);
+//     wasm.encoder_add_application(this.ptr, ptr, buffer.length);
+//   }
+// }
 
 class Decoder {
   constructor(buffer, limit = 0) {
@@ -111,7 +111,7 @@ class Decoder {
 }
 
 module.exports = {
-  Encoder,
+  // Encoder,
   Decoder,
 
   async init() {
@@ -120,11 +120,11 @@ module.exports = {
     const instance = new WebAssembly.Instance(module, {
       env: {
         push_to_stream(id, ptr) {
-          streams.get(id).cb(mem.u8(ptr, mem.length()).slice());
+          // streams.get(id).cb(mem.u8(ptr, mem.length()).slice());
         },
       },
     });
-  
+
     wasm = instance.exports;
   }
 }

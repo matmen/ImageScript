@@ -16,11 +16,11 @@ class mem {
   }
 }
 
-function encode(buffer, width, height, quality) {
-  const ptr = mem.alloc(buffer.length);
-  mem.u8(ptr, buffer.length).set(buffer);
-  return mem.copy_and_free(wasm.encode(ptr, width, height, quality), mem.length());
-}
+// function encode(buffer, width, height, quality) {
+//   const ptr = mem.alloc(buffer.length);
+//   mem.u8(ptr, buffer.length).set(buffer);
+//   return mem.copy_and_free(wasm.encode(ptr, width, height, quality), mem.length());
+// }
 
 function decode(buffer, width, height) {
   const bptr = mem.alloc(buffer.length);
@@ -41,7 +41,7 @@ function decode(buffer, width, height) {
 }
 
 module.exports = {
-  encode,
+  // encode,
   decode,
 
   async init() {
