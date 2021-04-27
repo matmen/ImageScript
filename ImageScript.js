@@ -1220,8 +1220,7 @@ class Image {
             image = new Image(width, height);
             image.bitmap.set(pixels);
         } else if (ImageType.isJPEG(view)) { // JPEG
-            await jpeglib.init();
-            const framebuffer = jpeglib.decode(data);
+            const framebuffer = (await jpeglib.init()).decode(data);
 
             const width = framebuffer.width;
             const height = framebuffer.height;
@@ -1250,8 +1249,7 @@ class Image {
                 }
             }
         } else if (ImageType.isTIFF(view)) { // TIFF
-            await tifflib.init();
-            const framebuffer = tifflib.decode(data);
+            const framebuffer = (await tifflib.init()).decode(data);
             image = new Image(framebuffer.width, framebuffer.height);
 
             image.bitmap.set(framebuffer.buffer);
@@ -1301,9 +1299,8 @@ class Image {
             throw new RangeError('SVG size must be >= 1')
 
         if (typeof svg === 'string') svg = Buffer.from(svg);
+        const framebuffer = (await svglib.init()).rasterize(svg, mode, size);
 
-        await svglib.init();
-        const framebuffer = svglib.rasterize(svg, mode, size);
         const image = new Image(framebuffer.width, framebuffer.height);
 
         image.bitmap.set(framebuffer.buffer);
@@ -1321,11 +1318,13 @@ class Image {
      * @return {Promise<Image>} The rendered text
      */
     static async renderText(font, scale, text, color = 0xffffffff, layout = new TextLayout()) {
-        await fontlib.init();
-        font = new fontlib.Font(scale, font);
+        const { Font, Layout } = await fontlib.init();
+
+        font = new Font(scale, font);
         const [r, g, b, a] = Image.colorToRGBA(color);
 
-        const layoutOptions = new fontlib.Layout();
+        const layoutOptions = new Layout();
+
         layoutOptions.reset({
             max_width: layout.maxWidth,
             max_height: layout.maxHeight,
@@ -1548,9 +1547,9 @@ class GIF extends Array {
         }
 
         if (ImageType.isGIF(view)) { // GIF
-            await giflib.init();
-            const decoder = new giflib.Decoder(data);
-            let frames = [];
+            const frames = [];
+            const decoder = new (await giflib.init()).Decoder(data);
+
             for (const frameData of decoder.frames()) {
                 const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10, frameData.x, frameData.y, frameData.dispose);
                 frame.bitmap.set(frameData.buffer);
