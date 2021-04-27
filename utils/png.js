@@ -1,5 +1,5 @@
+const mem = require('./buffer.js');
 const crc32 = require('./crc32.js');
-const BufferUtils = require('./buffer');
 const {compress, decompress} = require('./zlib.js');
 
 const __IHDR__ = new Uint8Array([73, 72, 68, 82]);
@@ -62,7 +62,7 @@ module.exports = {
                 view.setUint32(chunk.length - 4, crc32(chunk.subarray(4, chunk.length - 4)));
             }
 
-            text = BufferUtils.concat(...chunks);
+            text = mem.from_parts(chunks);
         }
 
         offset = text ? text.length : 0;
@@ -140,7 +140,7 @@ module.exports = {
                 break;
         }
 
-        array = decompress(chunks.length === 1 ? chunks[0] : BufferUtils.concat(...chunks));
+        array = decompress(chunks.length === 1 ? chunks[0] : mem.from_parts(chunks));
 
         while (offset < array.byteLength) {
             const filter = array[offset++];

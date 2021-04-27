@@ -1,11 +1,14 @@
 const png = require('./utils/png');
+const mem = require('./utils/buffer.js');
 const codecs = require('./node/index.js');
-const fontlib = require('./utils/wasm/font');
+const {version} = require('./package.json');
+
+// old
 const svglib = require('./utils/wasm/svg');
+const giflib = require('./utils/wasm/gif');
+const fontlib = require('./utils/wasm/font');
 const jpeglib = require('./utils/wasm/jpeg');
 const tifflib = require('./utils/wasm/tiff');
-const giflib = require('./utils/wasm/gif');
-const {version} = require('./package.json');
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -1206,14 +1209,8 @@ class Image {
     static async decode(data) {
         let image;
 
-        let view;
-        if (!ArrayBuffer.isView(data)) {
-            data = new Uint8Array(data);
-            view = new DataView(data.buffer);
-        } else {
-            data = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-            view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        }
+        data = mem.view(data);
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
         if (ImageType.isPNG(view)) { // PNG
             const {width, height, pixels} = await png.decode(data);
@@ -1536,15 +1533,8 @@ class GIF extends Array {
      */
     static async decode(data, onlyExtractFirstFrame = false) {
         let image;
-
-        let view;
-        if (!ArrayBuffer.isView(data)) {
-            data = new Uint8Array(data);
-            view = new DataView(data.buffer);
-        } else {
-            data = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-            view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        }
+        data = mem.view(data);
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
         if (ImageType.isGIF(view)) { // GIF
             const frames = [];
