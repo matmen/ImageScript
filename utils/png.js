@@ -140,7 +140,7 @@ module.exports = {
                 break;
         }
 
-        array = decompress(chunks.length === 1 ? chunks[0] : mem.from_parts(chunks));
+        array = decompress(chunks.length === 1 ? chunks[0] : mem.from_parts(chunks), height + height * row_length);
 
         while (offset < array.byteLength) {
             const filter = array[offset++];

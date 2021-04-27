@@ -608,12 +608,14 @@ function unzlibSync(data, out) {
 }
 
 // bundle.js
-function decompress(buf) {
-  return unzlibSync(buf);
-}
 function compress(buf, level) {
   return zlibSync(buf, { level });
 }
+
+function decompress(buf, limit) {
+  return unzlibSync(buf, new Uint8Array(limit));
+}
+
 module.exports = {
   compress,
   decompress
