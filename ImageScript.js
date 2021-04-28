@@ -1599,9 +1599,11 @@ class GIF extends Array {
                         const y_offset = fx + gwidth * (y + fy) | 0;
 
                         for (let x = 0 | 0; x < width; x++) {
+                            const x_offset = x + y_offset;
+
                             if (0 === f8[3 + offset8])
-                            t32[x + y_offset] = u32[x + y_offset];
-                            else t32[x + y_offset] = f32[offset32];
+                            t32[x_offset] = u32[x_offset];
+                            else t32[x_offset] = f32[offset32];
 
                             offset32++;
                             offset8 += 4;
@@ -1614,13 +1616,15 @@ class GIF extends Array {
                         const y_offset = fx + gwidth * (y + fy) | 0;
 
                         for (let x = 0 | 0; x < width; x++) {
+                            const x_offset = x + y_offset;
+
                             if (0 === f8[3 + offset8])
-                            t32[x + y_offset] = u32[x + y_offset];
-                            else t32[x + y_offset] = f32[offset32];
+                            t32[x_offset] = u32[x_offset];
+                            else t32[x_offset] = f32[offset32];
 
                             offset32++;
                             offset8 += 4;
-                            u32[x + y_offset] = 0;
+                            u32[x_offset] = 0;
                         }
                     }
                 }
@@ -1631,13 +1635,15 @@ class GIF extends Array {
                         const y_offset = fx + gwidth * (y + fy) | 0;
 
                         for (let x = 0 | 0; x < width; x++) {
+                            const x_offset = x + y_offset;
+
                             if (0 === f8[3 + offset8])
-                            t32[x + y_offset] = u32[x + y_offset];
-                            else t32[x + y_offset] = f32[offset32];
+                            t32[x_offset] = u32[x_offset];
+                            else t32[x_offset] = f32[offset32];
 
                             offset32++;
                             offset8 += 4;
-                            u32[x + y_offset] = t32[x + y_offset];
+                            u32[x_offset] = t32[x_offset];
                         }
                     }
                 };
