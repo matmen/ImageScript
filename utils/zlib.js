@@ -563,7 +563,7 @@ var adler = function () {
   return {
     p: function (d) {
       var n = a, m = b;
-      var l = d.length;
+      var l = d.length | 0;
       for (var i = 0; i !== l;) {
         var e = Math.min(i + 2655, l);
         for (; i < e; ++i)

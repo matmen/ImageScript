@@ -78,8 +78,8 @@ class Image {
     }
 
     /**
-     * Yields an [x,y] array for every pixel in the image
-     * @yields {[number, number]} The coordinates of the pixel
+     * Yields an [x, y] array for every pixel in the image
+     * @yields {number[]} The coordinates of the pixel ([x, y])
      * @returns {void}
      */
     * [Symbol.iterator]() {
@@ -91,8 +91,8 @@ class Image {
     }
 
     /**
-     * Yields an [x,y,color] array for every pixel in the image
-     * @yields {[number, number, number]} The coordinates and color of the pixel
+     * Yields an [x, y, color] array for every pixel in the image
+     * @yields {number[]} The coordinates and color of the pixel ([x, y, color])
      */
     * iterateWithColors() {
         let offset = 0;
@@ -183,7 +183,7 @@ class Image {
      * @param g {number} (0..255)
      * @param b {number} (0..255)
      * @param a {number} (0..255)
-     * @returns {(number)[]} The HSLA values ([H, S, L, A])
+     * @returns {number[]} The HSLA values ([H, S, L, A])
      */
     static rgbaToHSLA(r, g, b, a) {
         r /= 255;
@@ -1310,8 +1310,8 @@ class Image {
      * @param {Uint8Array} font TrueType (ttf/ttc) or OpenType (otf) font buffer to use
      * @param {number} scale Font size to use
      * @param {string} text Text to render
-     * @param {number} color Text color to use
-     * @param {TextLayout} layout The text layout to use
+     * @param {number} [color=0xffffffff] Text color to use
+     * @param {TextLayout} [layout] The text layout to use
      * @return {Promise<Image>} The rendered text
      */
     static async renderText(font, scale, text, color = 0xffffffff, layout = new TextLayout()) {
@@ -1354,26 +1354,35 @@ class Image {
 class Frame extends Image {
     /**
      * GIF frame disposal mode KEEP. For use with {@link Frame}
-     * @returns {number}
+     * @returns {string}
      */
     static get DISPOSAL_KEEP() {
-        return 1;
+        return 'keep';
     }
 
     /**
      * GIF frame disposal mode PREVIOUS. For use with {@link Frame}
-     * @returns {number}
+     * @returns {string}
      */
     static get DISPOSAL_PREVIOUS() {
-        return 2;
+        return 'previous';
     }
 
     /**
      * GIF frame disposal mode BACKGROUND. For use with {@link Frame}
-     * @returns {number}
+     * @returns {string}
      */
     static get DISPOSAL_BACKGROUND() {
-        return 3;
+        return 'background';
+    }
+
+    static __convert_disposal_mode__(mode) {
+        if (typeof mode === 'string')
+            mode = ['any', 'keep', 'previous', 'background'].indexOf(mode);
+        if (mode < 0 || mode > 3)
+            throw new RangeError('Invalid disposal mode');
+
+        return mode;
     }
 
     /**
@@ -1383,12 +1392,14 @@ class Frame extends Image {
      * @param {number} [duration = 100] The frames duration (in ms)
      * @param {number} [xOffset=0] The frames offset on the x-axis
      * @param {number} [yOffset=0] The frames offset on the y-axis
-     * @param {number} [disposalMode=Frame.DISPOSAL_KEEP] The frames disposal mode
+     * @param {string|number} [disposalMode=Frame.DISPOSAL_KEEP] The frame's disposal mode ({@link Frame.DISPOSAL_KEEP}, {@link Frame.DISPOSAL_PREVIOUS} or {@link Frame.DISPOSAL_BACKGROUND})
      * @return {Frame}
      */
     constructor(width, height, duration = 100, xOffset = 0, yOffset = 0, disposalMode = Frame.DISPOSAL_KEEP) {
         if (isNaN(duration) || duration < 0)
             throw new RangeError('Invalid frame duration');
+
+        disposalMode = Frame.__convert_disposal_mode__(disposalMode);
 
         super(width, height);
         this.duration = duration;
@@ -1407,12 +1418,15 @@ class Frame extends Image {
      * @param {number} [duration = 100] The frames duration (in ms)
      * @param {number} [xOffset=0] The frames offset on the x-axis
      * @param {number} [yOffset=0] The frames offset on the y-axis
-     * @param {number} [disposalMode=Frame.DISPOSAL_KEEP] The frames disposal mode
+     * @param {string|number} [disposalMode=Frame.DISPOSAL_KEEP] The frames disposal mode ({@link Frame.DISPOSAL_KEEP}, {@link Frame.DISPOSAL_PREVIOUS} or {@link Frame.DISPOSAL_BACKGROUND})
      * @return {Frame}
      */
     static from(image, duration, xOffset, yOffset, disposalMode = Frame.DISPOSAL_KEEP) {
         if (!(image instanceof Image))
             throw new TypeError('Invalid image passed');
+
+        disposalMode = Frame.__convert_disposal_mode__(disposalMode);
+
         const frame = new Frame(image.width, image.height, duration, xOffset, yOffset, disposalMode);
         frame.bitmap.set(image.bitmap);
 
@@ -1456,6 +1470,10 @@ class GIF extends Array {
         this.loopCount = loopCount;
     }
 
+    /**
+     * The GIFs width
+     * @returns {number}
+     */
     get width() {
         let max = 0;
         for (const frame of this) {
@@ -1467,6 +1485,10 @@ class GIF extends Array {
         return max;
     }
 
+    /**
+     * The GIFs height
+     * @returns {number}
+     */
     get height() {
         let max = 0;
         for (const frame of this) {
@@ -1540,16 +1562,92 @@ class GIF extends Array {
             const frames = [];
             const decoder = new (await giflib.init()).Decoder(data);
 
-            for (const frameData of decoder.frames()) {
-                const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10, frameData.x, frameData.y, frameData.dispose);
-                frame.bitmap.set(frameData.buffer);
-                frames.push(frame);
+            if (onlyExtractFirstFrame) {
+                const first = decoder.frames().next().value;
+                const frame = new Frame(first.width, first.height, 10 * first.delay, first.x, first.y, first.dispose);
 
-                if (onlyExtractFirstFrame)
-                    break;
+                frame.bitmap.set(first.buffer);
+
+                frames.push(frame);
+                image = new GIF(frames);
             }
 
-            decoder.free();
+            const gwidth = decoder.width | 0;
+            const gheight = decoder.height | 0;
+            const u32 = new Uint32Array(decoder.width * decoder.height);
+            const u8 = new Uint8Array(u32.buffer, u32.byteOffset, u32.byteLength);
+
+            for (const frame of decoder.frames()) {
+                let offset8 = 0 | 0;
+                let offset32 = 0 | 0;
+                const fx = frame.x | 0;
+                const fy = frame.y | 0;
+                const f8 = frame.buffer;
+                const mode = frame.dispose;
+                const width = frame.width | 0;
+                const height = frame.height | 0;
+                const f32 = new Uint32Array(f8.buffer, f8.byteOffset, width * height);
+                const f = frames[frames.push(new Frame(gwidth, gheight, 10 * frame.delay, 0, 0, 3)) - 1];
+
+                const t8 = f.bitmap;
+                const t32 = new Uint32Array(t8.buffer);
+
+                t8.set(u8);
+
+                if (2 === mode) {
+                    for (let y = 0 | 0; y < height; y++) {
+                        const y_offset = fx + gwidth * (y + fy) | 0;
+
+                        for (let x = 0 | 0; x < width; x++) {
+                            const x_offset = x + y_offset;
+
+                            if (0 === f8[3 + offset8])
+                            t32[x_offset] = u32[x_offset];
+                            else t32[x_offset] = f32[offset32];
+
+                            offset32++;
+                            offset8 += 4;
+                        }
+                    }
+                }
+
+                else if (3 === mode) {
+                    for (let y = 0 | 0; y < height; y++) {
+                        const y_offset = fx + gwidth * (y + fy) | 0;
+
+                        for (let x = 0 | 0; x < width; x++) {
+                            const x_offset = x + y_offset;
+
+                            if (0 === f8[3 + offset8])
+                            t32[x_offset] = u32[x_offset];
+                            else t32[x_offset] = f32[offset32];
+
+                            offset32++;
+                            offset8 += 4;
+                            u32[x_offset] = 0;
+                        }
+                    }
+                }
+
+                else if (0 === mode || 1 === mode) {
+                    t8.set(u8)
+                    for (let y = 0 | 0; y < height; y++) {
+                        const y_offset = fx + gwidth * (y + fy) | 0;
+
+                        for (let x = 0 | 0; x < width; x++) {
+                            const x_offset = x + y_offset;
+
+                            if (0 === f8[3 + offset8])
+                            t32[x_offset] = u32[x_offset];
+                            else t32[x_offset] = f32[offset32];
+
+                            offset32++;
+                            offset8 += 4;
+                            u32[x_offset] = t32[x_offset];
+                        }
+                    }
+                };
+            }
 
             image = new GIF(frames);
         } else throw new Error('Unsupported image type');
@@ -1565,7 +1663,7 @@ class GIF extends Array {
 
 class TextLayout {
     /**
-     * Layout options for {@link renderText}
+     * Layout options for {@link Image.renderText}
      * @param {object} [options]
      * @param {number} [options.maxWidth=Infinity] The texts max width
      * @param {number} [options.maxHeight=Infinity] The texts max height

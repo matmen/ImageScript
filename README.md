@@ -27,10 +27,11 @@ binaries for decoding and encoding.
   , [composite](https://imagescript.dreadful.tech/Image.html#composite), ...)
 - Color manipulation functions ([invert](https://imagescript.dreadful.tech/Image.html##invert)
   , [hueShift](https://imagescript.dreadful.tech/Image.html##hueshift), ...)
-- Color information functions ([averageColor](https://imagescript.dreadful.tech/Image.html##averagecolor)
-  , [dominantColor](https://imagescript.dreadful.tech/Image.html##dominantcolor), ...)
-- Encoding images as [PNGs](https://imagescript.dreadful.tech/Image.html##encode)
-  , [JPEGs](https://imagescript.dreadful.tech/Image.html##encodejpeg)
+- Color information functions ([averageColor](https://imagescript.dreadful.tech/Image.html#averageColor)
+  , [dominantColor](https://imagescript.dreadful.tech/Image.html#dominantColor), ...)
+- Encoding images as [PNGs](https://imagescript.dreadful.tech/Image.html#encode)
+  , [JPEGs](https://imagescript.dreadful.tech/Image.html#encodejpeg)
+  , [WEBPs](https://imagescript.dreadful.tech/Image.html#encodeWEBP)
   and [GIFs](https://imagescript.dreadful.tech/GIF.html#encode)
 
 ---
