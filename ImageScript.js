@@ -1562,16 +1562,86 @@ class GIF extends Array {
             const frames = [];
             const decoder = new (await giflib.init()).Decoder(data);
 
-            for (const frameData of decoder.frames()) {
-                const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10, frameData.x, frameData.y, frameData.dispose);
-                frame.bitmap.set(frameData.buffer);
-                frames.push(frame);
+            if (onlyExtractFirstFrame) {
+                const first = decoder.frames().next().value;
+                const frame = new Frame(first.width, first.height, 10 * first.delay, first.x, first.y, first.dispose);
 
-                if (onlyExtractFirstFrame)
-                    break;
+                frame.bitmap.set(first.buffer);
+
+                frames.push(frame);
+                image = new GIF(frames);
             }
 
-            decoder.free();
+            const gwidth = decoder.width | 0;
+            const gheight = decoder.height | 0;
+            const u32 = new Uint32Array(decoder.width * decoder.height);
+            const u8 = new Uint8Array(u32.buffer, u32.byteOffset, u32.byteLength);
+
+            for (const frame of decoder.frames()) {
+                let offset8 = 0 | 0;
+                let offset32 = 0 | 0;
+                const fx = frame.x | 0;
+                const fy = frame.y | 0;
+                const f8 = frame.buffer;
+                const mode = frame.dispose;
+                const width = frame.width | 0;
+                const height = frame.height | 0;
+                const f32 = new Uint32Array(f8.buffer, f8.byteOffset, width * height);
+                const f = frames[frames.push(new Frame(gwidth, gheight, 10 * frame.delay, 0, 0, 3)) - 1];
+
+                const t8 = f.bitmap;
+                const t32 = new Uint32Array(t8.buffer);
+
+                t8.set(u8);
+
+                if (2 === mode) {
+                    for (let y = 0 | 0; y < height; y++) {
+                        const y_offset = fx + gwidth * (y + fy) | 0;
+
+                        for (let x = 0 | 0; x < width; x++) {
+                            if (0 === f8[3 + offset8])
+                            t32[x + y_offset] = u32[x + y_offset];
+                            else t32[x + y_offset] = f32[offset32];
+
+                            offset32++;
+                            offset8 += 4;
+                        }
+                    }
+                }
+
+                else if (3 === mode) {
+                    for (let y = 0 | 0; y < height; y++) {
+                        const y_offset = fx + gwidth * (y + fy) | 0;
+
+                        for (let x = 0 | 0; x < width; x++) {
+                            if (0 === f8[3 + offset8])
+                            t32[x + y_offset] = u32[x + y_offset];
+                            else t32[x + y_offset] = f32[offset32];
+
+                            offset32++;
+                            offset8 += 4;
+                            u32[x + y_offset] = 0;
+                        }
+                    }
+                }
+
+                else if (0 === mode || 1 === mode) {
+                    t8.set(u8)
+                    for (let y = 0 | 0; y < height; y++) {
+                        const y_offset = fx + gwidth * (y + fy) | 0;
+
+                        for (let x = 0 | 0; x < width; x++) {
+                            if (0 === f8[3 + offset8])
+                            t32[x + y_offset] = u32[x + y_offset];
+                            else t32[x + y_offset] = f32[offset32];
+
+                            offset32++;
+                            offset8 += 4;
+                            u32[x + y_offset] = t32[x + y_offset];
+                        }
+                    }
+                };
+            }
 
             image = new GIF(frames);
         } else throw new Error('Unsupported image type');
