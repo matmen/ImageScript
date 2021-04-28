@@ -1378,8 +1378,8 @@ class Frame extends Image {
 
     static __convert_disposal_mode__(mode) {
         if (typeof mode === 'string')
-            mode = ['keep', 'previous', 'background'].indexOf(mode) + 1;
-        if (mode < 1 || mode > 3)
+            mode = ['any', 'keep', 'previous', 'background'].indexOf(mode);
+        if (mode < 0 || mode > 3)
             throw new RangeError('Invalid disposal mode');
 
         return mode;
@@ -1392,7 +1392,7 @@ class Frame extends Image {
      * @param {number} [duration = 100] The frames duration (in ms)
      * @param {number} [xOffset=0] The frames offset on the x-axis
      * @param {number} [yOffset=0] The frames offset on the y-axis
-     * @param {string|number} [disposalMode=Frame.DISPOSAL_KEEP] The frames disposal mode ({@link Frame.DISPOSAL_KEEP}, {@link Frame.DISPOSAL_PREVIOUS} or {@link Frame.DISPOSAL_BACKGROUND})
+     * @param {string} [disposalMode=] The frames disposal mode ({@link Frame.DISPOSAL_KEEP}, {@link Frame.DISPOSAL_PREVIOUS} or {@link Frame.DISPOSAL_BACKGROUND})
      * @return {Frame}
      */
     constructor(width, height, duration = 100, xOffset = 0, yOffset = 0, disposalMode = Frame.DISPOSAL_KEEP) {
