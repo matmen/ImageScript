@@ -1,5 +1,7 @@
 old/
 .idea/
-.nyc_output/
 coverage/
+.DS_Store
+.nyc_output/
 node_modules/
+utils/zlib.js

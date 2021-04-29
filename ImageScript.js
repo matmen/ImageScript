@@ -1,10 +1,11 @@
 const png = require('./utils/png');
-const fontlib = require('./utils/wasm/font');
+const mem = require('./utils/buffer.js');
+const giflib = require('./utils/wasm/gif');
 const svglib = require('./utils/wasm/svg');
+const {version} = require('./package.json');
+const fontlib = require('./utils/wasm/font');
 const jpeglib = require('./utils/wasm/jpeg');
 const tifflib = require('./utils/wasm/tiff');
-const giflib = require('./utils/wasm/gif');
-const {version} = require('./package.json');
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -74,8 +75,8 @@ class Image {
     }
 
     /**
-     * Yields an [x,y] array for every pixel in the image
-     * @yields {[number, number]} The coordinates of the pixel
+     * Yields an [x, y] array for every pixel in the image
+     * @yields {number[]} The coordinates of the pixel ([x, y])
      * @returns {void}
      */
     * [Symbol.iterator]() {
@@ -87,8 +88,8 @@ class Image {
     }
 
     /**
-     * Yields an [x,y,color] array for every pixel in the image
-     * @yields {[number, number, number]} The coordinates and color of the pixel
+     * Yields an [x, y, color] array for every pixel in the image
+     * @yields {number[]} The coordinates and color of the pixel ([x, y, color])
      */
     * iterateWithColors() {
         let offset = 0;
@@ -179,7 +180,7 @@ class Image {
      * @param g {number} (0..255)
      * @param b {number} (0..255)
      * @param a {number} (0..255)
-     * @returns {(number)[]} The HSLA values ([H, S, L, A])
+     * @returns {number[]} The HSLA values ([H, S, L, A])
      */
     static rgbaToHSLA(r, g, b, a) {
         r /= 255;
@@ -369,6 +370,7 @@ class Image {
         return this.__apply__(image);
     }
 
+    /** @private */
     __scale__(factor, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
         if (factor === 1) return this;
         return this.__resize__(this.width * factor, this.height * factor, mode);
@@ -387,6 +389,7 @@ class Image {
         return this.__apply__(image);
     }
 
+    /** @private */
     __resize__(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
         if (width === Image.RESIZE_AUTO && height === Image.RESIZE_AUTO) throw new Error('RESIZE_AUTO can only be used for either width or height, not for both');
         else if (width === Image.RESIZE_AUTO) width = this.width / this.height * height;
@@ -1133,7 +1136,7 @@ class Image {
 
     /**
      * Encodes the image into a PNG
-     * @param {number} compression The compression level to use (0-3)
+     * @param {number} compression The compression level to use (0-9)
      * @param {PNGMetadata} [meta={}] Image metadata
      * @return {Promise<Uint8Array>} The encoded data
      */
@@ -1149,7 +1152,7 @@ class Image {
         source,
         comment
     } = {}) {
-        return await png.encode(this.bitmap, {
+        return png.encode(this.bitmap, {
             width: this.width,
             height: this.height,
             level: compression,
@@ -1171,12 +1174,11 @@ class Image {
 
     /**
      * Encodes the image into a JPEG
-     * @param {number} [quality=90] The JPEG quality to use
+     * @param {number} [quality=90] The JPEG quality to use (1-100)
      * @return {Promise<Uint8Array>}
      */
     async encodeJPEG(quality = 90) {
-        await jpeglib.init();
-        return jpeglib.encode(this.bitmap, this.width, this.height, Math.max(1, Math.min(100, quality)));
+        return (await jpeglib.init()).encode(this.bitmap, this.width, this.height, quality);
     }
 
     /**
@@ -1187,22 +1189,15 @@ class Image {
     static async decode(data) {
         let image;
 
-        let view;
-        if (!ArrayBuffer.isView(data)) {
-            data = new Uint8Array(data);
-            view = new DataView(data.buffer);
-        } else {
-            data = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-            view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        }
+        data = mem.view(data);
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
         if (ImageType.isPNG(view)) { // PNG
-            const {width, height, pixels} = await png.decode(data);
+            const {width, height, pixels} = png.decode(data);
             image = new Image(width, height);
             image.bitmap.set(pixels);
         } else if (ImageType.isJPEG(view)) { // JPEG
-            await jpeglib.init();
-            const framebuffer = jpeglib.decode(data);
+            const framebuffer = (await jpeglib.init()).decode(data);
 
             const width = framebuffer.width;
             const height = framebuffer.height;
@@ -1231,8 +1226,7 @@ class Image {
                 }
             }
         } else if (ImageType.isTIFF(view)) { // TIFF
-            await tifflib.init();
-            const framebuffer = tifflib.decode(data);
+            const framebuffer = (await tifflib.init()).decode(data);
             image = new Image(framebuffer.width, framebuffer.height);
 
             image.bitmap.set(framebuffer.buffer);
@@ -1279,12 +1273,11 @@ class Image {
         if (mode === this.SVG_MODE_SCALE && size <= 0)
             throw new RangeError('SVG scale must be > 0');
         if (mode !== this.SVG_MODE_SCALE && size < 1)
-            throw new RangeError('SVG size must be >= 1');
+            throw new RangeError('SVG size must be >= 1')
 
         if (typeof svg === 'string') svg = new TextEncoder().encode(svg);
+        const framebuffer = (await svglib.init()).rasterize(svg, mode, size);
 
-        await svglib.init();
-        const framebuffer = svglib.rasterize(svg, mode, size);
         const image = new Image(framebuffer.width, framebuffer.height);
 
         image.bitmap.set(framebuffer.buffer);
@@ -1297,16 +1290,18 @@ class Image {
      * @param {Uint8Array} font TrueType (ttf/ttc) or OpenType (otf) font buffer to use
      * @param {number} scale Font size to use
      * @param {string} text Text to render
-     * @param {number} color Text color to use
-     * @param {TextLayout} layout The text layout to use
+     * @param {number} [color=0xffffffff] Text color to use
+     * @param {TextLayout} [layout] The text layout to use
      * @return {Promise<Image>} The rendered text
      */
     static async renderText(font, scale, text, color = 0xffffffff, layout = new TextLayout()) {
-        await fontlib.init();
-        font = new fontlib.Font(scale, font);
+        const { Font, Layout } = await fontlib.init();
+
+        font = new Font(scale, font);
         const [r, g, b, a] = Image.colorToRGBA(color);
 
-        const layoutOptions = new fontlib.Layout();
+        const layoutOptions = new Layout();
+
         layoutOptions.reset({
             max_width: layout.maxWidth,
             max_height: layout.maxHeight,
@@ -1336,29 +1331,38 @@ class Image {
  * Represents a frame in a GIF
  * @extends Image
  */
-class Frame extends Image {
+ class Frame extends Image {
     /**
      * GIF frame disposal mode KEEP. For use with {@link Frame}
-     * @returns {number}
+     * @returns {string}
      */
     static get DISPOSAL_KEEP() {
-        return 1;
+        return 'keep';
     }
 
     /**
      * GIF frame disposal mode PREVIOUS. For use with {@link Frame}
-     * @returns {number}
+     * @returns {string}
      */
     static get DISPOSAL_PREVIOUS() {
-        return 2;
+        return 'previous';
     }
 
     /**
      * GIF frame disposal mode BACKGROUND. For use with {@link Frame}
-     * @returns {number}
+     * @returns {string}
      */
     static get DISPOSAL_BACKGROUND() {
-        return 3;
+        return 'background';
+    }
+
+    static __convert_disposal_mode__(mode) {
+        if (typeof mode === 'string')
+            mode = ['any', 'keep', 'previous', 'background'].indexOf(mode);
+        if (mode < 0 || mode > 3)
+            throw new RangeError('Invalid disposal mode');
+
+        return mode;
     }
 
     /**
@@ -1368,12 +1372,14 @@ class Frame extends Image {
      * @param {number} [duration = 100] The frames duration (in ms)
      * @param {number} [xOffset=0] The frames offset on the x-axis
      * @param {number} [yOffset=0] The frames offset on the y-axis
-     * @param {number} [disposalMode=Frame.DISPOSAL_KEEP] The frames disposal mode
+     * @param {string|number} [disposalMode=Frame.DISPOSAL_KEEP] The frame's disposal mode ({@link Frame.DISPOSAL_KEEP}, {@link Frame.DISPOSAL_PREVIOUS} or {@link Frame.DISPOSAL_BACKGROUND})
      * @return {Frame}
      */
     constructor(width, height, duration = 100, xOffset = 0, yOffset = 0, disposalMode = Frame.DISPOSAL_KEEP) {
         if (isNaN(duration) || duration < 0)
             throw new RangeError('Invalid frame duration');
+
+        disposalMode = Frame.__convert_disposal_mode__(disposalMode);
 
         super(width, height);
         this.duration = duration;
@@ -1392,12 +1398,15 @@ class Frame extends Image {
      * @param {number} [duration = 100] The frames duration (in ms)
      * @param {number} [xOffset=0] The frames offset on the x-axis
      * @param {number} [yOffset=0] The frames offset on the y-axis
-     * @param {number} [disposalMode=Frame.DISPOSAL_KEEP] The frames disposal mode
+     * @param {string|number} [disposalMode=Frame.DISPOSAL_KEEP] The frames disposal mode ({@link Frame.DISPOSAL_KEEP}, {@link Frame.DISPOSAL_PREVIOUS} or {@link Frame.DISPOSAL_BACKGROUND})
      * @return {Frame}
      */
     static from(image, duration, xOffset, yOffset, disposalMode = Frame.DISPOSAL_KEEP) {
         if (!(image instanceof Image))
             throw new TypeError('Invalid image passed');
+
+        disposalMode = Frame.__convert_disposal_mode__(disposalMode);
+
         const frame = new Frame(image.width, image.height, duration, xOffset, yOffset, disposalMode);
         frame.bitmap.set(image.bitmap);
 
@@ -1441,6 +1450,10 @@ class GIF extends Array {
         this.loopCount = loopCount;
     }
 
+    /**
+     * The GIFs width
+     * @returns {number}
+     */
     get width() {
         let max = 0;
         for (const frame of this) {
@@ -1452,6 +1465,10 @@ class GIF extends Array {
         return max;
     }
 
+    /**
+     * The GIFs height
+     * @returns {number}
+     */
     get height() {
         let max = 0;
         for (const frame of this) {
@@ -1467,6 +1484,9 @@ class GIF extends Array {
         return `GIF<${this.width}x${this.height}x${this.duration}ms>`;
     }
 
+    /**
+     * @returns {Generator<Frame, void, *>}
+     */
     * [Symbol.iterator]() {
         for (let i = 0; i < this.length; i++)
             yield this[i];
@@ -1482,16 +1502,15 @@ class GIF extends Array {
 
     /**
      * Encodes the image into a GIF
-     * @param {number} [quality=10] GIF quality ((best) 1..30 (worst))
+     * @param {number} [quality=95] GIF quality 0-100
      * @return {Promise<Uint8Array>} The encoded data
      */
-    async encode(quality = 10) {
-        await giflib.init();
-        const encoder = new giflib.Encoder(this.width, this.height, this.loopCount);
+    async encode(quality = 95) {
+        const encoder = new (await giflib.init()).Encoder(this.width, this.height, this.loopCount);
 
         for (const frame of this) {
             if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
-            encoder.add(frame.xOffset, frame.yOffset, ~~(frame.duration / 10), frame.width, frame.height, frame.bitmap, frame.disposalMode, quality);
+            encoder.add(frame.xOffset, frame.yOffset, ~~(frame.duration / 10), frame.width, frame.height, frame.bitmap, frame.disposalMode, Math.abs(30/100 * quality - 29));
         }
 
         return encoder.u8();
@@ -1505,32 +1524,99 @@ class GIF extends Array {
      */
     static async decode(data, onlyExtractFirstFrame = false) {
         let image;
-
-        let view;
-        if (!ArrayBuffer.isView(data)) {
-            data = new Uint8Array(data);
-            view = new DataView(data.buffer);
-        } else {
-            data = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-            view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        }
-
-        await giflib.init();
+        data = mem.view(data);
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
         if (ImageType.isGIF(view)) { // GIF
-            await giflib.init();
-            const decoder = new giflib.Decoder(data);
-            let frames = [];
-            for (const frameData of decoder.frames()) {
-                const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10, frameData.x, frameData.y, frameData.dispose);
-                frame.bitmap.set(frameData.buffer);
-                frames.push(frame);
+            const frames = [];
+            const decoder = new (await giflib.init()).Decoder(data);
 
-                if (onlyExtractFirstFrame)
-                    break;
+            if (onlyExtractFirstFrame) {
+                const first = decoder.frames().next().value;
+                const frame = new Frame(first.width, first.height, 10 * first.delay, first.x, first.y, first.dispose);
+
+                frame.bitmap.set(first.buffer);
+
+                frames.push(frame);
+                image = new GIF(frames);
             }
 
-            decoder.free();
+            const gwidth = decoder.width | 0;
+            const gheight = decoder.height | 0;
+            const u32 = new Uint32Array(decoder.width * decoder.height);
+            const u8 = new Uint8Array(u32.buffer, u32.byteOffset, u32.byteLength);
+
+            for (const frame of decoder.frames()) {
+                let offset8 = 0 | 0;
+                let offset32 = 0 | 0;
+                const fx = frame.x | 0;
+                const fy = frame.y | 0;
+                const f8 = frame.buffer;
+                const mode = frame.dispose;
+                const width = frame.width | 0;
+                const height = frame.height | 0;
+                const f32 = new Uint32Array(f8.buffer, f8.byteOffset, width * height);
+                const f = frames[frames.push(new Frame(gwidth, gheight, 10 * frame.delay, 0, 0, 3)) - 1];
+
+                const t8 = f.bitmap;
+                const t32 = new Uint32Array(t8.buffer);
+
+                t8.set(u8);
+
+                if (2 === mode) {
+                    for (let y = 0 | 0; y < height; y++) {
+                        const y_offset = fx + gwidth * (y + fy) | 0;
+
+                        for (let x = 0 | 0; x < width; x++) {
+                            const x_offset = x + y_offset;
+
+                            if (0 === f8[3 + offset8])
+                            t32[x_offset] = u32[x_offset];
+                            else t32[x_offset] = f32[offset32];
+
+                            offset32++;
+                            offset8 += 4;
+                        }
+                    }
+                }
+
+                else if (3 === mode) {
+                    for (let y = 0 | 0; y < height; y++) {
+                        const y_offset = fx + gwidth * (y + fy) | 0;
+
+                        for (let x = 0 | 0; x < width; x++) {
+                            const x_offset = x + y_offset;
+
+                            if (0 === f8[3 + offset8])
+                            t32[x_offset] = u32[x_offset];
+                            else t32[x_offset] = f32[offset32];
+
+                            offset32++;
+                            offset8 += 4;
+                            u32[x_offset] = 0;
+                        }
+                    }
+                }
+
+                else if (0 === mode || 1 === mode) {
+                    t8.set(u8)
+                    for (let y = 0 | 0; y < height; y++) {
+                        const y_offset = fx + gwidth * (y + fy) | 0;
+
+                        for (let x = 0 | 0; x < width; x++) {
+                            const x_offset = x + y_offset;
+
+                            if (0 === f8[3 + offset8])
+                            t32[x_offset] = u32[x_offset];
+                            else t32[x_offset] = f32[offset32];
+
+                            offset32++;
+                            offset8 += 4;
+                            u32[x_offset] = t32[x_offset];
+                        }
+                    }
+                };
+            }
 
             image = new GIF(frames);
         } else throw new Error('Unsupported image type');
