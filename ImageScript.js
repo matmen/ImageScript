@@ -1510,7 +1510,7 @@ class GIF extends Array {
 
         for (const frame of this) {
             if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
-            encoder.add(frame.xOffset, frame.yOffset, ~~(frame.duration / 10), frame.width, frame.height, frame.bitmap, frame.disposalMode, Math.abs(30/100 * quality - 29));
+            encoder.add(frame.xOffset, frame.yOffset, ~~(frame.duration / 10), frame.width, frame.height, frame.bitmap, frame.disposalMode, quality / 100 * 29 + 1);
         }
 
         return encoder.u8();
@@ -1615,7 +1615,7 @@ class GIF extends Array {
                             u32[x_offset] = t32[x_offset];
                         }
                     }
-                };
+                }
             }
 
             image = new GIF(frames);
