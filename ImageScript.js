@@ -483,8 +483,10 @@ class Image {
      * @returns {Image}
      */
     drawBox(x, y, width, height, color) {
-        x -= 1;
-        y -= 1;
+        x = ~~(x - 1);
+        y = ~~(y - 1);
+        width = ~~width;
+        height = ~~height;
 
         if (typeof color === 'function') {
             for (let tY = 1; tY <= height; tY++) {
@@ -1646,7 +1648,7 @@ class GIF extends Array {
                             u32[x_offset] = t32[x_offset];
                         }
                     }
-                };
+                }
             }
 
             image = new GIF(frames);
