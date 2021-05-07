@@ -1564,16 +1564,6 @@ class GIF extends Array {
             const frames = [];
             const decoder = new (await giflib.init()).Decoder(data);
 
-            if (onlyExtractFirstFrame) {
-                const first = decoder.frames().next().value;
-                const frame = new Frame(first.width, first.height, 10 * first.delay, first.x, first.y, first.dispose);
-
-                frame.bitmap.set(first.buffer);
-
-                frames.push(frame);
-                image = new GIF(frames);
-            }
-
             const gwidth = decoder.width | 0;
             const gheight = decoder.height | 0;
             const u32 = new Uint32Array(decoder.width * decoder.height);
@@ -1640,7 +1630,7 @@ class GIF extends Array {
                             const x_offset = x + y_offset;
 
                             if (0 === f8[3 + offset8])
-                            t32[x_offset] = u32[x_offset];
+                                t32[x_offset] = u32[x_offset];
                             else t32[x_offset] = f32[offset32];
 
                             offset32++;
@@ -1649,6 +1639,9 @@ class GIF extends Array {
                         }
                     }
                 }
+
+                if (onlyExtractFirstFrame)
+                    break;
             }
 
             image = new GIF(frames);
