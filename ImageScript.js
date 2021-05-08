@@ -516,12 +516,12 @@ class Image {
     __fast_box__(x, y, width, height, color) {
         if (x < 0) {
             width += x;
-            x = 1;
+            x = 0;
         }
 
         if (y < 0) {
             height += y;
-            y = 1;
+            y = 0;
         }
 
         const right = Math.max(Math.min(x + width, this.width), 1);
