@@ -4,11 +4,11 @@ const codecs = require('./node/index.js');
 const {version} = require('./package.json');
 
 // old
-const svglib = require('./utils/wasm/svg');
-const giflib = require('./utils/wasm/gif');
-const fontlib = require('./utils/wasm/font');
-const jpeglib = require('./utils/wasm/jpeg');
-const tifflib = require('./utils/wasm/tiff');
+const svglib = require('./wasm/node/svg.js');
+const giflib = require('./wasm/node/gif.js');
+const fontlib = require('./wasm/node/font.js');
+const jpeglib = require('./wasm/node/jpeg.js');
+const tifflib = require('./wasm/node/tiff.js');
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
