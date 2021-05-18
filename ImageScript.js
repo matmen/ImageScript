@@ -1,5 +1,5 @@
-const png = require('./utils/png');
-const mem = require('./utils/buffer.js');
+const png = require('./png/node.js');
+const mem = require('./utils/mem.js');
 const codecs = require('./node/index.js');
 const {version} = require('./package.json');
 
