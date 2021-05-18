@@ -10,6 +10,8 @@ let mod = async () => {
 };
 
 module.exports = async function codecs() {
+  const wasm = new WebAssembly.Instance(await mod(), {});
+
   return {
     png: null,
     gif: null,

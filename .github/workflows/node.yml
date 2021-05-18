@@ -8,20 +8,17 @@ on:
 
 jobs:
   build:
-    name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    name: node ${{ matrix.version }} | ${{ matrix.os }}
 
     strategy:
       matrix:
-        version: [12.x, 14.x, 15.x, 16.x]
+        version: [14.x, 15.x, 16.x]
         os: [macos-latest, ubuntu-latest, windows-latest]
-
 
     steps:
     - uses: actions/checkout@v2
-    - name: node ${{ matrix.version }}
-
-      uses: actions/setup-node@v2
+    - uses: actions/setup-node@v2
       with:
         node-version: ${{ matrix.version }}
 
