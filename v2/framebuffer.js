@@ -1594,9 +1594,6 @@ var framebuffer = class {
     if (this.u8.length !== 4 * width * height)
       throw new Error("invalid capacity of buffer");
   }
-  get bitmap() {
-    return this.u8;
-  }
   [Symbol.iterator]() {
     return iterator_exports.cords(this);
   }
@@ -1606,26 +1603,26 @@ var framebuffer = class {
   clone() {
     return new framebuffer(this.width, this.height, this.u8.slice());
   }
-  get(x2, y) {
-    return this.view.getUint32(~~x2 - 1 + (~~y - 1) * this.width, false);
-  }
   toJSON() {
     return {width: this.width, height: this.height, buffer: Array.from(this.u8)};
   }
-  overlay(frame, x2 = 0, y = 0) {
-    return overlay_exports.overlay(this, frame, ~~x2, ~~y), this;
-  }
-  replace(frame, x2 = 0, y = 0) {
-    return overlay_exports.replace(this, frame, ~~x2, ~~y), this;
-  }
-  set(x2, y, color2) {
-    this.view.setUint32(~~x2 - 1 + (~~y - 1) * this.width, color2, false);
+  get(x2, y) {
+    return this.view.getUint32((x2 | 0) - 1 + ((y | 0) - 1) * this.width, false);
   }
   scale(type, factor) {
     return this.resize(type, factor * this.width, factor * this.height);
   }
+  overlay(frame, x2 = 0, y = 0) {
+    return overlay_exports.overlay(this, frame, x2 | 0, y | 0), this;
+  }
+  replace(frame, x2 = 0, y = 0) {
+    return overlay_exports.replace(this, frame, x2 | 0, y | 0), this;
+  }
+  set(x2, y, color2) {
+    this.view.setUint32((x2 | 0) - 1 + ((y | 0) - 1) * this.width, color2, false);
+  }
   at(x2, y) {
-    const offset = 4 * (~~x2 - 1 + (~~y - 1) * this.width);
+    const offset = 4 * ((x2 | 0) - 1 + ((y | 0) - 1) * this.width);
     return this.u8.subarray(offset, 4 + offset);
   }
   encode(type, options = {}) {
@@ -1648,7 +1645,7 @@ var framebuffer = class {
     if (type === "circle")
       return crop_exports.circle(arg0 || 0, this);
     else if (type === "box")
-      return crop_exports.cut(~~arg0, ~~arg1, ~~arg2, ~~arg3, this);
+      return crop_exports.cut(arg0 | 0, arg1 | 0, arg2 | 0, arg3 | 0, this);
     else
       throw new TypeError("invalid cut type");
   }
@@ -1656,7 +1653,7 @@ var framebuffer = class {
     if (type === "circle")
       crop_exports.circle(arg0 || 0, this);
     else if (type === "box")
-      crop_exports.crop(~~arg0, ~~arg1, ~~arg2, ~~arg3, this);
+      crop_exports.crop(arg0 | 0, arg1 | 0, arg2 | 0, arg3 | 0, this);
     else
       throw new TypeError("invalid crop type");
     return this;
@@ -1685,11 +1682,11 @@ var framebuffer = class {
     if (width === this.width && height === this.height)
       return this;
     else if (type === "cubic")
-      resize_exports.cubic(~~width, ~~height, this);
+      resize_exports.cubic(width, height, this);
     else if (type === "linear")
-      resize_exports.linear(~~width, ~~height, this);
+      resize_exports.linear(width, height, this);
     else if (type === "nearest")
-      resize_exports.nearest(~~width, ~~height, this);
+      resize_exports.nearest(width, height, this);
     else
       throw new TypeError("invalid resize type");
     return this;
