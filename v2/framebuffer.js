@@ -297,9 +297,9 @@ function gc(u82, old, tmp, width, height, k, a1, a2, a3, b1, b2, lc2, rc) {
   const width4 = width * 4;
   const hw1 = height * (width - 1);
   for (let y = 0; y < height; y++) {
-    let toffset = 0;
-    let ooffset = y * width4;
-    let offset = 4 * (y + hw1);
+    let toffset = 0 | 0;
+    let ooffset = y * width4 | 0;
+    let offset = 4 * (y + hw1) | 0;
     let por = old[ooffset];
     let pog = old[1 + ooffset];
     let pob = old[2 + ooffset];
@@ -313,10 +313,10 @@ function gc(u82, old, tmp, width, height, k, a1, a2, a3, b1, b2, lc2, rc) {
     let ppub = pub;
     let ppua = pua;
     for (let x2 = 0; x2 < width; x2++) {
-      const cor2 = old[ooffset];
-      const cog2 = old[1 + ooffset];
-      const cob2 = old[2 + ooffset];
-      const coa2 = old[3 + ooffset];
+      const cor2 = old[ooffset++];
+      const cog2 = old[ooffset++];
+      const cob2 = old[ooffset++];
+      const coa2 = old[ooffset++];
       const cur = k * cor2 + a1 * por + b1 * pur + b2 * ppur;
       const cug = k * cog2 + a1 * pog + b1 * pug + b2 * ppug;
       const cub = k * cob2 + a1 * pob + b1 * pub + b2 * ppub;
@@ -333,7 +333,6 @@ function gc(u82, old, tmp, width, height, k, a1, a2, a3, b1, b2, lc2, rc) {
       ppua = pua;
       pua = cua;
       poa = coa2;
-      ooffset += 4;
       tmp[toffset++] = pur;
       tmp[toffset++] = pug;
       tmp[toffset++] = pub;

@@ -211,9 +211,9 @@ function gc(u8, old, tmp, width, height, k, a1, a2, a3, b1, b2, lc, rc) {
   const width4 = width * 4;
   const hw1 = height * (width - 1);
   for (let y = 0; y < height; y++) {
-    let toffset = 0;
-    let ooffset = y * width4;
-    let offset = 4 * (y + hw1);
+    let toffset = 0 | 0;
+    let ooffset = (y * width4) | 0;
+    let offset = (4 * (y + hw1)) | 0;
 
     let por = old[ooffset];
     let pog = old[1 + ooffset];
@@ -231,10 +231,10 @@ function gc(u8, old, tmp, width, height, k, a1, a2, a3, b1, b2, lc, rc) {
     let ppua = pua;
 
     for (let x = 0; x < width; x++) {
-      const cor = old[ooffset];
-      const cog = old[1 + ooffset];
-      const cob = old[2 + ooffset];
-      const coa = old[3 + ooffset];
+      const cor = old[ooffset++];
+      const cog = old[ooffset++];
+      const cob = old[ooffset++];
+      const coa = old[ooffset++];
 
       const cur = k * cor + a1 * por + b1 * pur + b2 * ppur;
       const cug = k * cog + a1 * pog + b1 * pug + b2 * ppug;
@@ -246,7 +246,6 @@ function gc(u8, old, tmp, width, height, k, a1, a2, a3, b1, b2, lc, rc) {
       ppub = pub; pub = cub; pob = cob;
       ppua = pua; pua = cua; poa = coa;
 
-      ooffset += 4;
       tmp[toffset++] = pur;
       tmp[toffset++] = pug;
       tmp[toffset++] = pub;
