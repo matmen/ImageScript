@@ -1,7 +1,9 @@
 import { view } from './mem.js';
+import Color from './ops/color.js';
 import * as ops from './ops/index.js';
 import * as png from '../png/src/png.js';
 
+export { Color };
 export default class framebuffer {
   constructor(width, height, buffer) {
     this.width = width | 0;

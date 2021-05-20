@@ -2,7 +2,7 @@ const mem = require('./mem.js');
 const magic = require('./magic.js');
 const png = require('../png/node.js');
 const codecs = require('../node/index.js');
-const { default: framebuffer } = require('./framebuffer.js');
+const { Color, default: framebuffer } = require('./framebuffer.js');
 
 const wasm = {
   svg: require('../wasm/node/svg.js'),
@@ -26,9 +26,7 @@ async function load(buffer) {
   if (!all_formats.includes(meta.format)) throw new Error('unsupported image format');
 
   if ('gif' === meta.format) return Animation.decode('gif', u8);
-  const frame = 'png' === meta.format ? png.decode(u8) : (await wasm[meta.format].init()).load(u8);
-
-  return new Image(frame.width, frame.height, frame.buffer);
+  return Image.from('png' === meta.format ? png.decode(u8) : (await wasm[meta.format].init()).load(u8));
 }
 
 class Frame {
@@ -254,4 +252,4 @@ class Animation {
   }
 }
 
-module.exports = { load, Image, Frame, Animation };
+module.exports = { load, Image, Frame, Color, Animation };
