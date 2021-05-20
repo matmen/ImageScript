@@ -27,6 +27,10 @@ module.exports = {
       }
     }
 
+    function load(buffer) {
+      return [...new Decoder(buffer).frames()];
+    }
+
     class Decoder {
       constructor(buffer, limit = 0) {
         const bptr = mem.alloc(buffer.length);
@@ -67,6 +71,6 @@ module.exports = {
       }
     }
 
-    return { Decoder };
+    return { load, Decoder };
   }
 }

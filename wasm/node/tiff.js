@@ -42,6 +42,6 @@ module.exports = {
       return (wasm.decode_free(ptr), framebuffer);
     }
 
-    return { decode };
+    return { decode, load: decode };
   }
 }

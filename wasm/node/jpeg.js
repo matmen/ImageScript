@@ -45,6 +45,48 @@ module.exports = {
       return (wasm.decode_free(ptr), framebuffer);
     }
 
-    return { decode };
+    function load(buffer) {
+      const framebuffer = decode(buffer);
+    
+      const old = framebuffer.buffer;
+      if (2 !== framebuffer.format) framebuffer.buffer = new Uint8Array(4 * framebuffer.width * framebuffer.height);
+    
+      if (0 === framebuffer.format) {
+        let offset = 0;
+        const view = new DataView(framebuffer.buffer.buffer);
+        while (offset < old.length) view.setUint32(4 * offset, old[offset] << 24 | old[offset] << 16 | old[offset++] << 8 | 0xff, false);
+      }
+    
+      else if (2 === framebuffer.format) {
+        let offset = 0;
+        while (offset < old.length) {
+          const k = old[3 + offset];
+          old[offset] = k * old[offset++] / 255;
+          old[offset] = k * old[offset++] / 255;
+          old[offset] = k * old[offset++] / 255;
+    
+          old[offset++] = 0xff;
+        }
+      }
+    
+      else if (1 === framebuffer.format) {
+        let offset = 0;
+        let foffset = 0;
+        framebuffer.buffer.fill(0xff);
+        const length = 3 * framebuffer.width * framebuffer.height;
+    
+        while (offset < length) {
+          framebuffer.buffer[foffset++] = old[offset++];
+          framebuffer.buffer[foffset++] = old[offset++];
+          framebuffer.buffer[foffset++] = old[offset++];
+    
+          foffset++;
+        }
+      }
+    
+      return framebuffer;
+    }
+
+    return { load, decode };
   }
 }

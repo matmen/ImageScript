@@ -200,7 +200,7 @@ export function decode(array) {
     pixels = newPixels;
   }
 
-  return { width, height, pixels };
+  return { width, height, buffer: pixels };
 }
 
 function filter_1(slice, pixels, p_offset, bytespp, row_length) {
