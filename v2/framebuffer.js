@@ -1585,13 +1585,13 @@ function encode(data, {text, width, height, channels, depth = 8, level = 0}) {
 // v2/framebuffer.mjs
 var framebuffer = class {
   constructor(width, height, buffer) {
-    this.width = width;
-    this.height = height;
-    this.u8 = buffer ? (0, import_mem2.view)(buffer) : new Uint8Array(4 * width * height);
+    this.width = width | 0;
+    this.height = height | 0;
+    this.u8 = buffer ? (0, import_mem2.view)(buffer) : new Uint8Array(4 * this.width * this.height);
     this.view = new DataView(this.u8.buffer, this.u8.byteOffset, this.u8.byteLength);
     this.u32 = new Uint32Array(this.u8.buffer, this.u8.byteOffset, this.u8.byteLength / 4);
-    if (this.u8.length !== 4 * width * height)
-      throw new Error("invalid capacity of buffer");
+    if (this.u8.length !== 4 * this.width * this.height)
+      throw new TypeError("invalid capacity of buffer");
   }
   [Symbol.iterator]() {
     return iterator_exports.cords(this);
@@ -1623,6 +1623,9 @@ var framebuffer = class {
   at(x2, y) {
     const offset = 4 * ((x2 | 0) - 1 + ((y | 0) - 1) * this.width);
     return this.u8.subarray(offset, 4 + offset);
+  }
+  static from(framebuffer2) {
+    return new framebuffer2(framebuffer2.width, framebuffer2.height, framebuffer2.u8 || framebuffer2.buffer);
   }
   encode(type, options = {}) {
     var _a2;

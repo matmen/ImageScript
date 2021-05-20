@@ -4,12 +4,12 @@ import * as png from '../png/src/png.js';
 
 export default class framebuffer {
   constructor(width, height, buffer) {
-    this.width = width;
-    this.height = height;
-    this.u8 = buffer ? view(buffer) : new Uint8Array(4 * width * height);
+    this.width = width | 0;
+    this.height = height | 0;
+    this.u8 = buffer ? view(buffer) : new Uint8Array(4 * this.width * this.height);
     this.view = new DataView(this.u8.buffer, this.u8.byteOffset, this.u8.byteLength);
     this.u32 = new Uint32Array(this.u8.buffer, this.u8.byteOffset, this.u8.byteLength / 4);
-    if (this.u8.length !== 4 * width * height) throw new Error('invalid capacity of buffer');
+    if (this.u8.length !== 4 * this.width * this.height) throw new TypeError('invalid capacity of buffer');
   }
 
   [Symbol.iterator]() { return ops.iterator.cords(this); }
@@ -22,6 +22,7 @@ export default class framebuffer {
   replace(frame, x = 0, y = 0) { return (ops.overlay.replace(this, frame, x | 0, y | 0), this); }
   set(x, y, color) { this.view.setUint32(((x | 0) - 1) + ((y | 0) - 1) * this.width, color, false); }
   at(x, y) { const offset = 4 * (((x | 0) - 1) + ((y | 0) - 1) * this.width); return this.u8.subarray(offset, 4 + offset); }
+  static from(framebuffer) { return new framebuffer(framebuffer.width, framebuffer.height, framebuffer.u8 || framebuffer.buffer); }
 
   encode(type, options = {}) {
     if (type !== 'png') throw new Error('invalid image type');
