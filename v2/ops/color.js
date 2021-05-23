@@ -49,7 +49,7 @@ export function blend(fg, bg) {
 
 export function parse(any) {
   let x = null;
-  if (colors.has(any)) return colors.get(any);
+  if (undefined !== (x = colors.get(any))) return x;
   if (x = long_hex_regex.exec(any)) return parseInt(`${x[1]}${8 === x[1].length ? '' : 'ff'}`, 16);
   if (x = hsl_regex.exec(any)) return color.hsla(hue_from_type(x[1], x[2]), x[3] / 100, x[4] / 100, x[5] ? ((1 / 255) * parse_alpha(x[5])) : 1);
   if (x = rgb_regex.exec(any)) return color.rgba(clamp(0, 255, +x[1]), clamp(0, 255, +x[2]), clamp(0, 255, +x[3]), x[4] ? parse_alpha(x[4]) : 255);
@@ -74,13 +74,13 @@ export default class color {
   }
 
   static hsla(h, s, l, a) {
-    h %= 1;
     s = Math.min(1, Math.max(0, s));
-    l = Math.min(1, Math.max(0, l));
     a = Math.min(1, Math.max(0, a));
     if (s === 0) return this.rgba(255, 255, 255, a * 255);
 
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    h %= 1;
+    l = Math.min(1, Math.max(0, l));
+    const q = l < .5 ? l + s * l : l + s - l * s;
 
     const p = 2 * l - q;
     const g = hue2rgb(p, q, h);

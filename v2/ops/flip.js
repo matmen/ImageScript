@@ -1,22 +1,27 @@
 export function horizontal(framebuffer) {
-  for (let y = 0; y < framebuffer.height; y++) {
-    const offset = y * framebuffer.width;
-    framebuffer.u32.subarray(offset, offset + framebuffer.width).reverse();
+  let offset = 0 | 0;
+  const u32 = framebuffer.u32;
+  const width = framebuffer.width | 0;
+  const height = framebuffer.height | 0;
+
+  for (let y = 0 | 0; y < height; y++) {
+    u32.subarray(offset, offset += width).reverse();
   }
 }
 
 export function vertical(framebuffer) {
   const u32 = framebuffer.u32;
-  const width = framebuffer.width;
-  const oheight = framebuffer.height;
-  const height = ~~(framebuffer.height / 2);
+  const width = framebuffer.width | 0;
+  const oheight = framebuffer.height | 0;
+  const height = (framebuffer.height / 2) | 0;
 
-  for (let y = 0; y < height; y++) {
+  for (let y = 0 | 0; y < height; y++) {
+    const yo = y * width;
     const wo1y = width * (oheight - 1 - y);
 
-    for (let x = 0; x < width; x++) {
+    for (let x = 0 | 0; x < width; x++) {
+      const offset = x + yo;
       const offset2 = x + wo1y;
-      const offset = x + y * width;
 
       const top = u32[offset];
       const bottom = u32[offset2];

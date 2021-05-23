@@ -4,10 +4,13 @@ export function color(int, framebuffer) {
 }
 
 export function fn(cb, framebuffer) {
-  let offset = 0;
+  let offset = 0 | 0;
   const view = framebuffer.view;
-  for (let y = 1; y <= framebuffer.height; y++) {
-    for (let x = 1; x <= framebuffer.width; x++) {
+  const width = framebuffer.width | 0;
+  const height = framebuffer.height | 0;
+
+  for (let y = 1 | 0; y <= height; y++) {
+    for (let x = 1 | 0; x <= width; x++) {
       view.setUint32(offset, cb(x, y), false); offset += 4;
     }
   }

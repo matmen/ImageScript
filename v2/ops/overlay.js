@@ -17,18 +17,27 @@ export function replace(bg, fg, x, y) {
 }
 
 export function overlay(background, foreground, x, y) {
-  for (let yy = 0; yy < foreground.height; yy++) {
-    let y_offset = y + yy;
-    if (y_offset < 0) continue;
-    if (y_offset >= background.height) break;
+  x = x | 0;
+  y = y | 0;
+  const fwidth = foreground.width | 0;
+  const bwidth = background.width | 0;
+  const fheight = foreground.height | 0;
+  const bheight = background.height | 0;
 
-    for (let xx = 0; xx < foreground.width; xx++) {
-      let x_offset = x + xx;
-      if (x_offset < 0) continue;
-      if (x_offset >= background.width) break;
+  for (let yy = 0 | 0; yy < fheight; yy++) {
+    let yoffset = y + yy;
+    if (yoffset < 0) continue;
+    if (yoffset >= bheight) break;
 
-      const offset = 4 * (x_offset + y_offset * background.width);
-      const fg = foreground.view.getUint32(4 * (xx + yy * foreground.width), false);
+    yoffset = bwidth * yoffset;
+    const yyoffset = yy * fwidth;
+    for (let xx = 0 | 0; xx < fwidth; xx++) {
+      let xoffset = x + xx;
+      if (xoffset < 0) continue;
+      if (xoffset >= bwidth) break;
+
+      const offset = 4 * (xoffset + yoffset);
+      const fg = foreground.view.getUint32(4 * (xx + yyoffset), false);
 
       const bg = background.view.getUint32(offset, false);
       if ((fg & 0xff) === 0xff) background.view.setUint32(offset, fg, false);

@@ -4,24 +4,24 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __markAsModule = (target) => __defProp(target, "__esModule", {value: true});
+var __markAsModule = (target) => __defProp(target, "__esModule", { value: true });
 var __commonJS = (cb, mod) => function __require() {
-  return mod || (0, cb[Object.keys(cb)[0]])((mod = {exports: {}}).exports, mod), mod.exports;
+  return mod || (0, cb[Object.keys(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __export = (target, all) => {
   for (var name in all)
-    __defProp(target, name, {get: all[name], enumerable: true});
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
 var __reExport = (target, module2, desc) => {
   if (module2 && typeof module2 === "object" || typeof module2 === "function") {
     for (let key of __getOwnPropNames(module2))
       if (!__hasOwnProp.call(target, key) && key !== "default")
-        __defProp(target, key, {get: () => module2[key], enumerable: !(desc = __getOwnPropDesc(module2, key)) || desc.enumerable});
+        __defProp(target, key, { get: () => module2[key], enumerable: !(desc = __getOwnPropDesc(module2, key)) || desc.enumerable });
   }
   return target;
 };
 var __toModule = (module2) => {
-  return __reExport(__markAsModule(__defProp(module2 != null ? __create(__getProtoOf(module2)) : {}, "default", module2 && module2.__esModule && "default" in module2 ? {get: () => module2.default, enumerable: true} : {value: module2, enumerable: true})), module2);
+  return __reExport(__markAsModule(__defProp(module2 != null ? __create(__getProtoOf(module2)) : {}, "default", module2 && module2.__esModule && "default" in module2 ? { get: () => module2.default, enumerable: true } : { value: module2, enumerable: true })), module2);
 };
 
 // v2/mem.js
@@ -48,7 +48,7 @@ var require_mem = __commonJS({
       });
       return u82;
     }
-    module2.exports = {view: view3, from_parts: from_parts2};
+    module2.exports = { view: view3, from_parts: from_parts2 };
   }
 });
 
@@ -120,8 +120,8 @@ function blend(fg, bg) {
 }
 function parse(any) {
   let x2 = null;
-  if (colors.has(any))
-    return colors.get(any);
+  if ((x2 = colors.get(any)) !== void 0)
+    return x2;
   if (x2 = long_hex_regex.exec(any))
     return parseInt(`${x2[1]}${x2[1].length === 8 ? "" : "ff"}`, 16);
   if (x2 = hsl_regex.exec(any))
@@ -147,13 +147,13 @@ var color = class {
     return (r & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | a & 255;
   }
   static hsla(h, s, l, a) {
-    h %= 1;
     s = Math.min(1, Math.max(0, s));
-    l = Math.min(1, Math.max(0, l));
     a = Math.min(1, Math.max(0, a));
     if (s === 0)
       return this.rgba(255, 255, 255, a * 255);
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    h %= 1;
+    l = Math.min(1, Math.max(0, l));
+    const q = l < 0.5 ? l + s * l : l + s - l * s;
     const p = 2 * l - q;
     const g = hue2rgb(p, q, h);
     const r = hue2rgb(p, q, h + 1 / 3);
@@ -349,21 +349,24 @@ __export(flip_exports, {
   vertical: () => vertical
 });
 function horizontal(framebuffer2) {
-  for (let y = 0; y < framebuffer2.height; y++) {
-    const offset = y * framebuffer2.width;
-    framebuffer2.u32.subarray(offset, offset + framebuffer2.width).reverse();
-  }
+  let offset = 0 | 0;
+  const u323 = framebuffer2.u32;
+  const width = framebuffer2.width | 0;
+  const height = framebuffer2.height | 0;
+  for (let y = 0 | 0; y < height; y++)
+    u323.subarray(offset, offset += width).reverse();
 }
 function vertical(framebuffer2) {
   const u323 = framebuffer2.u32;
-  const width = framebuffer2.width;
-  const oheight = framebuffer2.height;
-  const height = ~~(framebuffer2.height / 2);
-  for (let y = 0; y < height; y++) {
+  const width = framebuffer2.width | 0;
+  const oheight = framebuffer2.height | 0;
+  const height = framebuffer2.height / 2 | 0;
+  for (let y = 0 | 0; y < height; y++) {
+    const yo = y * width;
     const wo1y = width * (oheight - 1 - y);
-    for (let x2 = 0; x2 < width; x2++) {
+    for (let x2 = 0 | 0; x2 < width; x2++) {
+      const offset = x2 + yo;
       const offset2 = x2 + wo1y;
-      const offset = x2 + y * width;
       const top = u323[offset];
       const bottom = u323[offset2];
       u323[offset2] = top;
@@ -383,10 +386,12 @@ function color2(int, framebuffer2) {
   framebuffer2.u32.fill(framebuffer2.u32[0]);
 }
 function fn(cb, framebuffer2) {
-  let offset = 0;
+  let offset = 0 | 0;
   const view3 = framebuffer2.view;
-  for (let y = 1; y <= framebuffer2.height; y++) {
-    for (let x2 = 1; x2 <= framebuffer2.width; x2++) {
+  const width = framebuffer2.width | 0;
+  const height = framebuffer2.height | 0;
+  for (let y = 1 | 0; y <= height; y++) {
+    for (let x2 = 1 | 0; x2 <= width; x2++) {
       view3.setUint32(offset, cb(x2, y), false);
       offset += 4;
     }
@@ -578,6 +583,7 @@ function bbt(u82, old, width, height, radius, divisor) {
 }
 function gc(u82, old, tmp, width, height, k, a1, a2, a3, b1, b2, lc2, rc) {
   const width4 = width * 4;
+  const height4 = height * 4;
   const hw1 = height * (width - 1);
   for (let y = 0; y < height; y++) {
     let toffset = 0 | 0;
@@ -662,7 +668,7 @@ function gc(u82, old, tmp, width, height, k, a1, a2, a3, b1, b2, lc2, rc) {
       u82[3 + offset] = pua + tmp[3 + toffset];
       ooffset -= 4;
       toffset -= 4;
-      offset -= 4 * height;
+      offset -= height4;
     }
   }
 }
@@ -675,7 +681,7 @@ __export(crop_exports, {
   cut: () => cut
 });
 function cut(x2, y, width, height, framebuffer2) {
-  const frame = new framebuffer2.constructor(width, height, framebuffer2.duration);
+  const frame = new framebuffer2.constructor(width, height);
   for (let yy = 0; yy < height; yy++) {
     const offset = x2 + (y + yy) * framebuffer2.width;
     frame.u32.set(framebuffer2.u32.subarray(offset, width + offset), yy * width);
@@ -726,11 +732,8 @@ function lerp(a, b, t) {
   return t * b + a * (1 - t);
 }
 function clamp2(min, int, max) {
-  if (min > int)
-    return min;
-  if (int > max)
-    return max;
-  return int;
+  const t = int < min ? min : int;
+  return t > max ? max : t;
 }
 function clamped(x2, y, width, height) {
   return 4 * (clamp2(0, x2, width - 1) + clamp2(0, y, height - 1) * width);
@@ -743,13 +746,21 @@ function hermite(A, B, C, D, t) {
   return B + c * t + b * t2 + a * t * t2;
 }
 function nearest(width, height, framebuffer2) {
+  width = width | 0;
+  height = height | 0;
   const old = framebuffer2.u32;
+  const fwidth = framebuffer2.width | 0;
+  const fheight = framebuffer2.height | 0;
   const u323 = framebuffer2.u32 = new Uint32Array(width * height);
-  for (let y = 0; y < height; y++) {
-    const y_offset = y * width;
-    const yy_offset = framebuffer2.width * ~~(y * framebuffer2.height / height);
-    for (let x2 = 0; x2 < width; x2++)
-      u323[x2 + y_offset] = old[yy_offset + ~~(x2 * framebuffer2.width / width)];
+  const dw = 1 / width;
+  const dh = 1 / height;
+  const xw = dw * fwidth;
+  const yw = dh * fheight;
+  for (let y = 0 | 0; y < height; y++) {
+    const yoffset = y * width;
+    const yyoffset = fwidth * (y * yw | 0);
+    for (let x2 = 0 | 0; x2 < width; x2++)
+      u323[x2 + yoffset] = old[yyoffset + (x2 * xw | 0)];
   }
   framebuffer2.width = width;
   framebuffer2.height = height;
@@ -757,20 +768,22 @@ function nearest(width, height, framebuffer2) {
   framebuffer2.view = new DataView(u323.buffer);
 }
 function linear(width, height, framebuffer2) {
+  width = width | 0;
+  height = height | 0;
   const old = framebuffer2.u8;
-  const old_width = framebuffer2.width;
-  const old_height = framebuffer2.height;
+  const old_width = framebuffer2.width | 0;
+  const old_height = framebuffer2.height | 0;
   const u82 = new Uint8ClampedArray(4 * width * height);
-  let offset = 0;
+  let offset = 0 | 0;
   const width1 = 1 / (width - 1);
   const height1 = 1 / (height - 1);
-  for (let y = 0; y < height; y++) {
+  for (let y = 0 | 0; y < height; y++) {
     const yy = old_height * (y * height1) - 0.5;
-    const yyi = ~~yy;
+    const yyi = yy | 0;
     const ty = yy - yyi;
-    for (let x2 = 0; x2 < width; x2++) {
+    for (let x2 = 0 | 0; x2 < width; x2++) {
       const xx = old_width * (x2 * width1) - 0.5;
-      const xxi = ~~xx;
+      const xxi = xx | 0;
       const tx = xx - xxi;
       const s0 = clamped(xxi, yyi, old_width, old_height);
       const s1 = clamped(1 + xxi, yyi, old_width, old_height);
@@ -789,20 +802,22 @@ function linear(width, height, framebuffer2) {
   framebuffer2.u32 = new Uint32Array(u82.buffer);
 }
 function cubic2(width, height, framebuffer2) {
+  width = width | 0;
+  height = height | 0;
   const old = framebuffer2.u8;
-  const old_width = framebuffer2.width;
-  const old_height = framebuffer2.height;
+  const old_width = framebuffer2.width | 0;
+  const old_height = framebuffer2.height | 0;
   const u82 = new Uint8ClampedArray(4 * width * height);
-  let offset = 0;
+  let offset = 0 | 0;
   const width1 = 1 / (width - 1);
   const height1 = 1 / (height - 1);
-  for (let y = 0; y < height; y++) {
+  for (let y = 0 | 0; y < height; y++) {
     const yy = old_height * (y * height1) - 0.5;
-    const yyi = ~~yy;
+    const yyi = yy | 0;
     const ty = yy - yyi;
-    for (let x2 = 0; x2 < width; x2++) {
+    for (let x2 = 0 | 0; x2 < width; x2++) {
       const xx = old_width * (x2 * width1) - 0.5;
-      const xxi = ~~xx;
+      const xxi = xx | 0;
       const tx = xx - xxi;
       const s0 = clamped(xxi - 1, yyi - 1, old_width, old_height);
       const s1 = clamped(0 + xxi, yyi - 1, old_width, old_height);
@@ -820,34 +835,26 @@ function cubic2(width, height, framebuffer2) {
       const s13 = clamped(0 + xxi, 2 + yyi, old_width, old_height);
       const s14 = clamped(1 + xxi, 2 + yyi, old_width, old_height);
       const s15 = clamped(2 + xxi, 2 + yyi, old_width, old_height);
-      {
-        const c0 = hermite(old[s0], old[s1], old[s2], old[s3], tx);
-        const c1 = hermite(old[s4], old[s5], old[s6], old[s7], tx);
-        const c2 = hermite(old[s8], old[s9], old[s10], old[s11], tx);
-        const c3 = hermite(old[s12], old[s13], old[s14], old[s15], tx);
-        u82[offset++] = hermite(c0, c1, c2, c3, ty);
-      }
-      {
-        const c0 = hermite(old[1 + s0], old[1 + s1], old[1 + s2], old[1 + s3], tx);
-        const c1 = hermite(old[1 + s4], old[1 + s5], old[1 + s6], old[1 + s7], tx);
-        const c2 = hermite(old[1 + s8], old[1 + s9], old[1 + s10], old[1 + s11], tx);
-        const c3 = hermite(old[1 + s12], old[1 + s13], old[1 + s14], old[1 + s15], tx);
-        u82[offset++] = hermite(c0, c1, c2, c3, ty);
-      }
-      {
-        const c0 = hermite(old[2 + s0], old[2 + s1], old[2 + s2], old[2 + s3], tx);
-        const c1 = hermite(old[2 + s4], old[2 + s5], old[2 + s6], old[2 + s7], tx);
-        const c2 = hermite(old[2 + s8], old[2 + s9], old[2 + s10], old[2 + s11], tx);
-        const c3 = hermite(old[2 + s12], old[2 + s13], old[2 + s14], old[2 + s15], tx);
-        u82[offset++] = hermite(c0, c1, c2, c3, ty);
-      }
-      {
-        const c0 = hermite(old[3 + s0], old[3 + s1], old[3 + s2], old[3 + s3], tx);
-        const c1 = hermite(old[3 + s4], old[3 + s5], old[3 + s6], old[3 + s7], tx);
-        const c2 = hermite(old[3 + s8], old[3 + s9], old[3 + s10], old[3 + s11], tx);
-        const c3 = hermite(old[3 + s12], old[3 + s13], old[3 + s14], old[3 + s15], tx);
-        u82[offset++] = hermite(c0, c1, c2, c3, ty);
-      }
+      const c0 = hermite(old[s0], old[s1], old[s2], old[s3], tx);
+      const c00 = hermite(old[1 + s0], old[1 + s1], old[1 + s2], old[1 + s3], tx);
+      const c000 = hermite(old[2 + s0], old[2 + s1], old[2 + s2], old[2 + s3], tx);
+      const c0000 = hermite(old[3 + s0], old[3 + s1], old[3 + s2], old[3 + s3], tx);
+      const c1 = hermite(old[s4], old[s5], old[s6], old[s7], tx);
+      const c11 = hermite(old[1 + s4], old[1 + s5], old[1 + s6], old[1 + s7], tx);
+      const c111 = hermite(old[2 + s4], old[2 + s5], old[2 + s6], old[2 + s7], tx);
+      const c1111 = hermite(old[3 + s4], old[3 + s5], old[3 + s6], old[3 + s7], tx);
+      const c2 = hermite(old[s8], old[s9], old[s10], old[s11], tx);
+      const c22 = hermite(old[1 + s8], old[1 + s9], old[1 + s10], old[1 + s11], tx);
+      const c222 = hermite(old[2 + s8], old[2 + s9], old[2 + s10], old[2 + s11], tx);
+      const c2222 = hermite(old[3 + s8], old[3 + s9], old[3 + s10], old[3 + s11], tx);
+      const c3 = hermite(old[s12], old[s13], old[s14], old[s15], tx);
+      const c33 = hermite(old[1 + s12], old[1 + s13], old[1 + s14], old[1 + s15], tx);
+      const c333 = hermite(old[2 + s12], old[2 + s13], old[2 + s14], old[2 + s15], tx);
+      const c3333 = hermite(old[3 + s12], old[3 + s13], old[3 + s14], old[3 + s15], tx);
+      u82[offset++] = hermite(c0, c1, c2, c3, ty);
+      u82[offset++] = hermite(c00, c11, c22, c33, ty);
+      u82[offset++] = hermite(c000, c111, c222, c333, ty);
+      u82[offset++] = hermite(c0000, c1111, c2222, c3333, ty);
     }
   }
   framebuffer2.width = width;
@@ -870,27 +877,29 @@ function rotate180(framebuffer2) {
 }
 function rotate90(framebuffer2) {
   const u323 = framebuffer2.u32;
-  const width = framebuffer2.width;
-  const height = framebuffer2.height;
   const old = framebuffer2.u32.slice();
+  const width = framebuffer2.width | 0;
+  const height = framebuffer2.height | 0;
   framebuffer2.width = height;
   framebuffer2.height = width;
-  for (let y = 0; y < width; y++) {
-    for (let x2 = 0; x2 < height; x2++) {
-      u323[x2 * width + (height - 1 - y)] = old[x2 + y * width];
-    }
+  for (let y = 0 | 0; y < width; y++) {
+    const yoffset = y * width;
+    const height1y = height - 1 - y;
+    for (let x2 = 0 | 0; x2 < height; x2++)
+      u323[height1y + x2 * width] = old[x2 + yoffset];
   }
 }
 function rotate270(framebuffer2) {
   const u323 = framebuffer2.u32;
-  const width = framebuffer2.width;
-  const height = framebuffer2.height;
   const old = framebuffer2.u32.slice();
+  const width = framebuffer2.width | 0;
+  const height = framebuffer2.height | 0;
   framebuffer2.width = height;
   framebuffer2.height = width;
-  for (let y = 0; y < width; y++) {
-    for (let x2 = 0; x2 < height; x2++) {
-      u323[y + width * (width - 1 - x2)] = old[x2 + y * width];
+  for (let y = 0 | 0; y < width; y++) {
+    const yoffset = y * width;
+    for (let x2 = 0 | 0; x2 < height; x2++) {
+      u323[y + width * (width - 1 - x2)] = old[x2 + yoffset];
     }
   }
 }
@@ -898,11 +907,11 @@ function rotate(deg, framebuffer2, resize) {
   const rad = Math.PI * ((360 - deg) / 180);
   const sin = Math.sin(rad);
   const cos = Math.cos(rad);
-  const width = ~~(resize ? Math.abs(framebuffer2.width * sin) + Math.abs(framebuffer2.height * cos) : framebuffer2.width);
-  const height = ~~(resize ? Math.abs(framebuffer2.width * cos) + Math.abs(framebuffer2.height * sin) : framebuffer2.height);
+  const width = (resize ? Math.abs(framebuffer2.width * sin) + Math.abs(framebuffer2.height * cos) : framebuffer2.width) | 0;
+  const height = (resize ? Math.abs(framebuffer2.width * cos) + Math.abs(framebuffer2.height * sin) : framebuffer2.height) | 0;
   const same_size = width === framebuffer2.width && height === framebuffer2.height;
   const inn = same_size ? framebuffer2.clone() : framebuffer2;
-  const out = {width, height, u8: same_size ? framebuffer2.u8 : new Uint8Array(4 * width * height)};
+  const out = { width, height, u8: same_size ? framebuffer2.u8 : new Uint8Array(4 * width * height) };
   const out_cx = width / 2 - 0.5;
   const out_cy = height / 2 - 0.5;
   const src_cx = framebuffer2.width / 2 - 0.5;
@@ -978,20 +987,28 @@ function replace(bg, fg, x2, y) {
   }
 }
 function overlay(background, foreground, x2, y) {
-  for (let yy = 0; yy < foreground.height; yy++) {
-    let y_offset = y + yy;
-    if (y_offset < 0)
+  x2 = x2 | 0;
+  y = y | 0;
+  const fwidth = foreground.width | 0;
+  const bwidth = background.width | 0;
+  const fheight = foreground.height | 0;
+  const bheight = background.height | 0;
+  for (let yy = 0 | 0; yy < fheight; yy++) {
+    let yoffset = y + yy;
+    if (yoffset < 0)
       continue;
-    if (y_offset >= background.height)
+    if (yoffset >= bheight)
       break;
-    for (let xx = 0; xx < foreground.width; xx++) {
-      let x_offset = x2 + xx;
-      if (x_offset < 0)
+    yoffset = bwidth * yoffset;
+    const yyoffset = yy * fwidth;
+    for (let xx = 0 | 0; xx < fwidth; xx++) {
+      let xoffset = x2 + xx;
+      if (xoffset < 0)
         continue;
-      if (x_offset >= background.width)
+      if (xoffset >= bwidth)
         break;
-      const offset = 4 * (x_offset + y_offset * background.width);
-      const fg = foreground.view.getUint32(4 * (xx + yy * foreground.width), false);
+      const offset = 4 * (xoffset + yoffset);
+      const fg = foreground.view.getUint32(4 * (xx + yyoffset), false);
       const bg = background.view.getUint32(offset, false);
       if ((fg & 255) === 255)
         background.view.setUint32(offset, fg, false);
@@ -1011,25 +1028,31 @@ __export(iterator_exports, {
   u32: () => u32
 });
 function* cords(framebuffer2) {
-  for (let y = 1; y <= framebuffer2.height; y++) {
-    for (let x2 = 1; x2 <= framebuffer2.width; x2++)
+  const width = framebuffer2.width | 0;
+  const height = framebuffer2.height | 0;
+  for (let y = 1 | 0; y <= height; y++) {
+    for (let x2 = 1 | 0; x2 <= width; x2++)
       yield [x2, y];
   }
 }
 function* rgba(framebuffer2) {
-  let offset = 0;
+  let offset = 0 | 0;
   const u82 = framebuffer2.u8;
-  for (let y = 1; y <= framebuffer2.height; y++) {
-    for (let x2 = 1; x2 <= framebuffer2.width; x2++) {
+  const width = framebuffer2.width | 0;
+  const height = framebuffer2.height | 0;
+  for (let y = 1 | 0; y <= height; y++) {
+    for (let x2 = 1 | 0; x2 <= width; x2++) {
       yield [x2, y, u82.subarray(offset, offset += 4)];
     }
   }
 }
 function* u32(framebuffer2) {
-  let offset = 0;
+  let offset = 0 | 0;
   const view3 = framebuffer2.view;
-  for (let y = 1; y <= framebuffer2.height; y++) {
-    for (let x2 = 1; x2 <= framebuffer2.width; x2++) {
+  const width = framebuffer2.width | 0;
+  const height = framebuffer2.height | 0;
+  for (let y = 1 | 0; y <= height; y++) {
+    for (let x2 = 1 | 0; x2 <= width; x2++) {
       yield [x2, y, view3.getUint32(offset, false)];
       offset += 4;
     }
@@ -1448,7 +1471,7 @@ var hTree = function(d, mb) {
   var t = [];
   for (var i = 0; i < d.length; ++i) {
     if (d[i])
-      t.push({s: i, f: d[i]});
+      t.push({ s: i, f: d[i] });
   }
   var s = t.length;
   var t2 = t.slice();
@@ -1462,13 +1485,13 @@ var hTree = function(d, mb) {
   t.sort(function(a, b) {
     return a.f - b.f;
   });
-  t.push({s: -1, f: 25001});
+  t.push({ s: -1, f: 25001 });
   var l = t[0], r = t[1], i0 = 0, i1 = 1, i2 = 2;
-  t[0] = {s: -1, f: l.f + r.f, l, r};
+  t[0] = { s: -1, f: l.f + r.f, l, r };
   while (i1 !== s - 1) {
     l = t[t[i0].f < t[i2].f ? i0++ : i2++];
     r = t[i0 !== i1 && t[i0].f < t[i2].f ? i0++ : i2++];
-    t[i1++] = {s: -1, f: l.f + r.f, l, r};
+    t[i1++] = { s: -1, f: l.f + r.f, l, r };
   }
   var maxSym = t2[0].s;
   for (var i = 1; i < s; ++i) {
@@ -1761,7 +1784,7 @@ function zlibSync(data, opts) {
   return zlh(d, opts), wbytes(d, d.length - 4, a.d()), d;
 }
 function compress(buf, level) {
-  return zlibSync(buf, {level});
+  return zlibSync(buf, { level });
 }
 
 // png/src/png.js
@@ -1784,7 +1807,7 @@ var channels_to_color_type = {
   4: color_types.TRUECOLOR_ALPHA
 };
 var utf8encoder = new TextEncoder();
-function encode(data, {text, width, height, channels, depth = 8, level = 0}) {
+function encode(data, { text, width, height, channels, depth = 8, level = 0 }) {
   let offset = 0;
   let tmp_offset = 0;
   const row_length = width * channels;
@@ -1863,7 +1886,7 @@ var framebuffer = class {
     return new framebuffer(this.width, this.height, this.u8.slice());
   }
   toJSON() {
-    return {width: this.width, height: this.height, buffer: Array.from(this.u8)};
+    return { width: this.width, height: this.height, buffer: Array.from(this.u8) };
   }
   get(x2, y) {
     return this.view.getUint32((x2 | 0) - 1 + ((y | 0) - 1) * this.width, false);
@@ -1892,7 +1915,7 @@ var framebuffer = class {
     if (type !== "png")
       throw new Error("invalid image type");
     else
-      return encode(this.u8, {channels: 4, width: this.width, height: this.height, level: (_a2 = {none: 0, fast: 3, default: 6, best: 9}[options.compression]) != null ? _a2 : 3});
+      return encode(this.u8, { channels: 4, width: this.width, height: this.height, level: (_a2 = { none: 0, fast: 3, default: 6, best: 9 }[options.compression]) != null ? _a2 : 3 });
   }
   flip(type) {
     if (type === "vertical")

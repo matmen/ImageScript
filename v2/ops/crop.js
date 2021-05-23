@@ -1,5 +1,5 @@
 export function cut(x, y, width, height, framebuffer) {
-  const frame = new framebuffer.constructor(width, height, framebuffer.duration);
+  const frame = new framebuffer.constructor(width, height);
 
   for (let yy = 0; yy < height; yy++) {
     const offset = x + (y + yy) * framebuffer.width;

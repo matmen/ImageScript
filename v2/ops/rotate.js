@@ -4,44 +4,50 @@ export function rotate180(framebuffer) {
 
 export function rotate90(framebuffer) {
   const u32 = framebuffer.u32;
-  const width = framebuffer.width;
-  const height = framebuffer.height;
   const old = framebuffer.u32.slice();
+  const width = framebuffer.width | 0;
+  const height = framebuffer.height | 0;
 
   framebuffer.width = height;
   framebuffer.height = width;
 
-  for (let y = 0; y < width; y++) {
-    for (let x = 0; x < height; x++) {
-      u32[x * width + (height - 1 - y)] = old[x + y * width];
+  for (let y = 0 | 0; y < width; y++) {
+    const yoffset = y * width;
+    const height1y = height - 1 - y;
+
+    for (let x = 0 | 0; x < height; x++) {
+      u32[height1y + x * width] = old[x + yoffset];
     }
   }
 }
 
 export function rotate270(framebuffer) {
   const u32 = framebuffer.u32;
-  const width = framebuffer.width;
-  const height = framebuffer.height;
   const old = framebuffer.u32.slice();
+  const width = framebuffer.width | 0;
+  const height = framebuffer.height | 0;
 
   framebuffer.width = height;
   framebuffer.height = width;
 
-  for (let y = 0; y < width; y++) {
-    for (let x = 0; x < height; x++) {
-      u32[y + width * (width - 1 - x)] = old[x + y * width];
+  for (let y = 0 | 0; y < width; y++) {
+    const yoffset = y * width;
+
+    for (let x = 0 | 0; x < height; x++) {
+      u32[y + width * (width - 1 - x)] = old[x + yoffset];
     }
   }
 }
 
+// broken?
 export function rotate(deg, framebuffer, resize) {
   const rad = Math.PI * ((360 - deg) / 180);
 
   const sin = Math.sin(rad);
   const cos = Math.cos(rad);
 
-  const width = ~~(resize ? Math.abs(framebuffer.width * sin) + Math.abs(framebuffer.height * cos) : framebuffer.width);
-  const height = ~~(resize ? Math.abs(framebuffer.width * cos) + Math.abs(framebuffer.height * sin) : framebuffer.height);
+  const width = (resize ? Math.abs(framebuffer.width * sin) + Math.abs(framebuffer.height * cos) : framebuffer.width) | 0;
+  const height = (resize ? Math.abs(framebuffer.width * cos) + Math.abs(framebuffer.height * sin) : framebuffer.height) | 0;
 
   const same_size = width === framebuffer.width && height === framebuffer.height;
 

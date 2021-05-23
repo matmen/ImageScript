@@ -209,6 +209,7 @@ function bbt(u8, old, width, height, radius, divisor) {
 
 function gc(u8, old, tmp, width, height, k, a1, a2, a3, b1, b2, lc, rc) {
   const width4 = width * 4;
+  const height4 = height * 4;
   const hw1 = height * (width - 1);
   for (let y = 0; y < height; y++) {
     let toffset = 0 | 0;
@@ -291,7 +292,7 @@ function gc(u8, old, tmp, width, height, k, a1, a2, a3, b1, b2, lc, rc) {
 
       ooffset -= 4;
       toffset -= 4;
-      offset -= 4 * height;
+      offset -= height4;
     }
   }
 }
