@@ -1,5 +1,5 @@
-import { view } from './mem.js';
 import Color from './ops/color.js';
+import { view } from './util/mem.js';
 import * as ops from './ops/index.js';
 import * as png from '../png/src/png.js';
 
@@ -16,7 +16,7 @@ export default class framebuffer {
 
   [Symbol.iterator]() { return ops.iterator.cords(this); }
   toString() { return `framebuffer<${this.width}x${this.height}>`; }
-  clone() { return new framebuffer(this.width, this.height, this.u8.slice()); }
+  clone() { return new this.constructor(this.width, this.height, this.u8.slice()); }
   toJSON() { return { width: this.width, height: this.height, buffer: Array.from(this.u8) } }
   get(x, y) { return this.view.getUint32(((x | 0) - 1) + ((y | 0) - 1) * this.width, false); }
   scale(type, factor) { return this.resize(type, factor * this.width, factor * this.height); }
@@ -24,11 +24,17 @@ export default class framebuffer {
   replace(frame, x = 0, y = 0) { return (ops.overlay.replace(this, frame, x | 0, y | 0), this); }
   set(x, y, color) { this.view.setUint32(((x | 0) - 1) + ((y | 0) - 1) * this.width, color, false); }
   at(x, y) { const offset = 4 * (((x | 0) - 1) + ((y | 0) - 1) * this.width); return this.u8.subarray(offset, 4 + offset); }
-  static from(framebuffer) { return new framebuffer(framebuffer.width, framebuffer.height, framebuffer.u8 || framebuffer.buffer); }
+  static from(framebuffer) { return new this(framebuffer.width, framebuffer.height, framebuffer.u8 || framebuffer.buffer); }
 
-  encode(type, options = {}) {
-    if (type !== 'png') throw new Error('invalid image type');
+  encode(format, options = {}) {
+    if (format !== 'png') throw new Error('invalid image type');
     else return png.encode(this.u8, { channels: 4, width: this.width, height: this.height, level: ({ none: 0, fast: 3, default: 6, best: 9 })[options.compression] ?? 3 });
+  }
+
+  decode(format, buffer) {
+    if ('png' === format) return framebuffer.from(png.decode(buffer));
+
+    throw new TypeError('invalid image format');
   }
 
   flip(type) {

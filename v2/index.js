@@ -1,6 +1,6 @@
-const mem = require('./mem.js');
-const magic = require('./magic.js');
+const mem = require('./util/mem.js');
 const png = require('../png/node.js');
+const magic = require('./codecs/magic.js');
 const codecs = require('../node/index.js');
 const { Color, default: framebuffer } = require('./framebuffer.js');
 
@@ -39,13 +39,21 @@ class Frame {
 
   get width() { return this.image.width; }
   get height() { return this.image.height; }
-  static from(framebuffer) { return new Frame(framebuffer.width, framebuffer.height, framebuffer.u8 || framebuffer.buffer); }
 
   clone() {
     const frame = new Frame(this.width, this.height, this.image.clone());
 
     frame.dispose = this.dispose;
     frame.timestamp = this.timestamp;
+
+    return frame;
+  }
+
+  static from(framebuffer) {
+    const frame = new Frame(framebuffer.width, framebuffer.height, framebuffer.u8 || framebuffer.buffer);
+
+    frame.dispose = framebuffer.dispose || 'any';
+    frame.timestamp = framebuffer.timestamp || 0;
 
     return frame;
   }
@@ -56,13 +64,11 @@ class Image extends framebuffer {
     super(width, height, buffer || new Uint8Array(4 * width * height));
   }
 
-  clone() { return new Image(this.width, this.height, this.u8.slice()); }
-  static from(framebuffer) { return new Image(framebuffer.width, framebuffer.height, framebuffer.u8 || framebuffer.buffer); }
-
-  async encode(format, options = {}) {
-    if ('png' === format) return codecs.png.encode(this.u8, { ...options, width: this.width, height: this.height });
-    if ('jpeg' === format) return codecs.jpeg.encode(this.u8, { ...options, width: this.width, height: this.height });
-    if ('webp' === format) return codecs.webp.encode(this.u8, { ...options, width: this.width, height: this.height });
+  encode(format, options = {}) {
+    const method = options.sync ? 'encode' : 'encode_async';
+    if ('png' === format) return codecs.png[method](this.u8, { ...options, width: this.width, height: this.height });
+    if ('jpeg' === format) return codecs.jpeg[method](this.u8, { ...options, width: this.width, height: this.height });
+    if ('webp' === format) return codecs.webp[method](this.u8, { ...options, width: this.width, height: this.height });
 
     throw new TypeError('invalid image format');
   }

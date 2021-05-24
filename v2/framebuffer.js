@@ -24,9 +24,9 @@ var __toModule = (module2) => {
   return __reExport(__markAsModule(__defProp(module2 != null ? __create(__getProtoOf(module2)) : {}, "default", module2 && module2.__esModule && "default" in module2 ? { get: () => module2.default, enumerable: true } : { value: module2, enumerable: true })), module2);
 };
 
-// v2/mem.js
+// v2/util/mem.js
 var require_mem = __commonJS({
-  "v2/mem.js"(exports, module2) {
+  "v2/util/mem.js"(exports, module2) {
     function view3(buffer, shared = false) {
       if (buffer instanceof ArrayBuffer)
         return new Uint8Array(buffer);
@@ -58,7 +58,6 @@ __export(exports, {
   Color: () => color_default,
   default: () => framebuffer_default
 });
-var import_mem2 = __toModule(require_mem());
 
 // v2/ops/color.js
 var color_exports = {};
@@ -74,8 +73,8 @@ var long_hex_regex = /^#?((?:[\da-f]{2}){3,4})$/;
 var rgb_regex = /^rgba?\((?<r>(?:\d*\.)?\d+)(?: +| *, *)(?<g>(?:\d*\.)?\d+)(?: +| *, *)(?<b>(?:\d*\.)?\d+)(?:(?: +| *, *)(?<a>\d+|\d*\.\d+|\d+(?:\.\d+)?%))?\)$/;
 var rgb_percentage_regex = /^rgba?\((?<r>(?:\d*\.)?\d+)%(?: +| *, *)(?<g>(?:\d*\.)?\d+)%(?: +| *, *)(?<b>(?:\d*\.)?\d+)%(?:(?: +| *, *)(?<a>\d+|\d*\.\d+|\d+(?:\.\d+)?%))?\)$/;
 var hsl_regex = /^hsla?\((?<h>(?:\d*\.)?\d+)(?<t>|deg|rad|grad|turn)(?: +| *, *)(?<s>(?:\d*\.)?\d+)%(?: +| *, *)(?<l>(?:\d*\.)?\d+)%(?:(?: +| *, *)(?<a>\d+|\d*\.\d+|\d+(?:\.\d+)?%))?\)$/;
-function clamp(min, max, int) {
-  return Math.min(Math.max(Math.round(int), min), max);
+function clamp(min, max2, int) {
+  return Math.min(Math.max(Math.round(int), min), max2);
 }
 function to_rgba(int) {
   return [int >> 24 & 255, int >> 16 & 255, int >> 8 & 255, int & 255];
@@ -342,6 +341,9 @@ var colors = new Map([
   ["yellowgreen", 2597139199]
 ]);
 
+// v2/framebuffer.mjs
+var import_mem2 = __toModule(require_mem());
+
 // v2/ops/flip.js
 var flip_exports = {};
 __export(flip_exports, {
@@ -353,8 +355,9 @@ function horizontal(framebuffer2) {
   const u323 = framebuffer2.u32;
   const width = framebuffer2.width | 0;
   const height = framebuffer2.height | 0;
-  for (let y = 0 | 0; y < height; y++)
+  for (let y = 0 | 0; y < height; y++) {
     u323.subarray(offset, offset += width).reverse();
+  }
 }
 function vertical(framebuffer2) {
   const u323 = framebuffer2.u32;
@@ -731,9 +734,9 @@ __export(resize_exports, {
 function lerp(a, b, t) {
   return t * b + a * (1 - t);
 }
-function clamp2(min, int, max) {
+function clamp2(min, int, max2) {
   const t = int < min ? min : int;
-  return t > max ? max : t;
+  return t > max2 ? max2 : t;
 }
 function clamped(x2, y, width, height) {
   return 4 * (clamp2(0, x2, width - 1) + clamp2(0, y, height - 1) * width);
@@ -759,8 +762,9 @@ function nearest(width, height, framebuffer2) {
   for (let y = 0 | 0; y < height; y++) {
     const yoffset = y * width;
     const yyoffset = fwidth * (y * yw | 0);
-    for (let x2 = 0 | 0; x2 < width; x2++)
+    for (let x2 = 0 | 0; x2 < width; x2++) {
       u323[x2 + yoffset] = old[yyoffset + (x2 * xw | 0)];
+    }
   }
   framebuffer2.width = width;
   framebuffer2.height = height;
@@ -885,8 +889,9 @@ function rotate90(framebuffer2) {
   for (let y = 0 | 0; y < width; y++) {
     const yoffset = y * width;
     const height1y = height - 1 - y;
-    for (let x2 = 0 | 0; x2 < height; x2++)
+    for (let x2 = 0 | 0; x2 < height; x2++) {
       u323[height1y + x2 * width] = old[x2 + yoffset];
+    }
   }
 }
 function rotate270(framebuffer2) {
@@ -1442,6 +1447,22 @@ var flm = hMap(flt, 9, 0);
 var flrm = hMap(flt, 9, 1);
 var fdm = hMap(fdt, 5, 0);
 var fdrm = hMap(fdt, 5, 1);
+var max = function(a) {
+  var m = a[0];
+  for (var i = 1; i < a.length; ++i) {
+    if (a[i] > m)
+      m = a[i];
+  }
+  return m;
+};
+var bits = function(d, p, m) {
+  var o = p >> 3 | 0;
+  return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
+};
+var bits16 = function(d, p) {
+  var o = p >> 3 | 0;
+  return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
+};
 var shft = function(p) {
   return (p >> 3 | 0) + (p & 7 && 1);
 };
@@ -1453,6 +1474,146 @@ var slc = function(v, s, e) {
   var n = new (v instanceof u16 ? u16 : v instanceof u322 ? u322 : u8)(e - s);
   n.set(v.subarray(s, e));
   return n;
+};
+var inflt = function(dat, buf, st) {
+  var sl = dat.length;
+  if (!sl || st && !st.l && sl < 5)
+    return buf || new u8(0);
+  var noBuf = !buf || st;
+  var noSt = !st || st.i;
+  if (!st)
+    st = {};
+  if (!buf)
+    buf = new u8(sl * 3);
+  var cbuf = function(l2) {
+    var bl = buf.length;
+    if (l2 > bl) {
+      var nbuf = new u8(Math.max(bl * 2, l2));
+      nbuf.set(buf);
+      buf = nbuf;
+    }
+  };
+  var final = st.f || 0, pos = st.p || 0, bt = st.b || 0, lm = st.l, dm = st.d, lbt = st.m, dbt = st.n;
+  var tbts = sl * 8;
+  do {
+    if (!lm) {
+      st.f = final = bits(dat, pos, 1);
+      var type = bits(dat, pos + 1, 3);
+      pos += 3;
+      if (!type) {
+        var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
+        if (t > sl) {
+          if (noSt)
+            throw "unexpected EOF";
+          break;
+        }
+        if (noBuf)
+          cbuf(bt + l);
+        buf.set(dat.subarray(s, t), bt);
+        st.b = bt += l, st.p = pos = t * 8;
+        continue;
+      } else if (type === 1)
+        lm = flrm, dm = fdrm, lbt = 9, dbt = 5;
+      else if (type === 2) {
+        var hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
+        var tl = hLit + bits(dat, pos + 5, 31) + 1;
+        pos += 14;
+        var ldt = new u8(tl);
+        var clt = new u8(19);
+        for (var i = 0; i < hcLen; ++i) {
+          clt[clim[i]] = bits(dat, pos + i * 3, 7);
+        }
+        pos += hcLen * 3;
+        var clb = max(clt), clbmsk = (1 << clb) - 1;
+        var clm = hMap(clt, clb, 1);
+        for (var i = 0; i < tl; ) {
+          var r = clm[bits(dat, pos, clbmsk)];
+          pos += r & 15;
+          var s = r >>> 4;
+          if (s < 16) {
+            ldt[i++] = s;
+          } else {
+            var c = 0, n = 0;
+            if (s === 16)
+              n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
+            else if (s === 17)
+              n = 3 + bits(dat, pos, 7), pos += 3;
+            else if (s === 18)
+              n = 11 + bits(dat, pos, 127), pos += 7;
+            while (n--)
+              ldt[i++] = c;
+          }
+        }
+        var lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
+        lbt = max(lt);
+        dbt = max(dt);
+        lm = hMap(lt, lbt, 1);
+        dm = hMap(dt, dbt, 1);
+      } else
+        throw "invalid block type";
+      if (pos > tbts) {
+        if (noSt)
+          throw "unexpected EOF";
+        break;
+      }
+    }
+    if (noBuf)
+      cbuf(bt + 131072);
+    var lms = (1 << lbt) - 1, dms = (1 << dbt) - 1;
+    var lpos = pos;
+    for (; ; lpos = pos) {
+      var c = lm[bits16(dat, pos) & lms], sym = c >>> 4;
+      pos += c & 15;
+      if (pos > tbts) {
+        if (noSt)
+          throw "unexpected EOF";
+        break;
+      }
+      if (!c)
+        throw "invalid length/literal";
+      if (sym < 256)
+        buf[bt++] = sym;
+      else if (sym === 256) {
+        lpos = pos, lm = null;
+        break;
+      } else {
+        var add = sym - 254;
+        if (sym > 264) {
+          var i = sym - 257, b = fleb[i];
+          add = bits(dat, pos, (1 << b) - 1) + fl[i];
+          pos += b;
+        }
+        var d = dm[bits16(dat, pos) & dms], dsym = d >>> 4;
+        if (!d)
+          throw "invalid distance";
+        pos += d & 15;
+        var dt = fd[dsym];
+        if (dsym > 3) {
+          var b = fdeb[dsym];
+          dt += bits16(dat, pos) & (1 << b) - 1, pos += b;
+        }
+        if (pos > tbts) {
+          if (noSt)
+            throw "unexpected EOF";
+          break;
+        }
+        if (noBuf)
+          cbuf(bt + 131072);
+        var end = bt + add;
+        for (; bt < end; bt += 4) {
+          buf[bt] = buf[bt - dt];
+          buf[bt + 1] = buf[bt + 1 - dt];
+          buf[bt + 2] = buf[bt + 2 - dt];
+          buf[bt + 3] = buf[bt + 3 - dt];
+        }
+        bt = end;
+      }
+    }
+    st.l = lm, st.p = lpos, st.b = bt;
+    if (lm)
+      final = 1, st.m = lbt, st.d = dm, st.n = dbt;
+  } while (!final);
+  return bt === buf.length ? buf : slc(buf, 0, bt);
 };
 var wbits = function(d, p, v) {
   v <<= p & 7;
@@ -1775,6 +1936,12 @@ var zlh = function(c, o) {
   var lv = o.level, fl2 = lv === 0 ? 0 : lv < 6 ? 1 : lv === 9 ? 3 : 2;
   c[0] = 120, c[1] = fl2 << 6 | (fl2 ? 32 - 2 * fl2 : 1);
 };
+var zlv = function(d) {
+  if ((d[0] & 15) !== 8 || d[0] >>> 4 > 7 || (d[0] << 8 | d[1]) % 31)
+    throw "invalid zlib data";
+  if (d[1] & 32)
+    throw "invalid zlib data: preset dictionaries not supported";
+};
 function zlibSync(data, opts) {
   if (!opts)
     opts = {};
@@ -1783,8 +1950,18 @@ function zlibSync(data, opts) {
   var d = dopt(data, opts, 2, 4);
   return zlh(d, opts), wbytes(d, d.length - 4, a.d()), d;
 }
+function unzlibSync(data, out) {
+  return inflt((zlv(data), data.subarray(2, -4)), out);
+}
 function compress(buf, level) {
   return zlibSync(buf, { level });
+}
+function decompress(buf, limit) {
+  try {
+    return unzlibSync(buf, new Uint8Array(limit));
+  } catch (err) {
+    throw err.message ? err : new Error(err);
+  }
 }
 
 // png/src/png.js
@@ -1864,6 +2041,152 @@ function encode(data, { text, width, height, channels, depth = 8, level = 0 }) {
   view3.setUint32(41 + compressed.length, crc32(new Uint8Array(array.buffer, 37, 4 + compressed.length)));
   return array;
 }
+function decode(array) {
+  let view3 = new DataView(array.buffer, array.byteOffset, array.byteLength);
+  const width = view3.getUint32(16);
+  const height = view3.getUint32(20);
+  const bpc = array[24];
+  const pixel_type = array[25];
+  let channels = { 3: 1, 0: 1, 4: 2, 2: 3, 6: 4 }[pixel_type];
+  const bytespp = channels * bpc / 8;
+  const row_length = width * bytespp;
+  let pixels = new Uint8Array(height * row_length);
+  let offset = 0;
+  let p_offset = 0;
+  let c_offset = 33;
+  const chunks = [];
+  let palette, alphaPalette;
+  const maxSearchOffset = array.length - 5;
+  let type;
+  while ((type = view3.getUint32(4 + c_offset)) !== 1229278788) {
+    if (type === 1229209940)
+      chunks.push(array.subarray(8 + c_offset, 8 + c_offset + view3.getUint32(c_offset)));
+    else if (type === 1347179589) {
+      if (palette)
+        throw new Error("PLTE can only occur once in an image");
+      palette = new Uint32Array(view3.getUint32(c_offset));
+      for (let pxlOffset = 0; pxlOffset < palette.length * 8; pxlOffset += 3)
+        palette[pxlOffset / 3] = array[8 + c_offset + pxlOffset] << 24 | array[8 + c_offset + pxlOffset + 1] << 16 | array[8 + c_offset + pxlOffset + 2] << 8 | 255;
+    } else if (type === 1951551059) {
+      if (alphaPalette)
+        throw new Error("tRNS can only occur once in an image");
+      alphaPalette = new Uint8Array(view3.getUint32(c_offset));
+      for (let i = 0; i < alphaPalette.length; i++)
+        alphaPalette[i] = array[8 + c_offset + i];
+    }
+    c_offset += 4 + 4 + 4 + view3.getUint32(c_offset);
+    if (c_offset > maxSearchOffset)
+      break;
+  }
+  array = decompress(chunks.length === 1 ? chunks[0] : from_parts(chunks), height + height * row_length);
+  while (offset < array.byteLength) {
+    const filter = array[offset++];
+    const slice = array.subarray(offset, offset += row_length);
+    if (filter === 0)
+      pixels.set(slice, p_offset);
+    else if (filter === 1)
+      filter_1(slice, pixels, p_offset, bytespp, row_length);
+    else if (filter === 2)
+      filter_2(slice, pixels, p_offset, bytespp, row_length);
+    else if (filter === 3)
+      filter_3(slice, pixels, p_offset, bytespp, row_length);
+    else if (filter === 4)
+      filter_4(slice, pixels, p_offset, bytespp, row_length);
+    p_offset += row_length;
+  }
+  if (pixel_type === 3) {
+    if (!palette)
+      throw new Error("Indexed color PNG has no PLTE");
+    if (alphaPalette)
+      for (let i = 0; i < alphaPalette.length; i++)
+        palette[i] &= 4294967040 | alphaPalette[i];
+    channels = 4;
+    const newPixels = new Uint8Array(width * height * 4);
+    const pixelView = new DataView(newPixels.buffer, newPixels.byteOffset, newPixels.byteLength);
+    for (let i = 0; i < pixels.length; i++)
+      pixelView.setUint32(i * 4, palette[pixels[i]], false);
+    pixels = newPixels;
+  }
+  if (bpc !== 8) {
+    const newPixels = new Uint8Array(pixels.length / bpc * 8);
+    for (let i = 0; i < pixels.length; i += 2)
+      newPixels[i / 2] = pixels[i];
+    pixels = newPixels;
+  }
+  if (channels !== 4) {
+    const newPixels = new Uint8Array(width * height * 4);
+    const view4 = new DataView(newPixels.buffer);
+    if (channels === 1) {
+      for (let i = 0; i < width * height; i++) {
+        const pixel = pixels[i];
+        view4.setUint32(i * 4, pixel << 24 | pixel << 16 | pixel << 8 | 255, false);
+      }
+    } else if (channels === 2) {
+      for (let i = 0; i < width * height * 2; i += 2) {
+        const pixel = pixels[i];
+        view4.setUint32(i * 2, pixel << 24 | pixel << 16 | pixel << 8 | pixels[i + 1], false);
+      }
+    } else if (channels === 3) {
+      newPixels.fill(255);
+      for (let i = 0; i < width * height; i++)
+        newPixels.set(pixels.subarray(i * 3, i * 3 + 3), i * 4);
+    }
+    pixels = newPixels;
+  }
+  return { width, height, buffer: pixels };
+}
+function filter_1(slice, pixels, p_offset, bytespp, row_length) {
+  let i = 0;
+  while (i < bytespp)
+    pixels[i + p_offset] = slice[i++];
+  while (i < row_length)
+    pixels[i + p_offset] = slice[i] + pixels[i++ + p_offset - bytespp];
+}
+function filter_2(slice, pixels, p_offset, bytespp, row_length) {
+  if (p_offset === 0)
+    pixels.set(slice, p_offset);
+  else {
+    let i = 0;
+    while (i < row_length)
+      pixels[i + p_offset] = slice[i] + pixels[i++ + p_offset - row_length];
+  }
+}
+function filter_3(slice, pixels, p_offset, bytespp, row_length) {
+  let i = 0;
+  if (p_offset === 0) {
+    while (i < bytespp)
+      pixels[i] = slice[i++];
+    while (i < row_length)
+      pixels[i] = slice[i] + (pixels[i++ - bytespp] >> 1);
+  } else {
+    while (i < bytespp)
+      pixels[i + p_offset] = slice[i] + (pixels[i++ + p_offset - row_length] >> 1);
+    while (i < row_length)
+      pixels[i + p_offset] = slice[i] + (pixels[i + p_offset - bytespp] + pixels[i++ + p_offset - row_length] >> 1);
+  }
+}
+function filter_4(slice, pixels, p_offset, bytespp, row_length) {
+  let i = 0;
+  if (p_offset === 0) {
+    while (i < bytespp)
+      pixels[i] = slice[i++];
+    while (i < row_length)
+      pixels[i] = slice[i] + pixels[i++ - bytespp];
+  } else {
+    while (i < bytespp)
+      pixels[i + p_offset] = slice[i] + pixels[i++ + p_offset - row_length];
+    while (i < row_length) {
+      const a = pixels[i + p_offset - bytespp];
+      const b = pixels[i + p_offset - row_length];
+      const c = pixels[i + p_offset - bytespp - row_length];
+      const p = a + b - c;
+      const pa = Math.abs(p - a);
+      const pb = Math.abs(p - b);
+      const pc = Math.abs(p - c);
+      pixels[i + p_offset] = slice[i++] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
+    }
+  }
+}
 
 // v2/framebuffer.mjs
 var framebuffer = class {
@@ -1883,7 +2206,7 @@ var framebuffer = class {
     return `framebuffer<${this.width}x${this.height}>`;
   }
   clone() {
-    return new framebuffer(this.width, this.height, this.u8.slice());
+    return new this.constructor(this.width, this.height, this.u8.slice());
   }
   toJSON() {
     return { width: this.width, height: this.height, buffer: Array.from(this.u8) };
@@ -1908,14 +2231,19 @@ var framebuffer = class {
     return this.u8.subarray(offset, 4 + offset);
   }
   static from(framebuffer2) {
-    return new framebuffer2(framebuffer2.width, framebuffer2.height, framebuffer2.u8 || framebuffer2.buffer);
+    return new this(framebuffer2.width, framebuffer2.height, framebuffer2.u8 || framebuffer2.buffer);
   }
-  encode(type, options = {}) {
+  encode(format, options = {}) {
     var _a2;
-    if (type !== "png")
+    if (format !== "png")
       throw new Error("invalid image type");
     else
       return encode(this.u8, { channels: 4, width: this.width, height: this.height, level: (_a2 = { none: 0, fast: 3, default: 6, best: 9 }[options.compression]) != null ? _a2 : 3 });
+  }
+  decode(format, buffer) {
+    if (format === "png")
+      return framebuffer.from(decode(buffer));
+    throw new TypeError("invalid image format");
   }
   flip(type) {
     if (type === "vertical")

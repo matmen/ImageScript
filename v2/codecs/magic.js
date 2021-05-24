@@ -1,4 +1,4 @@
-const { view } = require('./mem.js');
+const { view } = require('../util/mem.js');
 
 const formats = {
   ttf: { type: 'font', format: 'ttf' },
