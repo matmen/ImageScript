@@ -25,16 +25,11 @@ export default class framebuffer {
   set(x, y, color) { this.view.setUint32(((x | 0) - 1) + ((y | 0) - 1) * this.width, color, false); }
   at(x, y) { const offset = 4 * (((x | 0) - 1) + ((y | 0) - 1) * this.width); return this.u8.subarray(offset, 4 + offset); }
   static from(framebuffer) { return new this(framebuffer.width, framebuffer.height, framebuffer.u8 || framebuffer.buffer); }
+  static decode(format, buffer) { if (format !== 'png') throw new TypeError('invalid image format'); else return framebuffer.from(png.decode(buffer)); }
 
   encode(format, options = {}) {
-    if (format !== 'png') throw new Error('invalid image type');
+    if (format !== 'png') throw new Error('invalid image format');
     else return png.encode(this.u8, { channels: 4, width: this.width, height: this.height, level: ({ none: 0, fast: 3, default: 6, best: 9 })[options.compression] ?? 3 });
-  }
-
-  decode(format, buffer) {
-    if ('png' === format) return framebuffer.from(png.decode(buffer));
-
-    throw new TypeError('invalid image format');
   }
 
   flip(type) {

@@ -2233,17 +2233,18 @@ var framebuffer = class {
   static from(framebuffer2) {
     return new this(framebuffer2.width, framebuffer2.height, framebuffer2.u8 || framebuffer2.buffer);
   }
+  static decode(format, buffer) {
+    if (format !== "png")
+      throw new TypeError("invalid image format");
+    else
+      return framebuffer.from(decode(buffer));
+  }
   encode(format, options = {}) {
     var _a2;
     if (format !== "png")
-      throw new Error("invalid image type");
+      throw new Error("invalid image format");
     else
       return encode(this.u8, { channels: 4, width: this.width, height: this.height, level: (_a2 = { none: 0, fast: 3, default: 6, best: 9 }[options.compression]) != null ? _a2 : 3 });
-  }
-  decode(format, buffer) {
-    if (format === "png")
-      return framebuffer.from(decode(buffer));
-    throw new TypeError("invalid image format");
   }
   flip(type) {
     if (type === "vertical")

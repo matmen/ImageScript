@@ -47,16 +47,17 @@ export class Frame {
   get height(): number;
 }
 
+// @ts-ignore
 export class Image extends framebuffer {
   clone(): this;
   static from(framebuffer: { width: number, height: number, u8?: BufferSource, buffer?: BufferSource }): Image;
 
+  encode(format: 'png', options?: png_options): Promise<Uint8Array>;
   encode(format: 'png', options: png_options & { sync: true }): Uint8Array;
+  encode(format: 'jpeg', options?: { quality?: number }): Promise<Uint8Array>;
+  encode(format: 'webp', options?: { quality?: number }): Promise<Uint8Array>;
   encode(format: 'jpeg', options: { quality?: number } & { sync: true }): Uint8Array;
   encode(format: 'webp', options: { quality?: number } & { sync: true }): Uint8Array;
-  encode(format: 'png', options?: png_options & { sync?: false }): Promise<Uint8Array>;
-  encode(format: 'jpeg', options?: { quality?: number } & { sync?: false }): Promise<Uint8Array>;
-  encode(format: 'webp', options?: { quality?: number } & { sync?: false }): Promise<Uint8Array>;
 
   static decode(format: 'png', buffer: BufferSource): Promise<Image>;
   static decode(format: 'jpeg', buffer: BufferSource): Promise<Image>;

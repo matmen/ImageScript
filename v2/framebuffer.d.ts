@@ -31,10 +31,10 @@ export default class framebuffer {
   flip(type: 'vertical' | 'horizontal'): this;
   rotate(deg: number, resize?: boolean): this;
   set(x: number, y: number, color: number): void;
-  decode(format: 'png', buffer: BufferSource): this;
   overlay(frame: this, x?: number, y?: number): this;
   replace(frame: this, x?: number, y?: number): this;
   toJSON(): { width: number, height: number, buffer: number[] };
+  static decode(format: 'png', buffer: BufferSource): framebuffer;
   scale(type: 'cubic' | 'linear' | 'nearest', factor: number): this;
   [Symbol.iterator](): Generator<[x: number, y: number], [x: number, y: number]>;
   resize(type: 'cubic' | 'linear' | 'nearest', width: number, height: number): this;
