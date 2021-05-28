@@ -382,7 +382,8 @@ function vertical(framebuffer2) {
 var fill_exports = {};
 __export(fill_exports, {
   color: () => color2,
-  fn: () => fn
+  fn: () => fn,
+  swap: () => swap
 });
 function color2(int, framebuffer2) {
   framebuffer2.view.setUint32(0, int);
@@ -398,6 +399,20 @@ function fn(cb, framebuffer2) {
       view3.setUint32(offset, cb(x2, y), false);
       offset += 4;
     }
+  }
+}
+function swap(old, int, framebuffer2) {
+  {
+    const t = new Uint32Array(2);
+    const v = new DataView(t.buffer);
+    old = (v.setUint32(0, old), t[0]);
+    int = (v.setUint32(4, int), t[1]);
+  }
+  const u323 = framebuffer2.u32;
+  const l = framebuffer2.u32.length | 0;
+  for (let o = 0 | 0; o < l; o++) {
+    if (old === u323[o])
+      u323[o] = int;
   }
 }
 
@@ -2292,6 +2307,44 @@ var framebuffer = class {
       rotate_exports.rotate(deg, this, resize);
     return this;
   }
+  blur(type, arg0) {
+    if (type === "cubic")
+      blur_exports.cubic(this);
+    else if (type === "box")
+      blur_exports.box(+arg0, this);
+    else if (type === "gaussian")
+      blur_exports.gaussian(+arg0, this);
+    else
+      throw new TypeError("invalid blur type");
+    return this;
+  }
+  fill(color3) {
+    const type = typeof color3;
+    if (type === "function")
+      fill_exports.fn(color3, this);
+    else if (type === "number")
+      fill_exports.color(color3, this);
+    else if (color3 instanceof color_default)
+      fill_exports.color(color3.valueOf(), this);
+    else if (Array.isArray(color3))
+      fill_exports.color(color_exports.from_rgba(...color3), this);
+    else
+      throw new TypeError("invalid fill color");
+    return this;
+  }
+  swap(old, color3) {
+    const ot = typeof old;
+    const nt = typeof color3;
+    if (ot === nt && ot === "number")
+      fill_exports.swap(old, color3, this);
+    else if (old instanceof color_default && color3 instanceof color_default)
+      fill_exports.swap(old.valueOf(), color3.valueOf(), this);
+    else if (Array.isArray(old) && Array.isArray(color3))
+      fill_exports.swap(color_exports.from_rgba(...old), color_exports.from_rgba(...color3), this);
+    else
+      throw new TypeError("invalid swap color");
+    return this;
+  }
   resize(type, width, height) {
     if (width === this.width && height === this.height)
       return this;
@@ -2303,29 +2356,6 @@ var framebuffer = class {
       resize_exports.nearest(width, height, this);
     else
       throw new TypeError("invalid resize type");
-    return this;
-  }
-  fill(color3) {
-    const type = typeof color3;
-    if (type === "function")
-      fill_exports.fn(color3, this);
-    else if (type === "number")
-      fill_exports.color(color3, this);
-    else if (Array.isArray(color3))
-      fill_exports.color(color_exports.from_rgba(...color3), this);
-    else
-      throw new TypeError("invalid fill type");
-    return this;
-  }
-  blur(type, arg0) {
-    if (type === "cubic")
-      blur_exports.cubic(this);
-    else if (type === "box")
-      blur_exports.box(+arg0, this);
-    else if (type === "gaussian")
-      blur_exports.gaussian(+arg0, this);
-    else
-      throw new TypeError("invalid blur type");
     return this;
   }
 };

@@ -75,13 +75,12 @@ export default class framebuffer {
     return this;
   }
 
-  resize(type, width, height) {
-    if (width === this.width && height === this.height) return this;
-    else if (type === 'cubic') ops.resize.cubic(width, height, this);
-    else if (type === 'linear') ops.resize.linear(width, height, this);
-    else if (type === 'nearest') ops.resize.nearest(width, height, this);
+  blur(type, arg0) {
+    if (type === 'cubic') ops.blur.cubic(this);
+    else if (type === 'box') ops.blur.box(+arg0, this);
+    else if (type === 'gaussian') ops.blur.gaussian(+arg0, this);
 
-    else throw new TypeError('invalid resize type');
+    else throw new TypeError('invalid blur type');
 
     return this;
   }
@@ -90,19 +89,33 @@ export default class framebuffer {
     const type = typeof color;
     if (type === 'function') ops.fill.fn(color, this);
     else if (type === 'number') ops.fill.color(color, this);
+    else if (color instanceof Color) ops.fill.color(color.valueOf(), this);
     else if (Array.isArray(color)) ops.fill.color(ops.color.from_rgba(...color), this);
 
-    else throw new TypeError('invalid fill type');
+    else throw new TypeError('invalid fill color');
 
     return this;
   }
 
-  blur(type, arg0) {
-    if (type === 'cubic') ops.blur.cubic(this);
-    else if (type === 'box') ops.blur.box(+arg0, this);
-    else if (type === 'gaussian') ops.blur.gaussian(+arg0, this);
+  swap(old, color) {
+    const ot = typeof old;
+    const nt = typeof color;
+    if (ot === nt && ot === 'number') ops.fill.swap(old, color, this);
+    else if (old instanceof Color && color instanceof Color) ops.fill.swap(old.valueOf(), color.valueOf(), this);
+    else if (Array.isArray(old) && Array.isArray(color)) ops.fill.swap(ops.color.from_rgba(...old), ops.color.from_rgba(...color), this);
 
-    else throw new TypeError('invalid blur type');
+    else throw new TypeError('invalid swap color');
+
+    return this;
+  }
+
+  resize(type, width, height) {
+    if (width === this.width && height === this.height) return this;
+    else if (type === 'cubic') ops.resize.cubic(width, height, this);
+    else if (type === 'linear') ops.resize.linear(width, height, this);
+    else if (type === 'nearest') ops.resize.nearest(width, height, this);
+
+    else throw new TypeError('invalid resize type');
 
     return this;
   }

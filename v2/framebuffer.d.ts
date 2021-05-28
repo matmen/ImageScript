@@ -1,3 +1,6 @@
+type rgb = [r: number, g: number, b: number];
+type rgba = [r: number, g: number, b: number, a: number];
+
 export class Color {
   private value: number;
 
@@ -6,12 +9,12 @@ export class Color {
   static rgba(r: number, g: number, b: number, a: number): number;
   static hsla(h: number, s: number, l: number, a: number): number;
 
+  get rgb(): rgb;
   toJSON(): number;
+  get rgba(): rgba;
   valueOf(): number;
   get name(): null | string;
-  get rgb(): [r: number, g: number, b: number];
   toString(radix?: '16' | 'hex' | 'rgb' | 'rgba'): string;
-  get rgba(): [r: number, g: number, b: number, a: number];
 }
 
 export default class framebuffer {
@@ -50,9 +53,14 @@ export default class framebuffer {
   blur(type: 'box', radius: number): this;
   blur(type: 'gaussian', radius: number): this;
 
+  swap(old: rgba, color: rgba): this;
+  swap(old: Color, color: Color): this;
+  swap(old: number, color: number): this;
+
+  fill(rgba: rgba): this;
+  fill(color: Color): this;
   fill(color: number): this;
   fill(cb: (x: number, y: number) => number): this;
-  fill(rgba: [r: number, g: number, b: number, a: number]): this;
 
   pixels(type?: 'int'): Generator<[x: number, y: number, color: number], [x: number, y: number, color: number]>;
   pixels(type: 'rgba'): Generator<[x: number, y: number, rgba: Uint8Array], [x: number, y: number, rgba: Uint8Array]>;

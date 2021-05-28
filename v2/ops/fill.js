@@ -15,3 +15,19 @@ export function fn(cb, framebuffer) {
     }
   }
 }
+
+export function swap(old, int, framebuffer) {
+  {
+    const t = new Uint32Array(2);
+    const v = new DataView(t.buffer);
+    old = (v.setUint32(0, old), t[0]);
+    int = (v.setUint32(4, int), t[1]);
+  }
+
+  const u32 = framebuffer.u32;
+  const l = framebuffer.u32.length | 0;
+
+  for (let o = 0 | 0; o < l; o++) {
+    if (old === u32[o]) u32[o] = int;
+  }
+}
