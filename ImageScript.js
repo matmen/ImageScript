@@ -1665,7 +1665,7 @@ class TextLayout {
      * @param {string} [options.wrapStyle='word'] The texts wrap style when reaching the max width (word, char)
      * @param {string} [options.verticalAlign='left'] The vertical align mode (left, center, right)
      * @param {string} [options.horizontalAlign='top'] The horizontal align mode (top, middle, bottom)
-     * @param {string} [options.wrapHardBreaks=true] Whether to force wrap at new line characters
+     * @param {boolean} [options.wrapHardBreaks=true] Whether to force wrap at new line characters
      */
     constructor(options) {
         const {maxWidth, maxHeight, wrapStyle, verticalAlign, horizontalAlign, wrapHardBreaks} = options || {};
