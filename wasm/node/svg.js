@@ -1,10 +1,12 @@
+const wasm_name = 'svg';
 const { join } = require('path');
 const { promises: { readFile } } = require('fs');
+const wasm_path = process.env.IMAGESCRIPT_WASM_SIMD ? 'simd' : 'any';
 
 let mod = null;
 module.exports = {
   async init() {
-    if (!mod) mod = new WebAssembly.Module(await readFile(join(__dirname, './svg.wasm')));
+    if (!mod) mod = new WebAssembly.Module(await readFile(join(__dirname, `../${wasm_path}/${wasm_name}.wasm`)));
 
     return this.new();
   },
@@ -25,6 +27,13 @@ module.exports = {
       }
     }
 
+    function load(buffer, fit) {
+      if (!fit) return rasterize(buffer, 0, 0);
+      if (fit.zoom) return rasterize(buffer, 1, fit.zoom);
+      if (fit.width) return rasterize(buffer, 2, fit.width);
+      if (fit.height) return rasterize(buffer, 3, fit.height);
+    }
+
     function rasterize(buffer, fit, scale) {
       const bptr = mem.alloc(buffer.length);
       mem.u8(bptr, buffer.length).set(buffer);
@@ -42,6 +51,6 @@ module.exports = {
       return (wasm.rasterize_free(ptr), framebuffer);
     }
 
-    return { rasterize };
+    return { load, rasterize };
   }
 }

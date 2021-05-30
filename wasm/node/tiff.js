@@ -1,10 +1,12 @@
+const wasm_name = 'tiff';
 const { join } = require('path');
 const { promises: { readFile } } = require('fs');
+const wasm_path = process.env.IMAGESCRIPT_WASM_SIMD ? 'simd' : 'any';
 
 let mod = null;
 module.exports = {
   async init() {
-    if (!mod) mod = new WebAssembly.Module(await readFile(join(__dirname, './jpeg.wasm')));
+    if (!mod) mod = new WebAssembly.Module(await readFile(join(__dirname, `../${wasm_path}/${wasm_name}.wasm`)));
 
     return this.new();
   },
@@ -25,24 +27,21 @@ module.exports = {
       }
     }
 
-    function decode(buffer, width, height) {
+    function decode(buffer) {
       const bptr = mem.alloc(buffer.length);
       mem.u8(bptr, buffer.length).set(buffer);
-      const ptr = wasm.decode(bptr, buffer.length, width, height);
-
-      if (0 === ptr) throw new Error('jpg: failed to decode');
-      if (1 === ptr) throw new Error('jpg: failed to scale decoder');
+      const ptr = wasm.decode(bptr, buffer.length);
+      if (0 === ptr) throw new Error('tiff: failed to decode');
 
       const framebuffer = {
         width: wasm.decode_width(ptr),
         height: wasm.decode_height(ptr),
-        format: wasm.decode_format(ptr),
         buffer: mem.u8(wasm.decode_buffer(ptr), mem.length()).slice(),
       }
 
       return (wasm.decode_free(ptr), framebuffer);
     }
 
-    return { decode };
+    return { decode, load: decode };
   }
 }

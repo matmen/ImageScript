@@ -1,14 +1,14 @@
-const png = require('./utils/png');
-const mem = require('./utils/buffer.js');
+const png = require('./png/node.js');
+const mem = require('./utils/mem.js');
 const codecs = require('./node/index.js');
 const {version} = require('./package.json');
 
 // old
-const svglib = require('./utils/wasm/svg');
-const giflib = require('./utils/wasm/gif');
-const fontlib = require('./utils/wasm/font');
-const jpeglib = require('./utils/wasm/jpeg');
-const tifflib = require('./utils/wasm/tiff');
+const svglib = require('./wasm/node/svg.js');
+const giflib = require('./wasm/node/gif.js');
+const fontlib = require('./wasm/node/font.js');
+const jpeglib = require('./wasm/node/jpeg.js');
+const tifflib = require('./wasm/node/tiff.js');
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -516,12 +516,12 @@ class Image {
     __fast_box__(x, y, width, height, color) {
         if (x < 0) {
             width += x;
-            x = 1;
+            x = 0;
         }
 
         if (y < 0) {
             height += y;
-            y = 1;
+            y = 0;
         }
 
         const right = Math.max(Math.min(x + width, this.width), 1);
@@ -1665,7 +1665,7 @@ class TextLayout {
      * @param {string} [options.wrapStyle='word'] The texts wrap style when reaching the max width (word, char)
      * @param {string} [options.verticalAlign='left'] The vertical align mode (left, center, right)
      * @param {string} [options.horizontalAlign='top'] The horizontal align mode (top, middle, bottom)
-     * @param {string} [options.wrapHardBreaks=true] Whether to force wrap at new line characters
+     * @param {boolean} [options.wrapHardBreaks=true] Whether to force wrap at new line characters
      */
     constructor(options) {
         const {maxWidth, maxHeight, wrapStyle, verticalAlign, horizontalAlign, wrapHardBreaks} = options || {};

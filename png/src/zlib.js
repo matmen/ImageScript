@@ -19,9 +19,9 @@
 var u8 = Uint8Array;
 var u16 = Uint16Array;
 var u32 = Uint32Array;
-var fleb = new u8([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0, 0, 0, 0]);
-var fdeb = new u8([0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 0, 0]);
-var clim = new u8([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]);
+var clim = u8.of(16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15);
+var fleb = u8.of(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0, 0, 0, 0);
+var fdeb = u8.of(0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 0, 0);
 var freb = function (eb, start) {
   var b = new u16(31);
   for (var i = 0; i < 31; ++i) {
@@ -465,7 +465,7 @@ var wblk = function (dat, out, final, syms, lf, df, eb, li, bs, bl, p) {
   wbits16(out, p, lm[256]);
   return p + ll[256];
 };
-var deo = new u32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
+var deo = u32.of(65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632);
 var et = new u8(0);
 var dflt = function (dat, lvl, plvl, pre, post, lst) {
   var s = dat.length;
@@ -608,15 +608,11 @@ function unzlibSync(data, out) {
 }
 
 // bundle.js
-function compress(buf, level) {
+export function compress(buf, level) {
   return zlibSync(buf, { level });
 }
 
-function decompress(buf, limit) {
-  return unzlibSync(buf, new Uint8Array(limit));
+export function decompress(buf, limit) {
+  try { return unzlibSync(buf, new Uint8Array(limit)); }
+  catch (err) { throw err.message ? err : new Error(err); }
 }
-
-module.exports = {
-  compress,
-  decompress
-};
