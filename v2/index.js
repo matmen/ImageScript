@@ -128,9 +128,7 @@ class Animation {
       const encoder = new codecs.gif.encoder(this.width, this.height);
 
       let prev = { timestamp: 0 };
-      for (const frame of this) {
-        if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
-
+      for (const frame of this.frames) {
         encoder.add(frame.image.u8, {
           x: 0,
           y: 0,
@@ -150,7 +148,7 @@ class Animation {
       return encoder.finish({ ...options, repeat: Infinity === repeat ? null : repeat });
     }
 
-    throw new TypeError('invalid image format');
+    throw new TypeError('invalid animation format');
   }
 
   static async decode(format, buffer, options = {}) {
@@ -160,7 +158,7 @@ class Animation {
       const meta = magic.buffer(buffer);
       if (!meta) throw new Error('unknown file format');
       if ('image' !== meta.type) throw new Error('unsupported file type');
-      if (!animation_formats.includes(meta.format)) throw new Error('unsupported image format');
+      if (!animation_formats.includes(meta.format)) throw new Error('unsupported animation format');
 
       format = meta.format;
     }
@@ -254,7 +252,7 @@ class Animation {
       return animation;
     }
 
-    throw new TypeError('invalid image format');
+    throw new TypeError('invalid animation format');
   }
 }
 
