@@ -4,6 +4,10 @@ import * as ops from './ops/index.js';
 import * as png from '../png/src/png.js';
 
 export { Color };
+
+// todo: tree shakable context
+// todo: make errors more verbose
+
 export default class framebuffer {
   constructor(width, height, buffer) {
     this.width = width | 0;
@@ -121,5 +125,3 @@ export default class framebuffer {
     return this;
   }
 }
-
-// todo: make errors more verbose
