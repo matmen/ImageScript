@@ -12,18 +12,20 @@ const wasm = {
   // font: require('../wasm/node/font.js'),
 }
 
+// todo: verbose range errors
+
 const animation_formats = ['gif'];
 const image_formats = ['png', 'jpeg', 'tiff'];
 const all_formats = ['png', 'gif', 'jpeg', 'tiff'];
 
 async function load(buffer) {
   const u8 = mem.view(buffer);
-  if (0 === u8.length) throw new TypeError('empty buffer');
+  if (0 === u8.length) throw new RangeError('empty buffer');
 
   const meta = magic.buffer(u8);
-  if (!meta) throw new Error('unknown file format');
-  if ('image' !== meta.type) throw new Error('unsupported file type');
-  if (!all_formats.includes(meta.format)) throw new Error('unsupported image format');
+  if (!meta) throw new RangeError('unknown file format');
+  if ('image' !== meta.type) throw new RangeError('unsupported file type');
+  if (!all_formats.includes(meta.format)) throw new RangeError('unsupported image format');
 
   if ('gif' === meta.format) return Animation.decode('gif', u8);
   return Image.from('png' === meta.format ? png.decode(u8) : (await wasm[meta.format].init()).load(u8));
@@ -70,7 +72,7 @@ class Image extends framebuffer {
     if ('jpeg' === format) return codecs.jpeg[method](this.u8, { ...options, width: this.width, height: this.height });
     if ('webp' === format) return codecs.webp[method](this.u8, { ...options, width: this.width, height: this.height });
 
-    throw new TypeError('invalid image format');
+    throw new RangeError('invalid image format');
   }
 
   static async decode(format, buffer, options = {}) {
@@ -78,9 +80,9 @@ class Image extends framebuffer {
 
     if ('auto' === format) {
       const meta = magic.buffer(buffer);
-      if (!meta) throw new Error('unknown file format');
-      if ('image' !== meta.type) throw new Error('unsupported file type');
-      if (!image_formats.includes(meta.format)) throw new Error('unsupported image format');
+      if (!meta) throw new RangeError('unknown file format');
+      if ('image' !== meta.type) throw new RangeError('unsupported file type');
+      if (!image_formats.includes(meta.format)) throw new RangeError('unsupported image format');
 
       format = meta.format;
     }
@@ -90,7 +92,7 @@ class Image extends framebuffer {
 
     else if (format in wasm) frame = (await wasm[format].init()).load(buffer);
 
-    if (!frame) throw new TypeError('invalid image format');
+    if (!frame) throw new RangeError('invalid image format');
     return new Image(frame.width, frame.height, frame.buffer);
   }
 }
@@ -110,8 +112,8 @@ class Animation {
   [Symbol.iterator]() { return this.frames.values(); }
 
   add(frame) {
-    if (this.width !== frame.width) throw new Error('invalid frame width');
-    else if (this.height !== frame.height) throw new Error('invalid frame height');
+    if (this.width !== frame.width) throw new RangeError('invalid frame width');
+    else if (this.height !== frame.height) throw new RangeError('invalid frame height');
 
     this.frames.push(frame);
   }
@@ -128,9 +130,7 @@ class Animation {
       const encoder = new codecs.gif.encoder(this.width, this.height);
 
       let prev = { timestamp: 0 };
-      for (const frame of this) {
-        if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
-
+      for (const frame of this.frames) {
         encoder.add(frame.image.u8, {
           x: 0,
           y: 0,
@@ -150,7 +150,7 @@ class Animation {
       return encoder.finish({ ...options, repeat: Infinity === repeat ? null : repeat });
     }
 
-    throw new TypeError('invalid image format');
+    throw new RangeError('invalid animation format');
   }
 
   static async decode(format, buffer, options = {}) {
@@ -158,9 +158,9 @@ class Animation {
 
     if ('auto' === format) {
       const meta = magic.buffer(buffer);
-      if (!meta) throw new Error('unknown file format');
-      if ('image' !== meta.type) throw new Error('unsupported file type');
-      if (!animation_formats.includes(meta.format)) throw new Error('unsupported image format');
+      if (!meta) throw new RangeError('unknown file format');
+      if ('image' !== meta.type) throw new RangeError('unsupported file type');
+      if (!animation_formats.includes(meta.format)) throw new RangeError('unsupported animation format');
 
       format = meta.format;
     }
@@ -254,7 +254,7 @@ class Animation {
       return animation;
     }
 
-    throw new TypeError('invalid image format');
+    throw new RangeError('invalid animation format');
   }
 }
 

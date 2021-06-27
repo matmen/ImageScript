@@ -9,6 +9,7 @@ var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[Object.keys(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __export = (target, all) => {
+  __markAsModule(target);
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
@@ -53,17 +54,16 @@ var require_mem = __commonJS({
 });
 
 // v2/framebuffer.mjs
-__markAsModule(exports);
 __export(exports, {
-  Color: () => color_default,
-  default: () => framebuffer_default
+  Color: () => color,
+  default: () => framebuffer
 });
 
 // v2/ops/color.js
 var color_exports = {};
 __export(color_exports, {
   blend: () => blend,
-  default: () => color_default,
+  default: () => color,
   from_rgba: () => from_rgba,
   parse: () => parse,
   to_rgba: () => to_rgba
@@ -188,7 +188,6 @@ var color = class {
     return this.value.toString();
   }
 };
-var color_default = color;
 var colors = new Map([
   ["aliceblue", 4042850303],
   ["antiquewhite", 4209760255],
@@ -365,8 +364,8 @@ function vertical(framebuffer2) {
   const oheight = framebuffer2.height | 0;
   const height = framebuffer2.height / 2 | 0;
   for (let y = 0 | 0; y < height; y++) {
-    const yo = y * width;
-    const wo1y = width * (oheight - 1 - y);
+    const yo = y * width | 0;
+    const wo1y = width * (oheight - 1 - y) | 0;
     for (let x2 = 0 | 0; x2 < width; x2++) {
       const offset = x2 + yo;
       const offset2 = x2 + wo1y;
@@ -452,10 +451,12 @@ function gaussian(radius, framebuffer2) {
   const a1 = k * g1 * (a - 1);
   const a2 = k * g1 * (a + 1);
   const lc2 = (k + a1) / (1 - b1 - b2);
+  const width = framebuffer2.width | 0;
   const rc = (a2 + a3) / (1 - b1 - b2);
-  const tmp = new Float32Array(4 * Math.max(framebuffer2.width, framebuffer2.height));
-  gc(old, framebuffer2.u8, tmp, framebuffer2.width, framebuffer2.height, k, a1, a2, a3, b1, b2, lc2, rc);
-  gc(framebuffer2.u8, old, tmp, framebuffer2.height, framebuffer2.width, k, a1, a2, a3, b1, b2, lc2, rc);
+  const height = framebuffer2.height | 0;
+  const tmp = new Float32Array(4 * Math.max(width, height));
+  gc(old, framebuffer2.u8, tmp, width, height, k, a1, a2, a3, b1, b2, lc2, rc);
+  gc(framebuffer2.u8, old, tmp, height, width, k, a1, a2, a3, b1, b2, lc2, rc);
 }
 function bb(u82, old, width, height, radius) {
   const divisor = 1 / (1 + radius + radius);
@@ -698,20 +699,32 @@ __export(crop_exports, {
   crop: () => crop,
   cut: () => cut
 });
+function clamp2(min, int, max2) {
+  const t = int < min ? min : int;
+  return t > max2 ? max2 : t;
+}
 function cut(x2, y, width, height, framebuffer2) {
+  width |= 0;
+  height |= 0;
   const frame = new framebuffer2.constructor(width, height);
-  for (let yy = 0; yy < height; yy++) {
-    const offset = x2 + (y + yy) * framebuffer2.width;
-    frame.u32.set(framebuffer2.u32.subarray(offset, width + offset), yy * width);
+  const n32 = frame.u32;
+  const o32 = framebuffer2.u32;
+  const fwidth = framebuffer2.width | 0;
+  for (let yy = 0 | 0; yy < height; yy++) {
+    const offset = x2 + fwidth * (y + yy);
+    n32.set(o32.subarray(offset, width + offset), yy * width);
   }
   return frame;
 }
 function crop(x2, y, width, height, framebuffer2) {
+  width |= 0;
+  height |= 0;
   const old = framebuffer2.u32;
-  framebuffer2.u32 = new Uint32Array(width * height);
+  const fwidth = framebuffer2.width | 0;
+  const u323 = framebuffer2.u32 = new Uint32Array(width * height);
   for (let yy = 0; yy < height; yy++) {
-    const offset = x2 + (y + yy) * framebuffer2.width;
-    framebuffer2.u32.set(old.subarray(offset, width + offset), yy * width);
+    const offset = x2 + fwidth * (y + yy);
+    u323.set(old.subarray(offset, width + offset), yy * width);
   }
   framebuffer2.width = width;
   framebuffer2.height = height;
@@ -719,21 +732,24 @@ function crop(x2, y, width, height, framebuffer2) {
   framebuffer2.view = new DataView(framebuffer2.u32.buffer);
 }
 function circle(feathering, framebuffer2) {
-  const rad = Math.min(framebuffer2.width, framebuffer2.height) / 2;
+  const u82 = framebuffer2.u8;
+  const u323 = framebuffer2.u32;
+  const width = framebuffer2.width | 0;
+  const height = framebuffer2.height | 0;
+  const rad = Math.min(width, height) / 2;
+  const cx = width / 2;
+  const cy = height / 2;
   const rad_2 = rad ** 2;
-  const cx = framebuffer2.width / 2;
-  const cy = framebuffer2.height / 2;
   const feathering_12 = feathering ** (1 / 2);
-  for (let y = 0; y < framebuffer2.height; y++) {
+  for (let y = 0 | 0; y < height; y++) {
     const cdy = (y - cy) ** 2;
-    const y_offset = y * framebuffer2.width;
-    for (let x2 = 0; x2 < framebuffer2.width; x2++) {
+    const y_offset = y * width;
+    for (let x2 = 0 | 0; x2 < width; x2++) {
       const cd = cdy + (x2 - cx) ** 2;
-      const offset = 3 + 4 * (x2 + y_offset);
       if (cd > rad_2)
-        framebuffer2.u8[offset] = 0;
+        u323[x2 + y_offset] = 0;
       else if (feathering)
-        framebuffer2.u8[offset] *= Math.max(0, Math.min(1, 1 - cd / rad_2 * feathering_12));
+        u82[3 + 4 * (x2 + y_offset)] *= clamp2(0, 1 - cd / rad_2 * feathering_12, 1);
     }
   }
   return framebuffer2;
@@ -749,12 +765,12 @@ __export(resize_exports, {
 function lerp(a, b, t) {
   return t * b + a * (1 - t);
 }
-function clamp2(min, int, max2) {
+function clamp3(min, int, max2) {
   const t = int < min ? min : int;
   return t > max2 ? max2 : t;
 }
 function clamped(x2, y, width, height) {
-  return 4 * (clamp2(0, x2, width - 1) + clamp2(0, y, height - 1) * width);
+  return 4 * (clamp3(0, x2, width - 1) + clamp3(0, y, height - 1) * width);
 }
 function hermite(A, B, C, D, t) {
   const c = C / 2 + -A / 2;
@@ -917,9 +933,10 @@ function rotate270(framebuffer2) {
   framebuffer2.width = height;
   framebuffer2.height = width;
   for (let y = 0 | 0; y < width; y++) {
-    const yoffset = y * width;
+    const yoffset = y * width | 0;
+    const soffset = y + width * (width - 1) | 0;
     for (let x2 = 0 | 0; x2 < height; x2++) {
-      u323[y + width * (width - 1 - x2)] = old[x2 + yoffset];
+      u323[soffset - x2 * width] = old[x2 + yoffset];
     }
   }
 }
@@ -957,12 +974,7 @@ function interpolate(inn, out, x0, y0, x1, y1) {
   const xq = x1 - x2;
   const yq = y1 - y2;
   const offset = 4 * (x0 + y0 * out.width);
-  const ref = {
-    r: 0,
-    g: 0,
-    b: 0,
-    a: 0
-  };
+  const ref = { r: 0, g: 0, b: 0, a: 0 };
   pawn(x2, y2, (1 - xq) * (1 - yq), ref, inn);
   pawn(1 + x2, y2, xq * (1 - yq), ref, inn);
   pawn(x2, 1 + y2, (1 - xq) * yq, ref, inn);
@@ -990,19 +1002,19 @@ __export(overlay_exports, {
   replace: () => replace
 });
 function replace(bg, fg, x2, y) {
-  for (let yy = 0; yy < fg.height; yy++) {
-    let y_offset = y + yy;
-    if (y_offset < 0)
-      continue;
-    if (y_offset >= bg.height)
-      break;
-    for (let xx = 0; xx < fg.width; xx++) {
-      let x_offset = x2 + xx;
-      if (x_offset < 0)
-        continue;
-      if (x_offset >= bg.width)
-        break;
-      bg.u32[x_offset + y_offset * bg.width] = fg.u32[xx + yy * fg.width];
+  const fwidth = fg.width | 0;
+  const bwidth = bg.width | 0;
+  const fheight = fg.height | 0;
+  const bheight = bg.height | 0;
+  let mw = Math.min(bwidth, fwidth) | 0;
+  let mh = Math.min(bheight, fheight) | 0;
+  const b32 = bg.u32;
+  const f32 = fg.u32;
+  for (let yy = y | 0; yy < mh; yy++) {
+    const yoffset = yy * bwidth;
+    const yyoffset = fwidth * (yy - y);
+    for (let xx = x2 | 0; xx < mw; xx++) {
+      b32[xx + yoffset] = f32[xx - x2 + yyoffset];
     }
   }
 }
@@ -1013,29 +1025,23 @@ function overlay(background, foreground, x2, y) {
   const bwidth = background.width | 0;
   const fheight = foreground.height | 0;
   const bheight = background.height | 0;
-  for (let yy = 0 | 0; yy < fheight; yy++) {
-    let yoffset = y + yy;
-    if (yoffset < 0)
-      continue;
-    if (yoffset >= bheight)
-      break;
-    yoffset = bwidth * yoffset;
-    const yyoffset = yy * fwidth;
-    for (let xx = 0 | 0; xx < fwidth; xx++) {
-      let xoffset = x2 + xx;
-      if (xoffset < 0)
-        continue;
-      if (xoffset >= bwidth)
-        break;
-      const offset = 4 * (xoffset + yoffset);
-      const fg = foreground.view.getUint32(4 * (xx + yyoffset), false);
-      const bg = background.view.getUint32(offset, false);
+  const mw = Math.min(bwidth, fwidth) | 0;
+  const mh = Math.min(bheight, fheight) | 0;
+  const fview = foreground.view;
+  const bview = background.view;
+  for (let yy = y | 0; yy < mh; yy++) {
+    const yoffset = yy * bwidth;
+    const yyoffset = fwidth * (yy - y);
+    for (let xx = x2 | 0; xx < mw; xx++) {
+      const offset = 4 * (xx + yoffset);
+      const fg = fview.getUint32(4 * (xx - x2 + yyoffset), false);
+      const bg = bview.getUint32(offset, false);
       if ((fg & 255) === 255)
-        background.view.setUint32(offset, fg, false);
+        bview.setUint32(offset, fg, false);
       else if ((fg & 255) === 0)
-        background.view.setUint32(offset, bg, false);
+        bview.setUint32(offset, bg, false);
       else
-        background.view.setUint32(offset, blend(fg, bg), false);
+        bview.setUint32(offset, blend(fg, bg), false);
     }
   }
 }
@@ -2212,7 +2218,7 @@ var framebuffer = class {
     this.view = new DataView(this.u8.buffer, this.u8.byteOffset, this.u8.byteLength);
     this.u32 = new Uint32Array(this.u8.buffer, this.u8.byteOffset, this.u8.byteLength / 4);
     if (this.u8.length !== 4 * this.width * this.height)
-      throw new TypeError("invalid capacity of buffer");
+      throw new RangeError("invalid capacity of buffer");
   }
   [Symbol.iterator]() {
     return iterator_exports.cords(this);
@@ -2250,16 +2256,23 @@ var framebuffer = class {
   }
   static decode(format, buffer) {
     if (format !== "png")
-      throw new TypeError("invalid image format");
+      throw new RangeError("invalid image format");
     else
       return framebuffer.from(decode(buffer));
   }
   encode(format, options = {}) {
     var _a2;
     if (format !== "png")
-      throw new Error("invalid image format");
+      throw new RangeError("invalid image format");
     else
       return encode(this.u8, { channels: 4, width: this.width, height: this.height, level: (_a2 = { none: 0, fast: 3, default: 6, best: 9 }[options.compression]) != null ? _a2 : 3 });
+  }
+  pixels(type) {
+    if (type === "rgba")
+      return iterator_exports.rgba(this);
+    if (!type || type === "int")
+      return iterator_exports.u32(this);
+    throw new RangeError("invalid iterator type");
   }
   flip(type) {
     if (type === "vertical")
@@ -2267,7 +2280,16 @@ var framebuffer = class {
     else if (type === "horizontal")
       flip_exports.horizontal(this);
     else
-      throw new TypeError("invalid flip type");
+      throw new RangeError("invalid flip type");
+    return this;
+  }
+  crop(type, arg0, arg1, arg2, arg3) {
+    if (type === "circle")
+      crop_exports.circle(arg0 || 0, this);
+    else if (type === "box")
+      crop_exports.crop(arg0 | 0, arg1 | 0, arg2 | 0, arg3 | 0, this);
+    else
+      throw new RangeError("invalid crop type");
     return this;
   }
   cut(type, arg0, arg1, arg2, arg3) {
@@ -2276,23 +2298,7 @@ var framebuffer = class {
     else if (type === "box")
       return crop_exports.cut(arg0 | 0, arg1 | 0, arg2 | 0, arg3 | 0, this);
     else
-      throw new TypeError("invalid cut type");
-  }
-  crop(type, arg0, arg1, arg2, arg3) {
-    if (type === "circle")
-      crop_exports.circle(arg0 || 0, this);
-    else if (type === "box")
-      crop_exports.crop(arg0 | 0, arg1 | 0, arg2 | 0, arg3 | 0, this);
-    else
-      throw new TypeError("invalid crop type");
-    return this;
-  }
-  pixels(type) {
-    if (type === "rgba")
-      return iterator_exports.rgba(this);
-    if (!type || type === "int")
-      return iterator_exports.u32(this);
-    throw new TypeError("invalid iterator type");
+      throw new RangeError("invalid cut type");
   }
   rotate(deg, resize = true) {
     if ((deg %= 360) === 0)
@@ -2315,7 +2321,7 @@ var framebuffer = class {
     else if (type === "gaussian")
       blur_exports.gaussian(+arg0, this);
     else
-      throw new TypeError("invalid blur type");
+      throw new RangeError("invalid blur type");
     return this;
   }
   fill(color3) {
@@ -2324,7 +2330,7 @@ var framebuffer = class {
       fill_exports.fn(color3, this);
     else if (type === "number")
       fill_exports.color(color3, this);
-    else if (color3 instanceof color_default)
+    else if (color3 instanceof color)
       fill_exports.color(color3.valueOf(), this);
     else if (Array.isArray(color3))
       fill_exports.color(color_exports.from_rgba(...color3), this);
@@ -2337,12 +2343,12 @@ var framebuffer = class {
     const nt = typeof color3;
     if (ot === nt && ot === "number")
       fill_exports.swap(old, color3, this);
-    else if (old instanceof color_default && color3 instanceof color_default)
+    else if (old instanceof color && color3 instanceof color)
       fill_exports.swap(old.valueOf(), color3.valueOf(), this);
     else if (Array.isArray(old) && Array.isArray(color3))
       fill_exports.swap(color_exports.from_rgba(...old), color_exports.from_rgba(...color3), this);
     else
-      throw new TypeError("invalid swap color");
+      throw new RangeError("invalid swap color");
     return this;
   }
   resize(type, width, height) {
@@ -2352,14 +2358,15 @@ var framebuffer = class {
       resize_exports.cubic(width, height, this);
     else if (type === "linear")
       resize_exports.linear(width, height, this);
+    else if (type === "liquid")
+      resize_exports.liquid(width, height, this);
     else if (type === "nearest")
       resize_exports.nearest(width, height, this);
     else
-      throw new TypeError("invalid resize type");
+      throw new RangeError("invalid resize type");
     return this;
   }
 };
-var framebuffer_default = framebuffer;
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   Color

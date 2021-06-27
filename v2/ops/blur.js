@@ -30,10 +30,12 @@ export function gaussian(radius, framebuffer) {
   const a1 = k * g1 * (a - 1);
   const a2 = k * g1 * (a + 1);
   const lc = (k + a1) / (1 - b1 - b2);
+  const width = framebuffer.width | 0;
   const rc = (a2 + a3) / (1 - b1 - b2);
-  const tmp = new Float32Array(4 * Math.max(framebuffer.width, framebuffer.height));
-  gc(old, framebuffer.u8, tmp, framebuffer.width, framebuffer.height, k, a1, a2, a3, b1, b2, lc, rc);
-  gc(framebuffer.u8, old, tmp, framebuffer.height, framebuffer.width, k, a1, a2, a3, b1, b2, lc, rc);
+  const height = framebuffer.height | 0;
+  const tmp = new Float32Array(4 * Math.max(width, height));
+  gc(old, framebuffer.u8, tmp, width, height, k, a1, a2, a3, b1, b2, lc, rc);
+  gc(framebuffer.u8, old, tmp, height, width, k, a1, a2, a3, b1, b2, lc, rc);
 }
 
 function bb(u8, old, width, height, radius) {
@@ -96,6 +98,7 @@ function bbh(u8, old, width, height, radius, divisor) {
       g += old[1 + offset] - old[1 + roffset];
       b += old[2 + offset] - old[2 + roffset];
       a += old[3 + offset] - old[3 + roffset];
+      // todo: how far is roffset
 
       offset = 4 * y_offset++;
       u8[offset] = Math.round(r * divisor);
@@ -176,6 +179,7 @@ function bbt(u8, old, width, height, radius, divisor) {
       g += old[1 + offset] - old[1 + xoffset];
       b += old[2 + offset] - old[2 + xoffset];
       a += old[3 + offset] - old[3 + xoffset];
+      // todo: how far is xoffset
 
       offset = 4 * ti;
       u8[offset] = Math.round(r * divisor);
@@ -211,6 +215,7 @@ function gc(u8, old, tmp, width, height, k, a1, a2, a3, b1, b2, lc, rc) {
   const width4 = width * 4;
   const height4 = height * 4;
   const hw1 = height * (width - 1);
+
   for (let y = 0; y < height; y++) {
     let toffset = 0 | 0;
     let ooffset = (y * width4) | 0;

@@ -16,8 +16,8 @@ export function vertical(framebuffer) {
   const height = (framebuffer.height / 2) | 0;
 
   for (let y = 0 | 0; y < height; y++) {
-    const yo = y * width;
-    const wo1y = width * (oheight - 1 - y);
+    const yo = y * width | 0;
+    const wo1y = width * (oheight - 1 - y) | 0;
 
     for (let x = 0 | 0; x < width; x++) {
       const offset = x + yo;

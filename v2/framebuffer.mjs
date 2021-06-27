@@ -4,6 +4,10 @@ import * as ops from './ops/index.js';
 import * as png from '../png/src/png.js';
 
 export { Color };
+
+// todo: tree shakable context
+// todo: make errors more verbose
+
 export default class framebuffer {
   constructor(width, height, buffer) {
     this.width = width | 0;
@@ -11,7 +15,7 @@ export default class framebuffer {
     this.u8 = buffer ? view(buffer) : new Uint8Array(4 * this.width * this.height);
     this.view = new DataView(this.u8.buffer, this.u8.byteOffset, this.u8.byteLength);
     this.u32 = new Uint32Array(this.u8.buffer, this.u8.byteOffset, this.u8.byteLength / 4);
-    if (this.u8.length !== 4 * this.width * this.height) throw new TypeError('invalid capacity of buffer');
+    if (this.u8.length !== 4 * this.width * this.height) throw new RangeError('invalid capacity of buffer');
   }
 
   [Symbol.iterator]() { return ops.iterator.cords(this); }
@@ -25,18 +29,34 @@ export default class framebuffer {
   set(x, y, color) { this.view.setUint32(((x | 0) - 1) + ((y | 0) - 1) * this.width, color, false); }
   at(x, y) { const offset = 4 * (((x | 0) - 1) + ((y | 0) - 1) * this.width); return this.u8.subarray(offset, 4 + offset); }
   static from(framebuffer) { return new this(framebuffer.width, framebuffer.height, framebuffer.u8 || framebuffer.buffer); }
-  static decode(format, buffer) { if (format !== 'png') throw new TypeError('invalid image format'); else return framebuffer.from(png.decode(buffer)); }
+  static decode(format, buffer) { if (format !== 'png') throw new RangeError('invalid image format'); else return framebuffer.from(png.decode(buffer)); }
 
   encode(format, options = {}) {
-    if (format !== 'png') throw new Error('invalid image format');
+    if (format !== 'png') throw new RangeError('invalid image format');
     else return png.encode(this.u8, { channels: 4, width: this.width, height: this.height, level: ({ none: 0, fast: 3, default: 6, best: 9 })[options.compression] ?? 3 });
+  }
+
+  pixels(type) {
+    if ('rgba' === type) return ops.iterator.rgba(this);
+    if (!type || 'int' === type) return ops.iterator.u32(this);
+
+    throw new RangeError('invalid iterator type');
   }
 
   flip(type) {
     if (type === 'vertical') ops.flip.vertical(this);
     else if (type === 'horizontal') ops.flip.horizontal(this);
 
-    else throw new TypeError('invalid flip type');
+    else throw new RangeError('invalid flip type');
+
+    return this;
+  }
+
+  crop(type, arg0, arg1, arg2, arg3) {
+    if (type === 'circle') ops.crop.circle(arg0 || 0, this);
+    else if (type === 'box') ops.crop.crop(arg0 | 0, arg1 | 0, arg2 | 0, arg3 | 0, this);
+
+    else throw new RangeError('invalid crop type');
 
     return this;
   }
@@ -45,23 +65,7 @@ export default class framebuffer {
     if (type === 'circle') return ops.crop.circle(arg0 || 0, this);
     else if (type === 'box') return ops.crop.cut(arg0 | 0, arg1 | 0, arg2 | 0, arg3 | 0, this);
 
-    else throw new TypeError('invalid cut type');
-  }
-
-  crop(type, arg0, arg1, arg2, arg3) {
-    if (type === 'circle') ops.crop.circle(arg0 || 0, this);
-    else if (type === 'box') ops.crop.crop(arg0 | 0, arg1 | 0, arg2 | 0, arg3 | 0, this);
-
-    else throw new TypeError('invalid crop type');
-
-    return this;
-  }
-
-  pixels(type) {
-    if ('rgba' === type) return ops.iterator.rgba(this);
-    if (!type || 'int' === type) return ops.iterator.u32(this);
-
-    throw new TypeError('invalid iterator type');
+    else throw new RangeError('invalid cut type');
   }
 
   rotate(deg, resize = true) {
@@ -80,7 +84,7 @@ export default class framebuffer {
     else if (type === 'box') ops.blur.box(+arg0, this);
     else if (type === 'gaussian') ops.blur.gaussian(+arg0, this);
 
-    else throw new TypeError('invalid blur type');
+    else throw new RangeError('invalid blur type');
 
     return this;
   }
@@ -104,7 +108,7 @@ export default class framebuffer {
     else if (old instanceof Color && color instanceof Color) ops.fill.swap(old.valueOf(), color.valueOf(), this);
     else if (Array.isArray(old) && Array.isArray(color)) ops.fill.swap(ops.color.from_rgba(...old), ops.color.from_rgba(...color), this);
 
-    else throw new TypeError('invalid swap color');
+    else throw new RangeError('invalid swap color');
 
     return this;
   }
@@ -113,9 +117,10 @@ export default class framebuffer {
     if (width === this.width && height === this.height) return this;
     else if (type === 'cubic') ops.resize.cubic(width, height, this);
     else if (type === 'linear') ops.resize.linear(width, height, this);
+    else if (type === 'liquid') ops.resize.liquid(width, height, this);
     else if (type === 'nearest') ops.resize.nearest(width, height, this);
 
-    else throw new TypeError('invalid resize type');
+    else throw new RangeError('invalid resize type');
 
     return this;
   }

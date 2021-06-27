@@ -1,4 +1,4 @@
-export function *cords(framebuffer) {
+export function* cords(framebuffer) {
   const width = framebuffer.width | 0;
   const height = framebuffer.height | 0;
 
@@ -7,7 +7,7 @@ export function *cords(framebuffer) {
   }
 }
 
-export function *rgba(framebuffer) {
+export function* rgba(framebuffer) {
   let offset = 0 | 0;
   const u8 = framebuffer.u8;
   const width = framebuffer.width | 0;
@@ -20,7 +20,7 @@ export function *rgba(framebuffer) {
   }
 }
 
-export function *u32(framebuffer) {
+export function* u32(framebuffer) {
   let offset = 0 | 0;
   const view = framebuffer.view;
   const width = framebuffer.width | 0;

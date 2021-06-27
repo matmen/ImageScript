@@ -31,10 +31,11 @@ export function rotate270(framebuffer) {
   framebuffer.height = width;
 
   for (let y = 0 | 0; y < width; y++) {
-    const yoffset = y * width;
+    const yoffset = y * width | 0;
+    const soffset = (y + width * (width - 1)) | 0;
 
     for (let x = 0 | 0; x < height; x++) {
-      u32[y + width * (width - 1 - x)] = old[x + yoffset];
+      u32[soffset - x * width] = old[x + yoffset];
     }
   }
 }
@@ -84,16 +85,12 @@ function interpolate(inn, out, x0, y0, x1, y1) {
   const yq = y1 - y2;
   const offset = 4 * (x0 + y0 * out.width);
 
-  const ref = {
-    r: 0,
-    g: 0,
-    b: 0,
-    a: 0,
-  };
-
+  const ref = { r: 0, g: 0, b: 0, a: 0 };
   pawn(x2, y2, (1 - xq) * (1 - yq), ref, inn);
+
   pawn(1 + x2, y2, xq * (1 - yq), ref, inn);
   pawn(x2, 1 + y2, (1 - xq) * yq, ref, inn);
+
   pawn(1 + x2, 1 + y2, xq * yq, ref, inn);
 
   out.u8[3 + offset] = ref.a;
