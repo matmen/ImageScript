@@ -1465,6 +1465,15 @@ export class GIF extends Array {
             yield this[i];
     }
 
+    slice(start, end) {
+        if (end === Infinity)
+            end = this.length;
+        const frames = new Array(end - start);
+        for (let i = 0; i < frames.length; i++)
+            frames[i] = this[i + start];
+        return new GIF(frames, this.loopCount);
+    }
+
     /**
      * The GIFs duration (in ms)
      * @return {number}
