@@ -2,6 +2,7 @@ const png = require('./png/node.js');
 const mem = require('./utils/mem.js');
 const codecs = require('./node/index.js');
 const {version} = require('./package.json');
+const { default: v2 } = require('./v2/framebuffer.js');
 
 // old
 const svglib = require('./wasm/node/svg.js');
@@ -82,26 +83,16 @@ class Image {
      * @yields {number[]} The coordinates of the pixel ([x, y])
      * @returns {void}
      */
-    * [Symbol.iterator]() {
-        for (let y = 1; y <= this.height; y++) {
-            for (let x = 1; x <= this.width; x++) {
-                yield [x, y];
-            }
-        }
+    [Symbol.iterator]() {
+        return new v2(this.width, this.height, this.bitmap)[Symbol.iterator]();
     }
 
     /**
      * Yields an [x, y, color] array for every pixel in the image
      * @yields {number[]} The coordinates and color of the pixel ([x, y, color])
      */
-    * iterateWithColors() {
-        let offset = 0;
-        for (let y = 1; y <= this.height; y++) {
-            for (let x = 1; x <= this.width; x++) {
-                yield [x, y, this.__view__.getUint32(offset, false)];
-                offset += 4;
-            }
-        }
+    iterateWithColors() {
+        return new v2(this.width, this.height, this.bitmap).pixels('int');
     }
 
     /**
@@ -319,19 +310,7 @@ class Image {
      * @returns {Image}
      */
     fill(color) {
-        const type = typeof color;
-        if (type !== 'function') {
-            this.__view__.setUint32(0, color, false);
-            this.__u32__.fill(this.__u32__[0]);
-        } else {
-            let offset = 0;
-            for (let y = 1; y <= this.height; y++) {
-                for (let x = 1; x <= this.width; x++) {
-                    this.__view__.setUint32(offset, color(x, y), false);
-                    offset += 4;
-                }
-            }
-        }
+        new v2(this.width, this.height, this.bitmap).fill(color);
 
         return this;
     }
@@ -420,18 +399,9 @@ class Image {
      */
     __resize_nearest_neighbor__(width, height) {
         const image = new this.constructor(width, height);
+        const frame = new v2(this.width, this.height, this.bitmap).resize('nearest', width, height);
 
-        for (let y = 0; y < height; y++) {
-            for (let x = 0; x < width; x++) {
-                const ySrc = Math.floor((y * this.height) / height);
-                const xSrc = Math.floor((x * this.width) / width);
-
-                const destPos = (y * width + x) * 4;
-                const srcPos = (ySrc * this.width + xSrc) * 4;
-
-                image.__view__.setUint32(destPos, this.__view__.getUint32(srcPos, false), false);
-            }
-        }
+        image.bitmap.set(frame.u8);
 
         return image;
     }
@@ -565,19 +535,7 @@ class Image {
      * @returns {Image}
      */
     cropCircle(max = false, feathering = 0) {
-        const rad = Math[max ? 'max' : 'min'](this.width, this.height) / 2;
-        const radSquared = rad ** 2;
-        const centerX = this.width / 2;
-        const centerY = this.height / 2;
-
-        for (const [x, y] of this) {
-            const distanceFromCenter = (x - centerX) ** 2 + (y - centerY) ** 2;
-            const alphaIdx = ((y - 1) * this.width + (x - 1)) * 4 + 3;
-            if (distanceFromCenter > radSquared)
-                this.bitmap[alphaIdx] = 0;
-            else if (feathering)
-                this.bitmap[alphaIdx] *= Math.max(0, Math.min(1, 1 - (distanceFromCenter / radSquared) * feathering ** (1 / 2)));
-        }
+        new v2(this.width, this.height, this.bitmap).crop('circle', feathering);
 
         return this;
     }
@@ -857,108 +815,12 @@ class Image {
      * @param {boolean} resize Whether to resize the image so it fits all pixels or just ignore outlying pixels
      */
     rotate(angle, resize = true) {
-        if (angle % 360 === 0) return this;
-        if (angle % 180 === 0) return this.__rotate_180__();
+        const frame = new v2(this.width, this.height, this.bitmap).rotate(360 - (angle % 360), resize);
 
-        const rad = Math.PI * (angle / 180);
+        const out = new Image(frame.width, frame.height);
 
-        const sin = Math.sin(rad);
-        const cos = Math.cos(rad);
-
-        const width = resize
-            ? Math.abs(this.width * sin) + Math.abs(this.height * cos)
-            : this.width;
-        const height = resize
-            ? Math.abs(this.width * cos) + Math.abs(this.height * sin)
-            : this.height;
-
-        const out = new Image(width, height);
-
-        const out_cx = width / 2 - .5;
-        const out_cy = height / 2 - .5;
-        const src_cx = this.width / 2 - .5;
-        const src_cy = this.height / 2 - .5;
-
-        let h = 0;
-        do {
-            let w = 0;
-            const ysin = src_cx - sin * (h - out_cy);
-            const ycos = src_cy + cos * (h - out_cy);
-
-            do {
-                const xf = ysin + cos * (w - out_cx);
-                const yf = ycos + sin * (w - out_cx);
-                Image.__interpolate__(this, out, w, h, xf, yf);
-            } while (w++ < width);
-        } while (h++ < height);
-
+        out.bitmap.set(frame.u8);
         return this.__apply__(out);
-    }
-
-    /**
-     * @returns {Image}
-     * @private
-     */
-    __rotate_180__() {
-        let offset = 0;
-        this.bitmap.reverse();
-        while (offset < this.bitmap.length) this.bitmap.subarray(offset, offset += 4).reverse();
-
-        return this;
-    }
-
-    /**
-     * @param {Image} src
-     * @param {Image} out
-     * @param {number} x0
-     * @param {number} y0
-     * @param {number} x1
-     * @param {number} y1
-     * @private
-     */
-    static __interpolate__(src, out, x0, y0, x1, y1) {
-        const x2 = ~~x1;
-        const y2 = ~~y1;
-        const xq = x1 - x2;
-        const yq = y1 - y2;
-        const out_slice = out.bitmap.subarray(4 * (x0 + y0 * out.width), -4);
-
-        const ref = {
-            r: 0,
-            g: 0,
-            b: 0,
-            a: 0,
-        };
-
-        Image.__pawn__(x2, y2, (1 - xq) * (1 - yq), ref, src);
-        Image.__pawn__(1 + x2, y2, xq * (1 - yq), ref, src);
-        Image.__pawn__(x2, 1 + y2, (1 - xq) * yq, ref, src);
-        Image.__pawn__(1 + x2, 1 + y2, xq * yq, ref, src);
-
-        out_slice[3] = ref.a;
-        out_slice[0] = ref.r / ref.a;
-        out_slice[1] = ref.g / ref.a;
-        out_slice[2] = ref.b / ref.a;
-    }
-
-    /** @private */
-    static __pawn__(point0, point1, weight, ref, src) {
-        if (
-            point0 > 0
-            && point1 > 0
-            && point0 < src.width
-            && point1 < src.height
-        ) {
-            const offset = 4 * (point0 + point1 * src.width);
-            const src_slice = src.bitmap.subarray(offset, offset + 4);
-
-            const wa = weight * src_slice[3];
-
-            ref.a += wa;
-            ref.r += wa * src_slice[0];
-            ref.g += wa * src_slice[1];
-            ref.b += wa * src_slice[2];
-        }
     }
 
     /**
