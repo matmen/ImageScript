@@ -242,7 +242,7 @@ class Image {
      */
     getPixelAt(x, y) {
         this.__check_boundaries__(x, y);
-        return this.__view__.getUint32(((~~y - 1) * this.width + (~~x - 1)) * 4, false);
+        return this.__view__.getUint32(((~~y) * this.width + (~~x)) * 4, false);
     }
 
     /**
@@ -253,7 +253,7 @@ class Image {
      */
     getRGBAAt(x, y) {
         this.__check_boundaries__(x, y);
-        const idx = ((~~y - 1) * this.width + (~~x - 1)) * 4;
+        const idx = ((~~y) * this.width + (~~x)) * 4;
         return this.bitmap.subarray(idx, idx + 4);
     }
 
@@ -278,7 +278,7 @@ class Image {
      * @param {number} pixelColor
      */
     __set_pixel__(x, y, pixelColor) {
-        this.__view__.setUint32(((y - 1) * this.width + (x - 1)) * 4, pixelColor, false);
+        this.__view__.setUint32((y * this.width + x) * 4, pixelColor, false);
     }
 
     /**
@@ -483,8 +483,8 @@ class Image {
      * @returns {Image}
      */
     drawBox(x, y, width, height, color) {
-        x = ~~(x - 1);
-        y = ~~(y - 1);
+        x = ~~x;
+        y = ~~y;
         width = ~~width;
         height = ~~height;
 
@@ -572,7 +572,7 @@ class Image {
 
         for (const [x, y] of this) {
             const distanceFromCenter = (x - centerX) ** 2 + (y - centerY) ** 2;
-            const alphaIdx = ((y - 1) * this.width + (x - 1)) * 4 + 3;
+            const alphaIdx = (y * this.width + x) * 4 + 3;
             if (distanceFromCenter > radSquared)
                 this.bitmap[alphaIdx] = 0;
             else if (feathering)
@@ -1042,7 +1042,7 @@ class Image {
             const xRad = (x - radius) ** 2;
             for (let y = 1; y <= radius; y++) {
                 if (xRad + (y - radius) ** 2 > radSquared)
-                    this.bitmap[((y - 1) * this.width + x - 1) * 4 + 3] = 0;
+                    this.bitmap[(y * this.width + x) * 4 + 3] = 0;
             }
         }
 
@@ -1050,7 +1050,7 @@ class Image {
             const xRad = (x - radius) ** 2;
             for (let y = this.height - radius; y <= this.height; y++) {
                 if (xRad + ((this.height - y) - radius) ** 2 > radSquared)
-                    this.bitmap[((y - 1) * this.width + x - 1) * 4 + 3] = 0;
+                    this.bitmap[(y * this.width + x) * 4 + 3] = 0;
             }
         }
 
@@ -1058,7 +1058,7 @@ class Image {
             const xRad = ((this.width - x) - radius) ** 2;
             for (let y = 1; y <= radius; y++) {
                 if (xRad + (y - radius) ** 2 > radSquared)
-                    this.bitmap[((y - 1) * this.width + x - 1) * 4 + 3] = 0;
+                    this.bitmap[(y * this.width + x) * 4 + 3] = 0;
             }
         }
 
@@ -1066,7 +1066,7 @@ class Image {
             const xRad = ((this.width - x) - radius) ** 2;
             for (let y = this.height - radius; y <= this.height; y++) {
                 if (xRad + ((this.height - y) - radius) ** 2 > radSquared)
-                    this.bitmap[((y - 1) * this.width + x - 1) * 4 + 3] = 0;
+                    this.bitmap[(y * this.width + x) * 4 + 3] = 0;
             }
         }
 
