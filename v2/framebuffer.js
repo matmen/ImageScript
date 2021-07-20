@@ -2294,7 +2294,7 @@ var framebuffer = class {
   }
   cut(type, arg0, arg1, arg2, arg3) {
     if (type === "circle")
-      return crop_exports.circle(arg0 || 0, this);
+      return crop_exports.circle(arg0 || 0, this.clone());
     else if (type === "box")
       return crop_exports.cut(arg0 | 0, arg1 | 0, arg2 | 0, arg3 | 0, this);
     else
@@ -2358,8 +2358,6 @@ var framebuffer = class {
       resize_exports.cubic(width, height, this);
     else if (type === "linear")
       resize_exports.linear(width, height, this);
-    else if (type === "liquid")
-      resize_exports.liquid(width, height, this);
     else if (type === "nearest")
       resize_exports.nearest(width, height, this);
     else

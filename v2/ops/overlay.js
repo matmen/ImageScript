@@ -36,6 +36,7 @@ export function overlay(background, foreground, x, y) {
   const fview = foreground.view;
   const bview = background.view;
 
+  // todo: fix range
   // todo: negative perf
   for (let yy = y | 0; yy < mh; yy++) {
     const yoffset = yy * bwidth;

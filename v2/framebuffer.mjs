@@ -62,7 +62,7 @@ export default class framebuffer {
   }
 
   cut(type, arg0, arg1, arg2, arg3) {
-    if (type === 'circle') return ops.crop.circle(arg0 || 0, this);
+    if (type === 'circle') return ops.crop.circle(arg0 || 0, this.clone());
     else if (type === 'box') return ops.crop.cut(arg0 | 0, arg1 | 0, arg2 | 0, arg3 | 0, this);
 
     else throw new RangeError('invalid cut type');
@@ -117,7 +117,6 @@ export default class framebuffer {
     if (width === this.width && height === this.height) return this;
     else if (type === 'cubic') ops.resize.cubic(width, height, this);
     else if (type === 'linear') ops.resize.linear(width, height, this);
-    else if (type === 'liquid') ops.resize.liquid(width, height, this);
     else if (type === 'nearest') ops.resize.nearest(width, height, this);
 
     else throw new RangeError('invalid resize type');
