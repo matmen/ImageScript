@@ -376,6 +376,54 @@ export class Image {
      * @returns {Image} The resized image
      */
     resize(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+        const image = this.__resize__(width, height, mode);
+        return this.__apply__(image);
+    }
+
+    /**
+     * Resizes the image so it is contained in the given bounding box.
+     * Can return an image with one axis smaller than the given bounding box.
+     * @param {number} width The width of the bounding box
+     * @param {number} height The height of the bounding box
+     * @param {string} [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @returns {Image} The resized image
+     */
+    contain(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+        const scaleFactor = width / height > this.width / this.height ? height / this.height : width / this.width;
+        return this.scale(scaleFactor, mode);
+    }
+
+    /**
+     * Resizes the image so it is contained in the given bounding box, placing it in the center of the given bounding box.
+     * Always returns the exact dimensions of the bounding box.
+     * @param {number} width The width of the bounding box
+     * @param {number} height The height of the bounding box
+     * @param {string} [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @returns {Image} The resized image
+     */
+    fit(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+        const result = new Image(width, height);
+        this.contain(width, height, mode);
+        result.composite(this, (width - this.width) / 2, (height - this.height) / 2);
+        return this.__apply__(result);
+    }
+
+    /**
+     * Resizes the image so it covers the given bounding box, cropping the overflowing edges.
+     * Always returns the exact dimensions of the bounding box.
+     * @param {number} width The width of the bounding box
+     * @param {number} height The height of the bounding box
+     * @param {string} [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @returns {Image} The resized image
+     */
+    cover(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+        const scaleFactor = width / height > this.width / this.height ? width / this.width : height / this.height;
+        const result = this.scale(scaleFactor, mode);
+        return result.crop((result.width - width) / 2, (result.height - height) / 2, width, height);
+    }
+
+    /** @private */
+    __resize__(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
         if (width === Image.RESIZE_AUTO && height === Image.RESIZE_AUTO) throw new Error('RESIZE_AUTO can only be used for either width or height, not for both');
         else if (width === Image.RESIZE_AUTO) width = this.width / this.height * height;
         else if (height === Image.RESIZE_AUTO) height = this.height / this.width * width;
