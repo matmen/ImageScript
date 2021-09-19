@@ -1,7 +1,7 @@
 const png = require('./png/node.js');
 const mem = require('./utils/mem.js');
-const codecs = require('./node/index.js');
 const {version} = require('./package.json');
+const codecs = require('./codecs/node/index.js');
 const { default: v2 } = require('./v2/framebuffer.js');
 
 // old
@@ -83,16 +83,16 @@ class Image {
      * @yields {number[]} The coordinates of the pixel ([x, y])
      * @returns {void}
      */
-    [Symbol.iterator]() {
-        return new v2(this.width, this.height, this.bitmap)[Symbol.iterator]();
+    *[Symbol.iterator]() {
+        for (const x of new v2(this.width, this.height, this.bitmap)[Symbol.iterator]()) yield (x[0]++, x[1]++, x)
     }
 
     /**
      * Yields an [x, y, color] array for every pixel in the image
      * @yields {number[]} The coordinates and color of the pixel ([x, y, color])
      */
-    iterateWithColors() {
-        return new v2(this.width, this.height, this.bitmap).pixels('int');
+    *iterateWithColors() {
+        for (const x of new v2(this.width, this.height, this.bitmap).pixels('int')) yield (x[0]++, x[1]++, x);
     }
 
     /**

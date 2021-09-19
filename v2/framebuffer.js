@@ -5,7 +5,10 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __markAsModule = (target) => __defProp(target, "__esModule", { value: true });
-var __commonJS = (cb, mod) => function __require() {
+var __require = typeof require !== "undefined" ? require : (x2) => {
+  throw new Error('Dynamic require of "' + x2 + '" is not supported');
+};
+var __commonJS = (cb, mod) => function __require2() {
   return mod || (0, cb[Object.keys(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __export = (target, all) => {
@@ -1056,8 +1059,8 @@ __export(iterator_exports, {
 function* cords(framebuffer2) {
   const width = framebuffer2.width | 0;
   const height = framebuffer2.height | 0;
-  for (let y = 1 | 0; y <= height; y++) {
-    for (let x2 = 1 | 0; x2 <= width; x2++)
+  for (let y = 0 | 0; y < height; y++) {
+    for (let x2 = 0 | 0; x2 < width; x2++)
       yield [x2, y];
   }
 }
@@ -1066,8 +1069,8 @@ function* rgba(framebuffer2) {
   const u82 = framebuffer2.u8;
   const width = framebuffer2.width | 0;
   const height = framebuffer2.height | 0;
-  for (let y = 1 | 0; y <= height; y++) {
-    for (let x2 = 1 | 0; x2 <= width; x2++) {
+  for (let y = 0 | 0; y < height; y++) {
+    for (let x2 = 0 | 0; x2 < width; x2++) {
       yield [x2, y, u82.subarray(offset, offset += 4)];
     }
   }
@@ -1077,8 +1080,8 @@ function* u32(framebuffer2) {
   const view3 = framebuffer2.view;
   const width = framebuffer2.width | 0;
   const height = framebuffer2.height | 0;
-  for (let y = 1 | 0; y <= height; y++) {
-    for (let x2 = 1 | 0; x2 <= width; x2++) {
+  for (let y = 0 | 0; y < height; y++) {
+    for (let x2 = 0 | 0; x2 < width; x2++) {
       yield [x2, y, view3.getUint32(offset, false)];
       offset += 4;
     }
@@ -1411,12 +1414,13 @@ var _b = freb(fdeb, 0);
 var fd = _b[0];
 var revfd = _b[1];
 var rev = new u16(32768);
-for (var i = 0; i < 32768; ++i) {
+for (i = 0; i < 32768; ++i) {
   x = (i & 43690) >>> 1 | (i & 21845) << 1;
   x = (x & 52428) >>> 2 | (x & 13107) << 2;
   x = (x & 61680) >>> 4 | (x & 3855) << 4;
   rev[i] = ((x & 65280) >>> 8 | (x & 255) << 8) >>> 1;
 }
+var i;
 var x;
 var hMap = function(cd, mb, r) {
   var s = cd.length;
@@ -1453,17 +1457,22 @@ var hMap = function(cd, mb, r) {
   return co;
 };
 var flt = new u8(288);
-for (var i = 0; i < 144; ++i)
+for (i = 0; i < 144; ++i)
   flt[i] = 8;
-for (var i = 144; i < 256; ++i)
+var i;
+for (i = 144; i < 256; ++i)
   flt[i] = 9;
-for (var i = 256; i < 280; ++i)
+var i;
+for (i = 256; i < 280; ++i)
   flt[i] = 7;
-for (var i = 280; i < 288; ++i)
+var i;
+for (i = 280; i < 288; ++i)
   flt[i] = 8;
+var i;
 var fdt = new u8(32);
-for (var i = 0; i < 32; ++i)
+for (i = 0; i < 32; ++i)
   fdt[i] = 5;
+var i;
 var flm = hMap(flt, 9, 0);
 var flrm = hMap(flt, 9, 1);
 var fdm = hMap(fdt, 5, 0);
@@ -2226,14 +2235,17 @@ var framebuffer = class {
   toString() {
     return `framebuffer<${this.width}x${this.height}>`;
   }
+  get(x2, y) {
+    return this.view.getUint32((x2 | 0) + (y | 0) * this.width, false);
+  }
   clone() {
     return new this.constructor(this.width, this.height, this.u8.slice());
   }
+  set(x2, y, color3) {
+    this.view.setUint32((x2 | 0) + (y | 0) * this.width, color3, false);
+  }
   toJSON() {
     return { width: this.width, height: this.height, buffer: Array.from(this.u8) };
-  }
-  get(x2, y) {
-    return this.view.getUint32((x2 | 0) - 1 + ((y | 0) - 1) * this.width, false);
   }
   scale(type, factor) {
     return this.resize(type, factor * this.width, factor * this.height);
@@ -2244,11 +2256,8 @@ var framebuffer = class {
   replace(frame, x2 = 0, y = 0) {
     return overlay_exports.replace(this, frame, x2 | 0, y | 0), this;
   }
-  set(x2, y, color3) {
-    this.view.setUint32((x2 | 0) - 1 + ((y | 0) - 1) * this.width, color3, false);
-  }
   at(x2, y) {
-    const offset = 4 * ((x2 | 0) - 1 + ((y | 0) - 1) * this.width);
+    const offset = 4 * ((x2 | 0) + (y | 0) * this.width);
     return this.u8.subarray(offset, 4 + offset);
   }
   static from(framebuffer2) {
