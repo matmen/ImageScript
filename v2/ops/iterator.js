@@ -2,8 +2,8 @@ export function* cords(framebuffer) {
   const width = framebuffer.width | 0;
   const height = framebuffer.height | 0;
 
-  for (let y = 1 | 0; y <= height; y++) {
-    for (let x = 1 | 0; x <= width; x++) yield [x, y];
+  for (let y = 0 | 0; y < height; y++) {
+    for (let x = 0 | 0; x < width; x++) yield [x, y];
   }
 }
 
@@ -13,8 +13,8 @@ export function* rgba(framebuffer) {
   const width = framebuffer.width | 0;
   const height = framebuffer.height | 0;
 
-  for (let y = 1 | 0; y <= height; y++) {
-    for (let x = 1 | 0; x <= width; x++) {
+  for (let y = 0 | 0; y < height; y++) {
+    for (let x = 0 | 0; x < width; x++) {
       yield [x, y, u8.subarray(offset, offset += 4)];
     }
   }
@@ -26,8 +26,8 @@ export function* u32(framebuffer) {
   const width = framebuffer.width | 0;
   const height = framebuffer.height | 0;
 
-  for (let y = 1 | 0; y <= height; y++) {
-    for (let x = 1 | 0; x <= width; x++) {
+  for (let y = 0 | 0; y < height; y++) {
+    for (let x = 0 | 0; x < width; x++) {
       yield [x, y, view.getUint32(offset, false)]; offset += 4;
     }
   }

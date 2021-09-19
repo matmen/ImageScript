@@ -1,0 +1,14 @@
+{
+  "license": "MIT",
+  "main": "lib.js",
+  "version": "0.0.1",
+  "types": "lib.d.ts",
+  "name": "@imagescript/codecs",
+  "description": "fast codecs bindings for node and browsers",
+  "author": "imagescript (https://github.com/matmen/imagescript)",
+  "bugs": { "url": "https://github.com/matmen/imagescript/issues" },
+  "homepage": "https://github.com/matmen/ImageScript/blob/master/codecs/readme.md",
+  "repository": { "type": "git", "url": "git+https://github.com/matmen/imagescript.git" },
+  "exports": { ".": [{ "import": "./lib.mjs", "require": "./lib.js" }, "./lib.js"], "./*": "./*" },
+  "keywords": ["png", "jpg", "gif", "jpeg", "webp", "fast", "wasm", "codecs", "native", "bindings"]
+}
