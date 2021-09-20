@@ -1,0 +1,1 @@
+import lib from './index.js';

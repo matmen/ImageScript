@@ -1,8 +1,9 @@
 # ImageScript
 ##### zero-dependency JavaScript image manipulation
 [![Discord Server](https://img.shields.io/discord/691713541262147687.svg?label=Discord&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2&style=for-the-badge)](https://discord.gg/8hPrwAH)
-[![Documentation](https://img.shields.io/badge/Documentationn-informational?style=for-the-badge)](https://imagescript.dreadful.tech/)
+[![Documentation](https://img.shields.io/badge/Documentation-informational?style=for-the-badge)](https://imagescript.dreadful.tech/)
 [![Github](https://img.shields.io/badge/Github-Repository-181717?logo=github&style=for-the-badge)](https://github.com/matmen/ImageScript)
+[![deno.land](https://shields.io/badge/deno.land-gray?logo=deno&style=for-the-badge)](https://deno.land/x/imagescript@1.2.9)
 [![NPM](https://nodei.co/npm/imagescript.png)](https://www.npmjs.com/package/imagescript)
 
 ---

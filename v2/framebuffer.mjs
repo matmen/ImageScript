@@ -20,14 +20,14 @@ export default class framebuffer {
 
   [Symbol.iterator]() { return ops.iterator.cords(this); }
   toString() { return `framebuffer<${this.width}x${this.height}>`; }
+  get(x, y) { return this.view.getUint32((x | 0) + (y | 0) * this.width, false); }
   clone() { return new this.constructor(this.width, this.height, this.u8.slice()); }
+  set(x, y, color) { this.view.setUint32((x | 0) + (y | 0) * this.width, color, false); }
   toJSON() { return { width: this.width, height: this.height, buffer: Array.from(this.u8) } }
-  get(x, y) { return this.view.getUint32(((x | 0) - 1) + ((y | 0) - 1) * this.width, false); }
   scale(type, factor) { return this.resize(type, factor * this.width, factor * this.height); }
   overlay(frame, x = 0, y = 0) { return (ops.overlay.overlay(this, frame, x | 0, y | 0), this); }
   replace(frame, x = 0, y = 0) { return (ops.overlay.replace(this, frame, x | 0, y | 0), this); }
-  set(x, y, color) { this.view.setUint32(((x | 0) - 1) + ((y | 0) - 1) * this.width, color, false); }
-  at(x, y) { const offset = 4 * (((x | 0) - 1) + ((y | 0) - 1) * this.width); return this.u8.subarray(offset, 4 + offset); }
+  at(x, y) { const offset = 4 * ((x | 0) + (y | 0) * this.width); return this.u8.subarray(offset, 4 + offset); }
   static from(framebuffer) { return new this(framebuffer.width, framebuffer.height, framebuffer.u8 || framebuffer.buffer); }
   static decode(format, buffer) { if (format !== 'png') throw new RangeError('invalid image format'); else return framebuffer.from(png.decode(buffer)); }
 
@@ -62,7 +62,7 @@ export default class framebuffer {
   }
 
   cut(type, arg0, arg1, arg2, arg3) {
-    if (type === 'circle') return ops.crop.circle(arg0 || 0, this);
+    if (type === 'circle') return ops.crop.circle(arg0 || 0, this.clone());
     else if (type === 'box') return ops.crop.cut(arg0 | 0, arg1 | 0, arg2 | 0, arg3 | 0, this);
 
     else throw new RangeError('invalid cut type');
@@ -117,7 +117,6 @@ export default class framebuffer {
     if (width === this.width && height === this.height) return this;
     else if (type === 'cubic') ops.resize.cubic(width, height, this);
     else if (type === 'linear') ops.resize.linear(width, height, this);
-    else if (type === 'liquid') ops.resize.liquid(width, height, this);
     else if (type === 'nearest') ops.resize.nearest(width, height, this);
 
     else throw new RangeError('invalid resize type');
