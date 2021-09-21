@@ -1652,7 +1652,7 @@ class GIF extends Array {
                 }
 
                 else if (0 === mode || 1 === mode) {
-                    t8.set(u8)
+                    t8.set(u8);
                     for (let y = 0 | 0; y < height; y++) {
                         const y_offset = fx + gwidth * (y + fy) | 0;
 
