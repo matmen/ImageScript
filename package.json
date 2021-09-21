@@ -14,7 +14,19 @@
   "keywords": [
     "image",
     "image processing",
-    "image manipulation"
+    "image manipulation",
+    "png",
+    "jpeg",
+    "jpg",
+    "scale",
+    "resize",
+    "crop",
+    "webp",
+    "svg",
+    "bitmap",
+    "gif",
+    "picture",
+    "thumbnail"
   ],
   "author": "matmen <matmen@dreadful.tech>",
   "license": "GPL-3.0-or-later",
