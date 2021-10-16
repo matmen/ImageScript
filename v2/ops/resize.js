@@ -11,9 +11,9 @@ function clamped(x, y, width, height) {
 }
 
 function hermite(A, B, C, D, t) {
-  const c = (C / 2) + (-A / 2);
-  const b = A + (2 * C) - (D / 2) - ((5 * B) / 2);
-  const a = (D / 2) + (-A / 2) + ((3 * B) / 2) - ((3 * C) / 2);
+  const c = (C / 2) + (A / -2);
+  const b = A + (C * 2) - (D / 2) - (B * 2.5);
+  const a = (D / 2) + (A / -2) + (B * 1.5) - (C * 1.5);
 
   const t2 = t * t;
   return B + (c * t) + (b * t2) + (a * t * t2);
