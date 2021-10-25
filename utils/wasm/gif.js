@@ -1,11 +1,11 @@
-const {version} = require('../../package.json');
+const { version } = require('../../package.json');
 
 let mod = null;
 module.exports = {
   async init() {
-		if (!mod) {
+    if (!mod) {
       const streaming = 'compileStreaming' in WebAssembly;
-      mod = await WebAssembly[!streaming ? 'compile' : 'compileStreaming'](await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/gif.wasm`).then(x => streaming ? x : x.arrayBuffer()));
+      mod = await WebAssembly[!streaming ? 'compile' : 'compileStreaming'](await fetch(`https://unpkg.com/imagescript@${version}/wasm/any/gif.wasm`).then(x => streaming ? x : x.arrayBuffer()));
     };
 
     return this.new();
@@ -42,46 +42,46 @@ module.exports = {
         streams.set(0, this);
         this.ptr = wasm.encoder_new(0, width, height, loops);
       }
-    
+
       cb(buffer) {
         this.slices.push(buffer);
       }
-    
+
       free() {
         this.ptr = wasm.encoder_free(this.ptr);
         streams.delete(0);
       }
-    
+
       u8() {
         this.free();
         let offset = 0;
         const u8 = new Uint8Array(this.slices.reduce((sum, array) => sum + array.length, 0));
-    
+
         for (const x of this.slices) {
           u8.set(x, offset);
           offset += x.length;
         }
-    
+
         return u8;
       }
-    
+
       add(x, y, delay, width, height, buffer, dispose, quality) {
         const ptr = mem.alloc(buffer.length);
         mem.u8(ptr, buffer.length).set(buffer);
         wasm.encoder_add(this.ptr, ptr, buffer.length, x, y, width, height, delay, dispose, quality);
       }
-    
+
       set comment(comment) {
         const buffer = utf8encoder.encode(comment);
-    
+
         const ptr = mem.alloc(buffer.length);
         mem.u8(ptr, buffer.length).set(buffer);
         wasm.encoder_add_comment(this.ptr, ptr, buffer.length);
       }
-    
+
       set application(application) {
         const buffer = utf8encoder.encode(application);
-    
+
         const ptr = mem.alloc(buffer.length);
         mem.u8(ptr, buffer.length).set(buffer);
         wasm.encoder_add_application(this.ptr, ptr, buffer.length);

@@ -5,7 +5,7 @@ module.exports = {
   async init() {
     if (!mod) {
       const streaming = 'compileStreaming' in WebAssembly;
-      mod = await WebAssembly[!streaming ? 'compile' : 'compileStreaming'](await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/svg.wasm`).then(x => streaming ? x : x.arrayBuffer()));
+      mod = await WebAssembly[!streaming ? 'compile' : 'compileStreaming'](await fetch(`https://unpkg.com/imagescript@${version}/wasm/any/svg.wasm`).then(x => streaming ? x : x.arrayBuffer()));
     };
 
     return this.new();

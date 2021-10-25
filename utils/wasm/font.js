@@ -1,13 +1,13 @@
-const {version} = require('../../package.json');
+const { version } = require('../../package.json');
 
 let mod = null;
 module.exports = {
   async init() {
     if (!mod) {
       const streaming = 'compileStreaming' in WebAssembly;
-      mod = await WebAssembly[!streaming ? 'compile' : 'compileStreaming'](await fetch(`https://unpkg.com/imagescript@${version}/utils/wasm/font.wasm`).then(x => streaming ? x : x.arrayBuffer()));
+      mod = await WebAssembly[!streaming ? 'compile' : 'compileStreaming'](await fetch(`https://unpkg.com/imagescript@${version}/wasm/any/font.wasm`).then(x => streaming ? x : x.arrayBuffer()));
     }
-  
+
     return this.new();
   },
 
