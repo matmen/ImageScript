@@ -4,8 +4,6 @@
 #![warn(clippy::correctness)]
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
-#![feature(const_unreachable_unchecked)]
-#![feature(option_result_unwrap_unchecked)]
 #![feature(const_fn_floating_point_arithmetic)]
 
 mod ffi;
@@ -32,6 +30,69 @@ impl framebuffer {
 
 mod ops {
   use super::*;
+
+  pub mod overlay {
+    use super::*;
+
+    pub fn replace(fb: &mut fb, fg: &fb, x: isize, y: isize) {
+      let fu32 = fg.ptr::<u32>();
+      let bu32 = fb.ptr_mut::<u32>();
+      let (bw, bh) = (fb.width as isize, fb.height as isize);
+      let (fw, fh) = (fg.width as isize, fg.height as isize);
+
+      let top = y.max(0);
+      let left = x.max(0);
+      let width = bw.min(x + fw) - left;
+      let height = bh.min(y + fh) - top;
+
+      for yy in y.min(0).abs()..height {
+        let yyoffset = yy * fw;
+        let yoffset = left + bw * (yy + top);
+
+        for xx in x.min(0).abs()..width {
+          unsafe { *bu32.offset(xx + yoffset) = *fu32.offset(xx + yyoffset); }
+        }
+      }
+    }
+
+    pub fn blend(fb: &mut fb, fg: &fb, x: isize, y: isize) {
+      let fu32 = fg.ptr::<u32>();
+      let bu32 = fb.ptr_mut::<u32>();
+      let (bw, bh) = (fb.width as isize, fb.height as isize);
+      let (fw, fh) = (fg.width as isize, fg.height as isize);
+
+      let top = y.max(0);
+      let left = x.max(0);
+      let width = bw.min(x + fw) - left;
+      let height = bh.min(y + fh) - top;
+
+      for yy in y.min(0).abs()..height {
+        let yyoffset = yy * fw;
+        let yoffset = left + bw * (yy + top);
+
+        for xx in x.min(0).abs()..width {
+          unsafe {
+            let fg = *fu32.offset(xx + yyoffset);
+
+            match (fg >> 24) & 0xff {
+              0x00 => {},
+              0xff => *bu32.offset(xx + yoffset) = fg,
+
+              fa => {
+                let alpha = 1 + fa;
+                let inv_alpha = 256 - fa;
+                let bg = *bu32.offset(xx + yoffset);
+                let r = (alpha * (fg & 0xff) + inv_alpha * (bg & 0xff)) >> 8;
+                let g = (alpha * ((fg >> 8) & 0xff) + inv_alpha * ((bg >> 8) & 0xff)) >> 8;
+                let b = (alpha * ((fg >> 16) & 0xff) + inv_alpha * ((bg >> 16) & 0xff)) >> 8;
+                *bu32.offset(xx + yoffset) = (fa.max((bg >> 24) & 0xff) << 24) | ((b & 0xff) << 16) | ((g & 0xff) << 8) | r;
+              },
+            }
+          }
+        }
+      }
+    }
+  }
 
   pub mod resize {
     use super::*;
@@ -104,10 +165,10 @@ mod ops {
           let s3 = clamped(1 + xxi, 1 + yyi, owidth, oheight);
 
           unsafe {
-            *u8.add(offset) = lerp(lerp(*old.add(s0), *old.add(s2), tx), lerp(*old.add(s1), *old.add(s3), tx), ty);
-            *u8.add(1 + offset) = lerp(lerp(*old.add(1 + s0), *old.add(1 + s2), tx), lerp(*old.add(1 + s1), *old.add(1 + s3), tx), ty);
-            *u8.add(2 + offset) = lerp(lerp(*old.add(2 + s0), *old.add(2 + s2), tx), lerp(*old.add(2 + s1), *old.add(2 + s3), tx), ty);
-            *u8.add(3 + offset) = lerp(lerp(*old.add(3 + s0), *old.add(3 + s2), tx), lerp(*old.add(3 + s1), *old.add(3 + s3), tx), ty);
+            *u8.offset(offset) = lerp(lerp(*old.add(s0), *old.add(s2), tx), lerp(*old.add(s1), *old.add(s3), tx), ty);
+            *u8.offset(1 + offset) = lerp(lerp(*old.add(1 + s0), *old.add(1 + s2), tx), lerp(*old.add(1 + s1), *old.add(1 + s3), tx), ty);
+            *u8.offset(2 + offset) = lerp(lerp(*old.add(2 + s0), *old.add(2 + s2), tx), lerp(*old.add(2 + s1), *old.add(2 + s3), tx), ty);
+            *u8.offset(3 + offset) = lerp(lerp(*old.add(3 + s0), *old.add(3 + s2), tx), lerp(*old.add(3 + s1), *old.add(3 + s3), tx), ty);
           }
 
           offset += 4;
@@ -185,10 +246,10 @@ mod ops {
             let c333 = hermite(*old.add(2 + s12) as f64, *old.add(2 + s13) as f64, *old.add(2 + s14) as f64, *old.add(2 + s15) as f64, tx);
             let c3333 = hermite(*old.add(3 + s12) as f64, *old.add(3 + s13) as f64, *old.add(3 + s14) as f64, *old.add(3 + s15) as f64, tx);
 
-            *u8.add(offset) = hermite(c0, c1, c2, c3, ty) as u8;
-            *u8.add(1 + offset) = hermite(c00, c11, c22, c33, ty) as u8;
-            *u8.add(2 + offset) = hermite(c000, c111, c222, c333, ty) as u8;
-            *u8.add(3 + offset) = hermite(c0000, c1111, c2222, c3333, ty) as u8;
+            *u8.offset(offset) = hermite(c0, c1, c2, c3, ty) as u8;
+            *u8.offset(1 + offset) = hermite(c00, c11, c22, c33, ty) as u8;
+            *u8.offset(2 + offset) = hermite(c000, c111, c222, c333, ty) as u8;
+            *u8.offset(3 + offset) = hermite(c0000, c1111, c2222, c3333, ty) as u8;
           }
 
           offset += 4;
@@ -207,6 +268,8 @@ type bfb = *mut framebuffer;
 #[no_mangle] unsafe extern "C" fn width(fb: bfb) -> usize { return (*fb).width; }
 #[no_mangle] unsafe extern "C" fn height(fb: bfb) -> usize { return (*fb).height; }
 #[no_mangle] unsafe extern "C" fn buffer(fb: bfb) -> *mut u8 { return ffi::io::peek((*fb).slice()); }
+#[no_mangle] unsafe extern "C" fn overlay(fb: bfb, fg: bfb, x: isize, y: isize) { ops::overlay::blend(&mut *fb, &*fg, x, y); }
+#[no_mangle] unsafe extern "C" fn replace(fb: bfb, fg: bfb, x: isize, y: isize) { ops::overlay::replace(&mut *fb, &*fg, x, y); }
 #[no_mangle] unsafe extern "C" fn new(width: usize, height: usize) -> bfb { return ffi::ptr::pack(framebuffer::new(width, height)); }
 
 #[no_mangle] unsafe extern "C" fn resize(fb: bfb, t: u8, width: usize, height: usize) -> bfb {

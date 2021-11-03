@@ -1,56 +1,60 @@
 import { blend } from './color.js';
 
 export function replace(bg, fg, x, y) {
-  const fwidth = fg.width | 0;
-  const bwidth = bg.width | 0;
-  const fheight = fg.height | 0;
-  const bheight = bg.height | 0;
-  let mw = Math.min(bwidth, fwidth) | 0;
-  let mh = Math.min(bheight, fheight) | 0;
-
   const b32 = bg.u32;
   const f32 = fg.u32;
+  const fw = fg.width | 0;
+  const bw = bg.width | 0;
+  const fh = fg.height | 0;
+  const bh = bg.height | 0;
+  const top = (y > 0 ? y : 0) | 0;
+  const left = (x > 0 ? x : 0) | 0;
+  const width = (Math.min(bw, x + fw) - left) | 0;
+  const height = (Math.min(bh, y + fh) - top) | 0;
 
-  // todo: range
-  // todo: negative speed
-  for (let yy = y | 0; yy < mh; yy++) {
-    const yoffset = yy * bwidth;
-    const yyoffset = fwidth * (yy - y);
+  for (let yy = (y > 0 ? 0 : -y) | 0; yy < height; yy++) {
+    const yyoffset = yy * fw;
+    const yoffset = left + bw * (yy + top);
 
-    for (let xx = x | 0; xx < mw; xx++) {
-      b32[xx + yoffset] = f32[xx - x + yyoffset];
+    for (let xx = (x > 0 ? 0 : -x) | 0; xx < width; xx++) {
+      b32[xx + yoffset] = f32[xx + yyoffset];
     }
   }
 }
 
-export function overlay(background, foreground, x, y) {
-  x = x | 0;
-  y = y | 0;
-  const fwidth = foreground.width | 0;
-  const bwidth = background.width | 0;
-  const fheight = foreground.height | 0;
-  const bheight = background.height | 0;
-  const mw = Math.min(bwidth, fwidth) | 0;
-  const mh = Math.min(bheight, fheight) | 0;
+export function overlay(bg, fg, x, y) {
+  const b32 = bg.u32;
+  const f32 = fg.u32;
+  const fw = fg.width | 0;
+  const bw = bg.width | 0;
+  const fh = fg.height | 0;
+  const bh = bg.height | 0;
+  const top = (y > 0 ? y : 0) | 0;
+  const left = (x > 0 ? x : 0) | 0;
+  const width = (Math.min(bw, x + fw) - left) | 0;
+  const height = (Math.min(bh, y + fh) - top) | 0;
 
-  const fview = foreground.view;
-  const bview = background.view;
+  for (let yy = (y > 0 ? 0 : -y) | 0; yy < height; yy++) {
+    const yyoffset = yy * fw;
+    const yoffset = left + bw * (yy + top);
 
-  // todo: fix range
-  // todo: negative perf
-  for (let yy = y | 0; yy < mh; yy++) {
-    const yoffset = yy * bwidth;
-    const yyoffset = fwidth * (yy - y);
+    for (let xx = (x > 0 ? 0 : -x) | 0; xx < width; xx++) {
+      const F = f32[xx + yyoffset];
 
-    for (let xx = x | 0; xx < mw; xx++) {
-      const offset = 4 * (xx + yoffset);
-      const fg = fview.getUint32(4 * (xx - x + yyoffset), false);
+      // todo: be?
+      const fa = F >> 24 & 0xff;
+      if (fa === 0x00) continue;
+      else if (fa === 0xff) b32[xx + yoffset] = F;
 
-      const bg = bview.getUint32(offset, false);
-      if ((fg & 0xff) === 0xff) bview.setUint32(offset, fg, false);
-      else if ((fg & 0xff) === 0x00) bview.setUint32(offset, bg, false);
-
-      else bview.setUint32(offset, blend(fg, bg), false);
+      else {
+        const alpha = 1 + fa;
+        const inv_alpha = 256 - fa;
+        const B = b32[xx + yoffset];
+        const r = (alpha * (F & 0xff) + inv_alpha * (B & 0xff)) >> 8;
+        const g = (alpha * ((F >> 8) & 0xff) + inv_alpha * ((B >> 8) & 0xff)) >> 8;
+        const b = (alpha * ((F >> 16) & 0xff) + inv_alpha * ((B >> 16) & 0xff)) >> 8;
+        b32[xx + yoffset] = (Math.max(fa, (B >> 24) & 0xff) << 24) | ((b & 0xff) << 16) | ((g & 0xff) << 8) | r;
+      }
     }
   }
 }
