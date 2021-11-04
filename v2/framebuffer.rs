@@ -9,9 +9,9 @@
 mod ffi;
 
 pub struct framebuffer {
-  width: usize,
-  height: usize,
   ptr: ffi::any,
+  pub width: usize,
+  pub height: usize,
 }
 
 impl Drop for framebuffer {
@@ -31,61 +31,114 @@ impl framebuffer {
 mod ops {
   use super::*;
 
+  pub mod fill {
+    use super::*;
+
+    pub fn function<F>(fb: &mut fb, f: F) where F: Fn(usize, usize) -> u32 {
+      let width = fb.width;
+      let height = fb.height;
+      let u32 = fb.ptr_mut::<u32>();
+
+      for y in 0..height {
+        let yoffset = y * width;
+        for x in 0..width { unsafe { *u32.add(x + yoffset) = f(x, y); } }
+      }
+    }
+
+    pub fn color(fb: &mut fb, r: u8, g: u8, b: u8, a: u8) {
+      if r == g && r == b && r == a { unsafe { std::ptr::write_bytes(fb.ptr_mut::<u8>(), r, fb.len()); } }
+
+      else {
+        let width = fb.width;
+        let height = fb.height;
+        let u32 = fb.ptr_mut::<u32>();
+        unsafe { std::slice::from_raw_parts_mut(u32, width).fill(u32::from_be_bytes([r, g, b, a])); }
+        for y in 1..height { unsafe { std::ptr::copy_nonoverlapping(u32 as *const u32, u32.add(y * width), width); } }
+      }
+    }
+  }
+
+  pub mod flip {
+    use super::*;
+
+    pub fn horizontal(fb: &mut fb) {
+      let width = fb.width;
+      let height = fb.height;
+      let u32 = fb.ptr_mut::<u32>();
+      for y in 0..height { unsafe { std::slice::from_raw_parts_mut(u32.add(y * width), width).reverse(); } }
+    }
+
+    pub fn vertical(fb: &mut fb) {
+      let width = fb.width;
+      let height = fb.height;
+      let u32 = fb.ptr_mut::<u32>();
+
+      for y in 0..(height / 2) {
+        let yoffset = y * width;
+        let yboffset = width * (height - 1 - y);
+        for x in 0..width { unsafe { std::ptr::swap(u32.add(x + yoffset), u32.add(x + yboffset)) }; }
+      }
+    }
+  }
+
   pub mod overlay {
     use super::*;
 
     pub fn replace(fb: &mut fb, fg: &fb, x: isize, y: isize) {
-      let fu32 = fg.ptr::<u32>();
-      let bu32 = fb.ptr_mut::<u32>();
+      let f32 = fg.ptr::<u32>();
+      let b32 = fb.ptr_mut::<u32>();
       let (bw, bh) = (fb.width as isize, fb.height as isize);
       let (fw, fh) = (fg.width as isize, fg.height as isize);
 
       let top = y.max(0);
       let left = x.max(0);
+      let ox = x.min(0).abs();
+      let oy = y.min(0).abs();
       let width = bw.min(x + fw) - left;
       let height = bh.min(y + fh) - top;
+      if 0 >= width || 0 >= height { return; }
 
-      for yy in y.min(0).abs()..height {
-        let yyoffset = yy * fw;
+      for yy in 0..height {
+        let yyoffset = ox + fw * (yy + oy);
         let yoffset = left + bw * (yy + top);
-
-        for xx in x.min(0).abs()..width {
-          unsafe { *bu32.offset(xx + yoffset) = *fu32.offset(xx + yyoffset); }
-        }
+        unsafe { b32.offset(yoffset).copy_from(f32.offset(yyoffset), width as usize); }
       }
     }
 
     pub fn blend(fb: &mut fb, fg: &fb, x: isize, y: isize) {
-      let fu32 = fg.ptr::<u32>();
-      let bu32 = fb.ptr_mut::<u32>();
+      let f32 = fg.ptr::<u32>();
+      let b32 = fb.ptr_mut::<u32>();
       let (bw, bh) = (fb.width as isize, fb.height as isize);
       let (fw, fh) = (fg.width as isize, fg.height as isize);
 
       let top = y.max(0);
       let left = x.max(0);
+      let ox = x.min(0).abs();
+      let oy = y.min(0).abs();
       let width = bw.min(x + fw) - left;
       let height = bh.min(y + fh) - top;
+      if 0 >= width || 0 >= height { return; }
 
-      for yy in y.min(0).abs()..height {
-        let yyoffset = yy * fw;
+      for yy in 0..height {
+        let yyoffset = ox + fw * (yy + oy);
         let yoffset = left + bw * (yy + top);
 
-        for xx in x.min(0).abs()..width {
+        for xx in 0..width {
           unsafe {
-            let fg = *fu32.offset(xx + yyoffset);
+            let fg = *f32.offset(xx + yyoffset);
 
             match (fg >> 24) & 0xff {
               0x00 => {},
-              0xff => *bu32.offset(xx + yoffset) = fg,
+              0xff => *b32.offset(xx + yoffset) = fg,
 
               fa => {
                 let alpha = 1 + fa;
                 let inv_alpha = 256 - fa;
-                let bg = *bu32.offset(xx + yoffset);
+                let bg = *b32.offset(xx + yoffset);
                 let r = (alpha * (fg & 0xff) + inv_alpha * (bg & 0xff)) >> 8;
                 let g = (alpha * ((fg >> 8) & 0xff) + inv_alpha * ((bg >> 8) & 0xff)) >> 8;
                 let b = (alpha * ((fg >> 16) & 0xff) + inv_alpha * ((bg >> 16) & 0xff)) >> 8;
-                *bu32.offset(xx + yoffset) = (fa.max((bg >> 24) & 0xff) << 24) | ((b & 0xff) << 16) | ((g & 0xff) << 8) | r;
+                *b32.offset(xx + yoffset) = (fa.max((bg >> 24) & 0xff) << 24) | ((b & 0xff) << 16) | ((g & 0xff) << 8) | r;
               },
             }
           }
@@ -127,10 +180,7 @@ mod ops {
       for y in 0..height {
         let yoffset = y * width;
         let yyoffset = owidth * (yw * y as f64) as usize;
-
-        for x in 0..width {
-          unsafe { *u32.add(x + yoffset) = *old.add(yyoffset + (xw * x as f64) as usize); }
-        };
+        for x in 0..width { unsafe { *u32.add(x + yoffset) = *old.add(yyoffset + (xw * x as f64) as usize); } };
       };
 
       return fb;
@@ -267,7 +317,10 @@ type bfb = *mut framebuffer;
 #[no_mangle] unsafe extern "C" fn free(fb: bfb) { ffi::ptr::drop(fb); }
 #[no_mangle] unsafe extern "C" fn width(fb: bfb) -> usize { return (*fb).width; }
 #[no_mangle] unsafe extern "C" fn height(fb: bfb) -> usize { return (*fb).height; }
+#[no_mangle] unsafe extern "C" fn flip_vertical(fb: bfb) { ops::flip::vertical(&mut *fb); }
+#[no_mangle] unsafe extern "C" fn flip_horizontal(fb: bfb) { ops::flip::horizontal(&mut *fb); }
 #[no_mangle] unsafe extern "C" fn buffer(fb: bfb) -> *mut u8 { return ffi::io::peek((*fb).slice()); }
+#[no_mangle] unsafe extern "C" fn fill_color(fb: bfb, r: u8, g: u8, b: u8, a: u8) { ops::fill::color(&mut *fb, r, g, b, a); }
 #[no_mangle] unsafe extern "C" fn overlay(fb: bfb, fg: bfb, x: isize, y: isize) { ops::overlay::blend(&mut *fb, &*fg, x, y); }
 #[no_mangle] unsafe extern "C" fn replace(fb: bfb, fg: bfb, x: isize, y: isize) { ops::overlay::replace(&mut *fb, &*fg, x, y); }
 #[no_mangle] unsafe extern "C" fn new(width: usize, height: usize) -> bfb { return ffi::ptr::pack(framebuffer::new(width, height)); }

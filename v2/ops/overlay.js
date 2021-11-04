@@ -1,5 +1,3 @@
-import { blend } from './color.js';
-
 export function replace(bg, fg, x, y) {
   const b32 = bg.u32;
   const f32 = fg.u32;
@@ -7,38 +5,43 @@ export function replace(bg, fg, x, y) {
   const bw = bg.width | 0;
   const fh = fg.height | 0;
   const bh = bg.height | 0;
+  const ox = (x > 0 ? 0 : -x) | 0;
+  const oy = (y > 0 ? 0 : -y) | 0;
   const top = (y > 0 ? y : 0) | 0;
   const left = (x > 0 ? x : 0) | 0;
   const width = (Math.min(bw, x + fw) - left) | 0;
   const height = (Math.min(bh, y + fh) - top) | 0;
 
-  for (let yy = (y > 0 ? 0 : -y) | 0; yy < height; yy++) {
-    const yyoffset = yy * fw;
-    const yoffset = left + bw * (yy + top);
+  if (0 >= width || 0 >= height) return;
 
-    for (let xx = (x > 0 ? 0 : -x) | 0; xx < width; xx++) {
-      b32[xx + yoffset] = f32[xx + yyoffset];
-    }
+  for (let yy = 0 | 0; yy < height; yy++) {
+    const yyoffset = ox + fw * (yy + oy);
+    const yoffset = left + bw * (yy + top);
+    b32.subarray(yoffset, width + yoffset).set(f32.subarray(yyoffset, width + yyoffset));
   }
 }
 
-export function overlay(bg, fg, x, y) {
+export function blend(bg, fg, x, y) {
   const b32 = bg.u32;
   const f32 = fg.u32;
   const fw = fg.width | 0;
   const bw = bg.width | 0;
   const fh = fg.height | 0;
   const bh = bg.height | 0;
+  const ox = (x > 0 ? 0 : -x) | 0;
+  const oy = (y > 0 ? 0 : -y) | 0;
   const top = (y > 0 ? y : 0) | 0;
   const left = (x > 0 ? x : 0) | 0;
   const width = (Math.min(bw, x + fw) - left) | 0;
   const height = (Math.min(bh, y + fh) - top) | 0;
 
-  for (let yy = (y > 0 ? 0 : -y) | 0; yy < height; yy++) {
-    const yyoffset = yy * fw;
+  if (0 >= width || 0 >= height) return;
+
+  for (let yy = 0 | 0; yy < height; yy++) {
+    const yyoffset = ox + fw * (yy + oy);
     const yoffset = left + bw * (yy + top);
 
-    for (let xx = (x > 0 ? 0 : -x) | 0; xx < width; xx++) {
+    for (let xx = 0 | 0; xx < width; xx++) {
       const F = f32[xx + yyoffset];
 
       // todo: be?

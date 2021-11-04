@@ -959,7 +959,7 @@ function pawn(point0, point1, weight, ref, inn) {
 // v2/ops/overlay.js
 var overlay_exports = {};
 __export(overlay_exports, {
-  overlay: () => overlay,
+  blend: () => blend2,
   replace: () => replace
 });
 function replace(bg, fg, x2, y) {
@@ -969,33 +969,39 @@ function replace(bg, fg, x2, y) {
   const bw = bg.width | 0;
   const fh = fg.height | 0;
   const bh = bg.height | 0;
+  const ox = (x2 > 0 ? 0 : -x2) | 0;
+  const oy = (y > 0 ? 0 : -y) | 0;
   const top = (y > 0 ? y : 0) | 0;
   const left = (x2 > 0 ? x2 : 0) | 0;
   const width = Math.min(bw, x2 + fw) - left | 0;
   const height = Math.min(bh, y + fh) - top | 0;
-  for (let yy = (y > 0 ? 0 : -y) | 0; yy < height; yy++) {
-    const yyoffset = yy * fw;
+  if (0 >= width || 0 >= height)
+    return;
+  for (let yy = 0 | 0; yy < height; yy++) {
+    const yyoffset = ox + fw * (yy + oy);
     const yoffset = left + bw * (yy + top);
-    for (let xx = (x2 > 0 ? 0 : -x2) | 0; xx < width; xx++) {
-      b32[xx + yoffset] = f32[xx + yyoffset];
-    }
+    b32.subarray(yoffset, width + yoffset).set(f32.subarray(yyoffset, width + yyoffset));
   }
 }
-function overlay(bg, fg, x2, y) {
+function blend2(bg, fg, x2, y) {
   const b32 = bg.u32;
   const f32 = fg.u32;
   const fw = fg.width | 0;
   const bw = bg.width | 0;
   const fh = fg.height | 0;
   const bh = bg.height | 0;
+  const ox = (x2 > 0 ? 0 : -x2) | 0;
+  const oy = (y > 0 ? 0 : -y) | 0;
   const top = (y > 0 ? y : 0) | 0;
   const left = (x2 > 0 ? x2 : 0) | 0;
   const width = Math.min(bw, x2 + fw) - left | 0;
   const height = Math.min(bh, y + fh) - top | 0;
-  for (let yy = (y > 0 ? 0 : -y) | 0; yy < height; yy++) {
-    const yyoffset = yy * fw;
+  if (0 >= width || 0 >= height)
+    return;
+  for (let yy = 0 | 0; yy < height; yy++) {
+    const yyoffset = ox + fw * (yy + oy);
     const yoffset = left + bw * (yy + top);
-    for (let xx = (x2 > 0 ? 0 : -x2) | 0; xx < width; xx++) {
+    for (let xx = 0 | 0; xx < width; xx++) {
       const F = f32[xx + yyoffset];
       const fa = F >> 24 & 255;
       if (fa === 0)
@@ -2217,7 +2223,7 @@ var framebuffer = class {
     return this.resize(type, factor * this.width, factor * this.height);
   }
   overlay(frame, x2 = 0, y = 0) {
-    return overlay_exports.overlay(this, frame, x2 | 0, y | 0), this;
+    return overlay_exports.blend(this, frame, x2 | 0, y | 0), this;
   }
   replace(frame, x2 = 0, y = 0) {
     return overlay_exports.replace(this, frame, x2 | 0, y | 0), this;
