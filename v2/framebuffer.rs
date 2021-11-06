@@ -1,9 +1,11 @@
 #![allow(dead_code)]
 #![warn(clippy::perf)]
 #![warn(clippy::complexity)]
+#![feature(core_intrinsics)]
 #![warn(clippy::correctness)]
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
+#![feature(destructuring_assignment)]
 #![feature(const_fn_floating_point_arithmetic)]
 
 mod ffi;
@@ -46,7 +48,7 @@ mod ops {
     }
 
     pub fn color(fb: &mut fb, r: u8, g: u8, b: u8, a: u8) {
-      if r == g && r == b && r == a { unsafe { std::ptr::write_bytes(fb.ptr_mut::<u8>(), r, fb.len()); } }
+      if r == g && r == b && r == a { unsafe { fb.ptr_mut::<u8>().write_bytes(r, fb.len()); } }
 
       else {
         let width = fb.width;
@@ -168,6 +170,7 @@ mod ops {
     }
 
     pub fn nearest(fb: &fb, width: usize, height: usize) -> fb {
+
       let owidth = fb.width;
       let oheight = fb.height;
       let old = fb.ptr::<u32>();
@@ -309,6 +312,179 @@ mod ops {
       return fb;
     }
   }
+
+  pub mod blur {
+    use super::*;
+
+    pub fn gaussian(fb: &mut fb, sigma: f32) {
+      let cof = {
+        let a = (0.726f32).powi(2).exp() / sigma;
+
+        let l = (-a).exp();
+        let c = (-a * 2.0).exp();
+        let k = (1.0 - l).powi(2) / (1.0 - c + a * l * 2.0);
+
+        let a3 = c * -k;
+        let b1 = l * 2.0;
+        let a1 = l * k * (a - 1.0);
+        let a2 = l * k * (a + 1.0);
+        (k, a1, a2, a3, b1, -c, (k + a1) / (c - b1 + 1.0), (a2 + a3) / (c - b1 + 1.0))
+      };
+
+      let width = fb.width;
+      let height = fb.height;
+
+      let u8 = fb.ptr_mut::<u8>();
+      let o8 = ffi::mem::alloc(fb.len());
+      unsafe { u8.copy_to(o8, fb.len()); }
+      let f32 = ffi::mem::alloc(4 * 4 * width.max(height)) as *mut f32;
+
+      unsafe {
+        gc(o8, u8, f32, width, height, cof);
+        gc(u8, o8, f32, height, width, cof);
+      }
+
+      ffi::mem::free(o8, fb.len());
+      ffi::mem::free(f32 as *mut u8, 4 * 4 * width.max(height));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[cfg(target_feature = "simd128")]
+    unsafe fn gc(u8: *mut u8, o8: *mut u8, f32: *mut f32, width: usize, height: usize, (k, a1, a2, a3, b1, b2, lc, rc): (f32, f32, f32, f32, f32, f32, f32, f32)) {
+      use std::arch::wasm32::{self, v128_store};
+      use std::intrinsics::{float_to_int_unchecked as fi};
+
+      let k = wasm32::f32x4_splat(k);
+      let a1 = wasm32::f32x4_splat(a1);
+      let a2 = wasm32::f32x4_splat(a2);
+      let a3 = wasm32::f32x4_splat(a3);
+      let b1 = wasm32::f32x4_splat(b1);
+      let b2 = wasm32::f32x4_splat(b2);
+      let lc = wasm32::f32x4_splat(lc);
+      let rc = wasm32::f32x4_splat(rc);
+
+      let width4 = 4 * width;
+      let height4 = 4 * height;
+      let hw1 = height * (width - 1);
+
+      for y in 0..height {
+        let mut toffset = 0;
+        let mut ooffset = y * width4;
+        let mut offset = 4 * (y + hw1);
+        let mut po = wasm32::f32x4(*o8.add(ooffset) as f32, *o8.add(1 + ooffset) as f32, *o8.add(2 + ooffset) as f32, *o8.add(3 + ooffset) as f32);
+
+        let mut fu = std::arch::wasm32::f32x4_mul(lc, po); let mut tu = fu.clone();
+
+        for _ in 0..width {
+          let co = wasm32::f32x4(*o8.add(ooffset) as f32, *o8.add(1 + ooffset) as f32, *o8.add(2 + ooffset) as f32, *o8.add(3 + ooffset) as f32);
+          let cu = wasm32::f32x4_add(wasm32::f32x4_add(wasm32::f32x4_mul(k, co), wasm32::f32x4_mul(a1, po)), wasm32::f32x4_add(wasm32::f32x4_mul(b1, fu), wasm32::f32x4_mul(b2, tu)));
+
+          tu = fu; fu = cu; po = co;
+          v128_store(f32.offset(toffset) as *mut wasm32::v128, fu);
+
+          ooffset += 4;
+          toffset += 4;
+        }
+
+        ooffset -= 4;
+        toffset -= 4;
+
+        let mut po = wasm32::f32x4(*o8.add(ooffset) as f32, *o8.add(1 + ooffset) as f32, *o8.add(2 + ooffset) as f32, *o8.add(3 + ooffset) as f32);
+
+        tu = wasm32::f32x4_mul(rc, po);
+
+        fu = tu.clone();
+        let mut co = po.clone();
+
+        for _ in 0..width {
+          let cu = wasm32::f32x4_add(wasm32::f32x4_add(wasm32::f32x4_mul(a2, co), wasm32::f32x4_mul(a3, po)), wasm32::f32x4_add(wasm32::f32x4_mul(b1, fu), wasm32::f32x4_mul(b2, tu)));
+
+          tu = fu; fu = cu; po = co;
+          co = wasm32::f32x4(*o8.add(ooffset) as f32, *o8.add(1 + ooffset) as f32, *o8.add(2 + ooffset) as f32, *o8.add(3 + ooffset) as f32);
+
+          let f: [f32; 4] = std::mem::transmute(wasm32::f32x4_add(fu, wasm32::v128_load(f32.offset(toffset) as *mut wasm32::v128)));
+
+          *u8.add(offset) = fi(*f.get_unchecked(0));
+          *u8.add(1 + offset) = fi(*f.get_unchecked(1));
+          *u8.add(2 + offset) = fi(*f.get_unchecked(2));
+          *u8.add(3 + offset) = fi(*f.get_unchecked(3));
+
+          ooffset -= 4;
+          toffset -= 4;
+          offset -= height4;
+        }
+      }
+    }
+
+    #[cfg(not(target_feature = "simd128"))]
+    unsafe fn gc(u8: *mut u8, o8: *mut u8, f32: *mut f32, width: usize, height: usize, (k, a1, a2, a3, b1, b2, lc, rc): (f32, f32, f32, f32, f32, f32, f32, f32)) {
+      use std::intrinsics::{fmul_fast as fm, fadd_fast as fa, float_to_int_unchecked as fi};
+
+      let width4 = 4 * width;
+      let height4 = 4 * height;
+      let hw1 = height * (width - 1);
+
+      for y in 0..height {
+        let mut toffset = 0;
+        let mut ooffset = y * width4;
+        let mut offset = 4 * (y + hw1);
+
+        let (mut por, mut pog, mut pob, mut poa) = (*o8.add(ooffset) as f32, *o8.add(1 + ooffset) as f32, *o8.add(2 + ooffset) as f32, *o8.add(3 + ooffset) as f32);
+        let (mut fur, mut fug, mut fub, mut fua) = (fm(lc, por), fm(lc, pog), fm(lc, pob), fm(lc, poa)); let (mut tur, mut tug, mut tub, mut tua) = (fur, fug, fub, fua);
+
+        for _ in 0..width {
+          let (cor, cog, cob, coa) = (*o8.add(ooffset) as f32, *o8.add(1 + ooffset) as f32, *o8.add(2 + ooffset) as f32, *o8.add(3 + ooffset) as f32);
+          let (cur, cug, cub, cua) = (fm(k, cor) + fm(a1, por) + fm(b1, fur) + fm(b2, tur), fm(k, cog) + fm(a1, pog) + fm(b1, fug) + fm(b2, tug), fm(k, cob) + fm(a1, pob) + fm(b1, fub) + fm(b2, tub), fm(k, coa) + fm(a1, poa) + fm(b1, fua) + fm(b2, tua));
+
+          (tur, tug, tub, tua) = (fur, fug, fub, fua);
+          (fur, fug, fub, fua) = (cur, cug, cub, cua);
+          (por, pog, pob, poa) = (cor, cog, cob, coa);
+
+          *f32.offset(toffset) = fur;
+          *f32.offset(1 + toffset) = fug;
+          *f32.offset(2 + toffset) = fub;
+          *f32.offset(3 + toffset) = fua;
+
+          ooffset += 4;
+          toffset += 4;
+        }
+
+        ooffset -= 4;
+        toffset -= 4;
+
+        por = *o8.add(ooffset) as f32;
+        pog = *o8.add(1 + ooffset) as f32;
+        pob = *o8.add(2 + ooffset) as f32;
+        poa = *o8.add(3 + ooffset) as f32;
+        (tur, tug, tub, tua) = (fm(rc, por), fm(rc, pog), fm(rc, pob), fm(rc, poa));
+
+        (fur, fug, fub, fua) = (tur, tug, tub, tua);
+        let (mut cor, mut cog, mut cob, mut coa) = (por, pog, pob, poa);
+
+        for _ in 0..width {
+          let (cur, cug, cub, cua) = (fm(a2, cor) + fm(a3, por) + fm(b1, fur) + fm(b2, tur), fm(a2, cog) + fm(a3, pog) + fm(b1, fug) + fm(b2, tug), fm(a2, cob) + fm(a3, pob) + fm(b1, fub) + fm(b2, tub), fm(a2, coa) + fm(a3, poa) + fm(b1, fua) + fm(b2, tua));
+
+          (tur, tug, tub, tua) = (fur, fug, fub, fua);
+          (fur, fug, fub, fua) = (cur, cug, cub, cua);
+          (por, pog, pob, poa) = (cor, cog, cob, coa);
+
+          cor = *o8.add(ooffset) as f32;
+          cog = *o8.add(1 + ooffset) as f32;
+          cob = *o8.add(2 + ooffset) as f32;
+          coa = *o8.add(3 + ooffset) as f32;
+
+          *u8.add(offset) = fi(fa(fur, *f32.offset(toffset)));
+          *u8.add(1 + offset) = fi(fa(fug, *f32.offset(1 + toffset)));
+          *u8.add(2 + offset) = fi(fa(fub, *f32.offset(2 + toffset)));
+          *u8.add(3 + offset) = fi(fa(fua, *f32.offset(3 + toffset)));
+
+          ooffset -= 4;
+          toffset -= 4;
+          offset -= height4;
+        }
+      }
+    }
+  }
 }
 
 type fb = framebuffer;
@@ -319,6 +495,7 @@ type bfb = *mut framebuffer;
 #[no_mangle] unsafe extern "C" fn height(fb: bfb) -> usize { return (*fb).height; }
 #[no_mangle] unsafe extern "C" fn flip_vertical(fb: bfb) { ops::flip::vertical(&mut *fb); }
 #[no_mangle] unsafe extern "C" fn flip_horizontal(fb: bfb) { ops::flip::horizontal(&mut *fb); }
+#[no_mangle] unsafe extern "C" fn blur(fb: bfb, sigma: f32) { ops::blur::gaussian(&mut *fb, sigma); }
 #[no_mangle] unsafe extern "C" fn buffer(fb: bfb) -> *mut u8 { return ffi::io::peek((*fb).slice()); }
 #[no_mangle] unsafe extern "C" fn fill_color(fb: bfb, r: u8, g: u8, b: u8, a: u8) { ops::fill::color(&mut *fb, r, g, b, a); }
 #[no_mangle] unsafe extern "C" fn overlay(fb: bfb, fg: bfb, x: isize, y: isize) { ops::overlay::blend(&mut *fb, &*fg, x, y); }
