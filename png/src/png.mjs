@@ -1,6 +1,6 @@
-import { crc32 } from './crc.js';
-import { from_parts } from './mem.js';
-import { compress, decompress } from './zlib.js';
+import { crc32 } from './crc.mjs';
+import { from_parts } from './mem.mjs';
+import { compress, decompress } from './zlib.mjs';
 
 const __IHDR__ = new Uint8Array([73, 72, 68, 82]);
 const __IDAT__ = new Uint8Array([73, 68, 65, 84]);

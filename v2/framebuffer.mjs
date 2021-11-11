@@ -1,7 +1,7 @@
-import Color from './ops/color.js';
-import { view } from './util/mem.js';
-import * as ops from './ops/index.js';
-import * as png from '../png/src/png.js';
+import Color from './ops/color.mjs';
+import { view } from './util/mem.mjs';
+import * as ops from './ops/index.mjs';
+import * as png from '../png/src/png.mjs';
 
 export { Color };
 
