@@ -14,9 +14,9 @@ class Image {
 
   get height(): number;
 
-  *[Symbol.iterator](): void;
+  * [Symbol.iterator](): void;
 
-  *iterateWithColors(): Generator<[x: number, y: number, color: number], void, unknown>;
+  * iterateWithColors(): Generator<[x: number, y: number, color: number], void, unknown>;
   
   static rgbaToColor(r: number, g: number, b: number, a: number): number;
 
@@ -112,7 +112,7 @@ class Image {
 
   rotate(angle: number, resize?: boolean): Image;
 
-  private __apply__(image: Image): Image;
+  private __apply__(image: Image | Frame): Image | Frame;
 
   static gradient(colors: Object<number, number>): (function(number): number);
 
@@ -123,6 +123,8 @@ class Image {
   fisheye(radius?: number): Image;
 
   async encode(compression?: number, metadata: PNGMetadata): Promise<Uint8Array>;
+  
+  async encode(metadata: PNGMetadata): Promise<Uint8Array>;
 
   async encodeJPEG(quality?: number): Promise<Uint8Array>;
 
