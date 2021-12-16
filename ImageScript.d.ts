@@ -6,14 +6,7 @@ class Image {
   private __u32__: Uint32Array;
   bitmap: Uint8ClampedArray;
 
-  constructor(width: number, height: number) {
-    this.__width__;
-    this.__height__;
-    this.__buffer__;
-    this.__view__;
-    this.__u32__;
-    this.bitmap;
-  };
+  constructor(width: number, height: number);
 
   private toString(): string;
 
@@ -157,13 +150,7 @@ class Frame extends Image {
 
   static __convert_disposal_mode__(mode: string | number): any;
 
-  constructor(width: number, height: number, duration?: number, xOffset?: number, yOffset?: number, disposalMode?: typeof Frame.DISPOSAL_KEEP | string) {
-    // super(width, height);
-    this.duration = duration;
-    this.xOffset = xOffset;
-    this.yOffset = yOffset;
-    this.disposalMode = disposalMode;
-  };
+  constructor(width: number, height: number, duration?: number, xOffset?: number, yOffset?: number, disposalMode?: typeof Frame.DISPOSAL_KEEP | string);
 
   toString(): string;
 
@@ -173,10 +160,7 @@ class Frame extends Image {
 };
 
 class GIF extends Array {
-  constructor(frames: Frame[], loopCount?: number) {
-    // super(...frames);
-    this.loopCount = loopCount;
-  };
+  constructor(frames: Frame[], loopCount?: number);
 
   get width(): number;
 
@@ -205,7 +189,7 @@ class TextLayout {
     verticalAlign?: string,
     horizontalAlign?: string,
     wrapHardBreaks?: boolean
-  }) {}
+  });
 };
 
 class ImageType {
