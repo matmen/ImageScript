@@ -114,7 +114,7 @@ class Image {
 
   private __apply__(image: Image | Frame): Image | Frame;
 
-  static gradient(colors: Object<number, number>): (function(number): number);
+  static gradient(colors: { [x: number]: number; }): (function(number): number);
 
   roundCorners(radius?: number): Image;
 
@@ -123,7 +123,7 @@ class Image {
   fisheye(radius?: number): Image;
 
   async encode(compression?: number, metadata: PNGMetadata): Promise<Uint8Array>;
-  
+
   async encode(metadata: PNGMetadata): Promise<Uint8Array>;
 
   async encodeJPEG(quality?: number): Promise<Uint8Array>;
