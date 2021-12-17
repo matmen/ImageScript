@@ -1,4 +1,4 @@
-class Image {
+export class Image {
   private __width__: number;
   private __height__: number;
   private __buffer__: ArrayBuffer;
@@ -44,7 +44,7 @@ class Image {
 
   private static get __out_of_bounds__(): string;
 
-  fill (color: number | colorFunction): Image;
+  fill(color: number | colorFunction): Image;
 
   clone(): Image;
 
@@ -60,7 +60,7 @@ class Image {
 
   contain(width: number, height: number, mode?: string): Image;
 
-  fill(width: number, height: number, mode?: string): Image;
+  fit(width: number, height: number, mode?: string): Image;
 
   cover(width: number, height: number, mode?: string): Image;
 
@@ -94,7 +94,7 @@ class Image {
 
   saturation(value: number, absolute?: boolean): Image;
 
-  composite(source: Image, x: number, y: number): Image;
+  composite(source: Image, x?: number, y?: number): Image;
 
   invert(): Image;
 
@@ -114,7 +114,7 @@ class Image {
 
   private __apply__(image: Image | Frame): Image | Frame;
 
-  static gradient(colors: { [x: number]: number; }): ((position: number) => number);
+  static gradient(colors: { [x: number]: number; }): (function(number): number);
 
   roundCorners(radius?: number): Image;
 
@@ -122,9 +122,8 @@ class Image {
 
   fisheye(radius?: number): Image;
 
-  async encode(compression?: number, metadata: PNGMetadata): Promise<Uint8Array>;
-
-  async encode(metadata: PNGMetadata): Promise<Uint8Array>;
+  async encode(compression?: number, metadata?: PNGMetadata): Promise<Uint8Array>;
+  async encode(metadata?: PNGMetadata): Promise<Uint8Array>;
 
   async encodeJPEG(quality?: number): Promise<Uint8Array>;
 
@@ -140,10 +139,10 @@ class Image {
 
   static async renderSVG(svg: string, size?: number, mode?: number): Promise<Image>;
 
-  static async renderText(font: Uint8Array, scale: number, text: string, color?: number, layout: TextLayout): Promise<Image>;
+  static async renderText(font: Uint8Array, scale: number, text: string, color?: number, layout?: TextLayout): Promise<Image>;
 };
 
-class Frame extends Image {
+export class Frame extends Image {
   static get DISPOSAL_KEEP(): string;
 
   static get DISPOSAL_PREVIOUS(): string;
@@ -161,7 +160,7 @@ class Frame extends Image {
   resize(width: number, height: number, mode?: typeof Image.RESIZE_NEAREST_NEIGHBOR | string): Image;
 };
 
-class GIF extends Array {
+export class GIF extends Array {
   constructor(frames: Frame[], loopCount?: number);
 
   get width(): number;
@@ -183,7 +182,7 @@ class GIF extends Array {
   resize(width: number, height: number, mode?: typeof Image.RESIZE_NEAREST_NEIGHBOR | string): void;
 }
 
-class TextLayout {
+export class TextLayout {
   constructor(options?: {
     maxWidth?: number,
     maxHeight?: number,
@@ -194,7 +193,7 @@ class TextLayout {
   });
 };
 
-class ImageType {
+export class ImageType {
   static getType(data: Buffer | Uint8Array): string | null;
 
   static isPNG(view: DataView): boolean;
@@ -206,7 +205,7 @@ class ImageType {
   static isGIF(view: DataView): boolean;
 };
 
-function decode(data: Uint8Array | Buffer, onlyExtractFirstFrame?: boolean): Promise<GIF | Image>;
+export function decode(data: Uint8Array | Buffer, onlyExtractFirstFrame?: boolean): Promise<GIF | Image>;
 
 type colorFunction = (x: number, y: number) => number;
 
@@ -222,5 +221,3 @@ type PNGMetadata = {
   source?: string,
   comment?: string
 };
-
-export = {Image, GIF, Frame, TextLayout, ImageType, decode};
