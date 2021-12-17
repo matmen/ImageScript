@@ -214,7 +214,7 @@ type PNGMetadata = {
   author?: string,
   description?: string,
   copyright?: string,
-  creationTime?: number,
+  creationTime?: string | number | Date,
   software?: string,
   disclaimer?: string,
   warning?: string,
