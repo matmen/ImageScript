@@ -20,17 +20,17 @@ export class Image {
   
   static rgbaToColor(r: number, g: number, b: number, a: number): number;
 
-  static rgbToColor(r: number, g: number, b: number): typeof Image.rgbaToColor;
+  static rgbToColor(r: number, g: number, b: number): number;
 
-  static hslaToColor(h: number, s: number, l: number, a: number): typeof Image.rgbaToColor;
+  static hslaToColor(h: number, s: number, l: number, a: number): number;
 
-  static hslToColor(h: number, s: number, l: number): typeof Image.hslaToColor;
+  static hslToColor(h: number, s: number, l: number): number;
 
   static rgbaToHSLA(r: number, g: number, b: number, a: number): number[];
 
   static colorToRGBA(color: number): number[];
 
-  static colorToRGB(color: number): typeof Image.colorToRGBA[];
+  static colorToRGB(color: number): number[];
 
   getPixelAt(x: number, y: number): number;
 
@@ -106,9 +106,9 @@ export class Image {
 
   hueShift(degrees: number): Image;
 
-  averageColor(): typeof Image.rgbaToColor | number;
+  averageColor(): number;
 
-  dominantColor(ignoreBlack?: boolean, ignoreWhite?: boolean, bwThreshold?: number): typeof Image.hslaToColor | number;
+  dominantColor(ignoreBlack?: boolean, ignoreWhite?: boolean, bwThreshold?: number): number;
 
   rotate(angle: number, resize?: boolean): Image;
 
