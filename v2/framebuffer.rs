@@ -11,20 +11,30 @@
 mod ffi;
 
 pub struct framebuffer {
-  ptr: ffi::any,
   pub width: usize,
   pub height: usize,
+  ptr: (bool, ffi::any),
 }
 
 impl Drop for framebuffer {
-  fn drop(&mut self) { ffi::mem::free(self.ptr_mut(), self.len()); }
+  fn drop(&mut self) { if self.ptr.0 { ffi::mem::free(self.ptr_mut(), self.len()); } }
+}
+
+impl Clone for framebuffer {
+  fn clone(&self) -> Self {
+    let ptr = ffi::mem::alloc(self.len()) as ffi::any;
+    unsafe { self.ptr.1.copy_to_nonoverlapping(ptr, self.len()); }
+    return Self { width: self.width, height: self.height, ptr: (true, ptr) };
+  }
 }
 
 impl framebuffer {
-  fn new(width: usize, height: usize) -> Self { return Self { width, height, ptr: ffi::mem::alloc(4 * width * height) as ffi::any }; }
+  fn new(width: usize, height: usize) -> Self { return Self { width, height, ptr: (true, ffi::mem::alloc(4 * width * height) as ffi::any) }; }
+  const unsafe fn from(width: usize, height: usize, buffer: &[u8]) -> Self { return Self { width, height, ptr: (false, buffer.as_ptr() as ffi::any) }; }
+  unsafe fn from_mut(width: usize, height: usize, buffer: &mut [u8]) -> Self { return Self { width, height, ptr: (false, buffer.as_mut_ptr() as ffi::any) }; }
 
-  fn ptr_mut<T>(&mut self) -> *mut T { return self.ptr as *mut T; }
-  const fn ptr<T>(&self) -> *const T { return self.ptr as *const T; }
+  fn ptr_mut<T>(&mut self) -> *mut T { return self.ptr.1 as *mut T; }
+  const fn ptr<T>(&self) -> *const T { return self.ptr.1 as *const T; }
   const fn len(&self) -> usize { return 4 * self.width * self.height; }
   fn slice<T>(&self) -> &[T] { return unsafe { std::slice::from_raw_parts(self.ptr(), self.len() / std::mem::size_of::<T>()) }; }
   fn slice_mut<T>(&mut self) -> &mut [T] { return unsafe { std::slice::from_raw_parts_mut(self.ptr_mut(), self.len() / std::mem::size_of::<T>()) }; }
