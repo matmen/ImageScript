@@ -11,12 +11,12 @@ export function rotate90(framebuffer) {
   framebuffer.width = height;
   framebuffer.height = width;
 
-  for (let y = 0 | 0; y < width; y++) {
+  for (let y = 0 | 0; y < height; y++) {
     const yoffset = y * width;
-    const height1y = height - 1 - y;
+    const heighty1 = height - 1 - y;
 
-    for (let x = 0 | 0; x < height; x++) {
-      u32[height1y + x * width] = old[x + yoffset];
+    for (let x = 0 | 0; x < width; x++) {
+      u32[heighty1 + x * height] = old[x + yoffset];
     }
   }
 }
@@ -30,12 +30,11 @@ export function rotate270(framebuffer) {
   framebuffer.width = height;
   framebuffer.height = width;
 
-  for (let y = 0 | 0; y < width; y++) {
-    const yoffset = y * width | 0;
-    const soffset = (y + width * (width - 1)) | 0;
+  for (let y = 0 | 0; y < height; y++) {
+    const yoffset = y * width;
 
-    for (let x = 0 | 0; x < height; x++) {
-      u32[soffset - x * width] = old[x + yoffset];
+    for (let x = 0 | 0; x < width; x++) {
+      u32[y + height * (width - 1 - x)] = old[x + yoffset];
     }
   }
 }
