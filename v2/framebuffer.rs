@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 #![warn(clippy::perf)]
+#![feature(decl_macro)]
 #![feature(unchecked_math)]
 #![warn(clippy::complexity)]
 #![feature(core_intrinsics)]
@@ -10,8 +11,10 @@
 #![feature(const_fn_floating_point_arithmetic)]
 
 #[inline(always)] const unsafe fn unreachable() -> ! { std::hint::unreachable_unchecked(); }
-#[inline] fn alloc(size: usize) -> *mut u8 { unsafe { return std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 16)); } }
-#[inline] fn free(ptr: *mut u8, size: usize) { unsafe { std::alloc::dealloc(ptr, std::alloc::Layout::from_size_align_unchecked(size, 16)); } }
+#[inline] fn alloc(size: usize) -> *mut u8 { unsafe { return std::alloc::alloc(alloc_align(size)); } }
+#[inline] fn free(ptr: *mut u8, size: usize) { unsafe { std::alloc::dealloc(ptr, alloc_align(size)); } }
+#[inline] fn calloc(size: usize) -> *mut u8 { unsafe { return std::alloc::alloc_zeroed(alloc_align(size)); } }
+#[inline] const fn alloc_align(size: usize) -> std::alloc::Layout { return unsafe { std::alloc::Layout::from_size_align_unchecked(size, 16) }; }
 
 type fb = framebuffer;
 
@@ -21,21 +24,25 @@ pub struct framebuffer {
   ptr: (bool, *mut u8),
 }
 
+unsafe impl Send for framebuffer {}
+unsafe impl Sync for framebuffer {}
+
 impl Drop for framebuffer {
   fn drop(&mut self) { if self.ptr.0 { free(self.ptr_mut(), self.len()); } }
 }
 
 impl Clone for framebuffer {
   fn clone(&self) -> Self {
-    let ptr = alloc(self.len()) as _;
+    let ptr = alloc(self.len());
     unsafe { self.ptr.1.copy_to_nonoverlapping(ptr, self.len()); }
     return Self { width: self.width, height: self.height, ptr: (true, ptr) };
   }
 }
 
 impl framebuffer {
-  pub fn new(width: usize, height: usize) -> Self { return Self { width, height, ptr: (true, alloc(4 * width * height)) }; }
+  pub fn new(width: usize, height: usize) -> Self { return Self { width, height, ptr: (true, calloc(4 * width * height)) }; }
   pub const unsafe fn from_ptr(width: usize, height: usize, ptr: *mut u8) -> Self { return Self { width, height, ptr: (false, ptr) }; }
+  pub unsafe fn new_fast(width: usize, height: usize) -> Self { return Self { width, height, ptr: (true, alloc(4 * width * height)) }; }
   pub const unsafe fn from(width: usize, height: usize, buffer: &[u8]) -> Self { return Self { width, height, ptr: (false, buffer.as_ptr() as _) }; }
   pub unsafe fn from_mut(width: usize, height: usize, buffer: &mut [u8]) -> Self { return Self { width, height, ptr: (false, buffer.as_mut_ptr()) }; }
 
@@ -43,40 +50,282 @@ impl framebuffer {
   pub const fn ptr<T>(&self) -> *const T { return self.ptr.1 as *const T; }
   pub const fn len(&self) -> usize { return 4 * self.width * self.height; }
   pub fn slice<T>(&self) -> &[T] { return unsafe { std::slice::from_raw_parts(self.ptr(), self.len() / std::mem::size_of::<T>()) }; }
-  pub fn get(&self, x: usize, y: usize) -> &[u8] { return unsafe { std::slice::from_raw_parts(self.ptr::<u8>().add(4 * (x + y * self.width)), 4) }; }
+  pub fn set(&mut self, x: usize, y: usize, color: colors::rgba) { unsafe { *self.ptr_mut::<u32>().add(x + y * self.width) = color.into() }; }
+  pub fn get(&self, x: usize, y: usize) -> colors::rgba { return unsafe { std::mem::transmute(*self.ptr::<u32>().add(x + y * self.width)) }; }
   pub fn slice_mut<T>(&mut self) -> &mut [T] { return unsafe { std::slice::from_raw_parts_mut(self.ptr_mut(), self.len() / std::mem::size_of::<T>()) }; }
-  pub fn get_mut(&mut self, x: usize, y: usize) -> &mut [u8] { return unsafe { std::slice::from_raw_parts_mut(self.ptr_mut::<u8>().add(4 * (x + y * self.width)), 4) }; }
-  pub fn set(&mut self, x: usize, y: usize, r: u8, g: u8, b: u8, a: u8) { unsafe { *self.ptr_mut::<u32>().add(x + y * self.width) = r as u32 | ((g as u32) << 8) | ((b as u32) << 16) | ((a as u32) << 24); }; }
-  pub fn vec<T>(mut self) -> Vec<T> { self.ptr.0 = false; return unsafe { Vec::from_raw_parts(self.ptr.1 as *mut T, self.len() / std::mem::size_of::<T>(), std::alloc::Layout::from_size_align_unchecked(self.len(), 16).size() / std::mem::size_of::<T>()) }; }
+  pub fn vec<T>(mut self) -> Vec<T> { self.ptr.0 = false; return unsafe { Vec::from_raw_parts(self.ptr.1 as *mut T, self.len() / std::mem::size_of::<T>(), alloc_align(self.len()).size() / std::mem::size_of::<T>()) }; }
+}
+
+pub mod colors {
+  #[repr(C)] #[derive(Copy, Clone)] pub struct rgb { pub r: u8, pub g: u8, pub b: u8 }
+  #[repr(C)] #[derive(Copy, Clone)] pub struct rgba { pub r: u8, pub g: u8, pub b: u8, pub a: u8 }
+
+  impl From<rgba> for rgb {
+    #[inline] fn from(c: rgba) -> rgb { return rgb { r: c.r, g: c.g, b: c.b }; }
+  }
+
+  impl From<rgb> for rgba {
+    #[inline] fn from(c: rgb) -> rgba { return rgba { r: c.r, g: c.g, b: c.b, a: 255 }; }
+  }
+
+  impl From<rgb> for u32 {
+    #[inline] fn from(c: rgb) -> u32 { return c.r as u32 | ((c.g as u32) << 8) | ((c.b as u32) << 16) | (255 << 24); }
+  }
+
+  impl From<rgba> for u32 {
+    #[inline] fn from(c: rgba) -> u32 { return c.r as u32 | ((c.g as u32) << 8) | ((c.b as u32) << 16) | ((c.a as u32) << 24); }
+  }
+
+  impl From<u32> for rgb {
+    #[inline] fn from(c: u32) -> rgb { return rgb { r: (c & 0xFF) as u8, g: ((c >> 8) & 0xFF) as u8, b: ((c >> 16) & 0xFF) as u8 }; }
+  }
+
+  impl From<u32> for rgba {
+    #[inline] fn from(c: u32) -> rgba { return rgba { r: (c & 0xFF) as u8, g: ((c >> 8) & 0xFF) as u8, b: ((c >> 16) & 0xFF) as u8, a: (c >> 24) as u8 }; }
+  }
+
+  pub fn blend(bg: u32, fg: u32) -> u32 {
+    let fa = fg >> 24;
+    let alpha = 1 + fa;
+    let inv_alpha = 256 - fa;
+    let r = (alpha * (fg & 0xff) + inv_alpha * (bg & 0xff)) >> 8;
+    let g = (alpha * ((fg >> 8) & 0xff) + inv_alpha * ((bg >> 8) & 0xff)) >> 8;
+    let b = (alpha * ((fg >> 16) & 0xff) + inv_alpha * ((bg >> 16) & 0xff)) >> 8;
+    return r | ((g & 0xff) << 8) | ((b & 0xff) << 16) | (fa.max(bg >> 24) << 24);
+  }
 }
 
 pub mod ops {
   use super::*;
 
-  pub mod fill {
+  pub mod filter {
     use super::*;
 
-    pub fn function<F>(fb: &mut fb, f: F) where F: Fn(usize, usize) -> u32 {
-      let width = fb.width;
-      let height = fb.height;
-      let u32 = fb.ptr_mut::<u32>();
+    pub fn opacity(fb: &mut fb, mut amount: f32) {
+      amount = amount.clamp(0.0, 1.0);
+      let u8 = unsafe { fb.ptr_mut::<u8>().offset(3) };
 
-      for y in 0..height {
-        let yoffset = y * width;
-        for x in 0..width { unsafe { *u32.add(x + yoffset) = f(x, y); } }
+      let mut offset = 0;
+      let len = fb.len();
+      while len > offset {
+        use std::intrinsics::{fmul_fast as fm, float_to_int_unchecked as fi};
+        unsafe { *u8.add(offset) = fi::<f32, u8>(fm(amount, *u8.add(offset) as f32)); }
+
+        offset += 4;
       }
     }
 
-    pub fn color(fb: &mut fb, r: u8, g: u8, b: u8, a: u8) {
-      if r == g && r == b && r == a { unsafe { fb.ptr_mut::<u8>().write_bytes(r, fb.len()); } }
+    pub fn brightness(fb: &mut fb, amount: f32) {
+      let u32 = fb.ptr_mut::<u32>();
+
+      for o in 0..(fb.len() / 4) {
+        unsafe {
+          use std::intrinsics::{fmul_fast as fm, float_to_int_unchecked as fi};
+
+          let c = *u32.add(o);
+          let r = fi::<f32, u32>(fm(amount, (c & 0xff) as f32)).min(255);
+          let g = fi::<f32, u32>(fm(amount, ((c >> 8) & 0xff) as f32)).min(255);
+          let b = fi::<f32, u32>(fm(amount, ((c >> 16) & 0xff) as f32)).min(255);
+
+          *u32.add(o) = r | (g << 8) | (b << 16) | (c >> 24 << 24);
+        }
+      }
+    }
+
+    pub fn contrast(fb: &mut fb, amount: f32) {
+      let u32 = fb.ptr_mut::<u32>();
+      let i = 255.0 * (0.5 - (0.5 * amount));
+
+      for o in 0..(fb.len() / 4) {
+        unsafe {
+          use std::intrinsics::{fadd_fast as fa, fmul_fast as fm, float_to_int_unchecked as fi};
+
+          let c = *u32.add(o);
+          let r = fi::<f32, u32>(fa(i, fm(amount, (c & 0xff) as f32))).min(255);
+          let g = fi::<f32, u32>(fa(i, fm(amount, ((c >> 8) & 0xff) as f32))).min(255);
+          let b = fi::<f32, u32>(fa(i, fm(amount, ((c >> 16) & 0xff) as f32))).min(255);
+
+          *u32.add(o) = r | (g << 8) | (b << 16) | (c >> 24 << 24);
+        }
+      }
+    }
+
+    pub fn saturate(fb: &mut fb, amount: f32) {
+      let u32 = fb.ptr_mut::<u32>();
+
+      let filter: [f32; 9] = [
+        0.213 + 0.787 * amount, 0.715 - 0.715 * amount, 0.072 - 0.072 * amount,
+        0.213 - 0.213 * amount, 0.715 + 0.285 * amount, 0.072 - 0.072 * amount,
+        0.213 - 0.213 * amount, 0.715 - 0.715 * amount, 0.072 + 0.928 * amount,
+      ];
+
+      for o in 0..(fb.len() / 4) {
+        unsafe {
+          use std::intrinsics::{fadd_fast as fa, fmul_fast as fm, float_to_int_unchecked as fi};
+
+          let c = *u32.add(o);
+          let rr = (c & 0xff) as f32;
+          let gg = ((c >> 8) & 0xff) as f32;
+          let bb = ((c >> 16) & 0xff) as f32;
+          let r = fi::<f32, u32>(fa(fm(rr, filter[0]), fa(fm(gg, filter[1]), fm(bb, filter[2])))).clamp(0, 255);
+          let g = fi::<f32, u32>(fa(fm(rr, filter[3]), fa(fm(gg, filter[4]), fm(bb, filter[5])))).clamp(0, 255);
+          let b = fi::<f32, u32>(fa(fm(rr, filter[6]), fa(fm(gg, filter[7]), fm(bb, filter[8])))).clamp(0, 255);
+
+          *u32.add(o) = r | (g << 8) | (b << 16) | (c >> 24 << 24);
+        }
+      }
+    }
+
+    pub fn sepia(fb: &mut fb, mut amount: f32) {
+      let u32 = fb.ptr_mut::<u32>();
+      amount = (1.0 - amount).clamp(0.0, 1.0);
+
+      let filter: [f32; 9] = [
+        0.393 + 0.607 * amount, 0.769 - 0.769 * amount, 0.189 - 0.189 * amount,
+        0.349 - 0.349 * amount, 0.686 + 0.314 * amount, 0.168 - 0.168 * amount,
+        0.272 - 0.272 * amount, 0.534 - 0.534 * amount, 0.131 + 0.869 * amount,
+      ];
+
+      for o in 0..(fb.len() / 4) {
+        unsafe {
+          use std::intrinsics::{fadd_fast as fa, fmul_fast as fm, float_to_int_unchecked as fi};
+
+          let c = *u32.add(o);
+          let rr = (c & 0xff) as f32;
+          let gg = ((c >> 8) & 0xff) as f32;
+          let bb = ((c >> 16) & 0xff) as f32;
+          let r = fi::<f32, u32>(fa(fm(rr, filter[0]), fa(fm(gg, filter[1]), fm(bb, filter[2])))).clamp(0, 255);
+          let g = fi::<f32, u32>(fa(fm(rr, filter[3]), fa(fm(gg, filter[4]), fm(bb, filter[5])))).clamp(0, 255);
+          let b = fi::<f32, u32>(fa(fm(rr, filter[6]), fa(fm(gg, filter[7]), fm(bb, filter[8])))).clamp(0, 255);
+
+          *u32.add(o) = r | (g << 8) | (b << 16) | (c >> 24 << 24);
+        }
+      }
+    }
+
+    pub fn grayscale(fb: &mut fb, mut amount: f32) {
+      let u32 = fb.ptr_mut::<u32>();
+      amount = (1.0 - amount).clamp(0.0, 1.0);
+
+      let filter: [f32; 9] = [
+        0.2126 + 0.7874 * amount, 0.7152 - 0.7152 * amount, 0.0722 - 0.0722 * amount,
+        0.2126 - 0.2126 * amount, 0.7152 + 0.2848 * amount, 0.0722 - 0.0722 * amount,
+        0.2126 - 0.2126 * amount, 0.7152 - 0.7152 * amount, 0.0722 + 0.9278 * amount,
+      ];
+
+      for o in 0..(fb.len() / 4) {
+        unsafe {
+          use std::intrinsics::{fadd_fast as fa, fmul_fast as fm, float_to_int_unchecked as fi};
+
+          let c = *u32.add(o);
+          let rr = (c & 0xff) as f32;
+          let gg = ((c >> 8) & 0xff) as f32;
+          let bb = ((c >> 16) & 0xff) as f32;
+          let r = fi::<f32, u32>(fa(fm(rr, filter[0]), fa(fm(gg, filter[1]), fm(bb, filter[2])))).clamp(0, 255);
+          let g = fi::<f32, u32>(fa(fm(rr, filter[3]), fa(fm(gg, filter[4]), fm(bb, filter[5])))).clamp(0, 255);
+          let b = fi::<f32, u32>(fa(fm(rr, filter[6]), fa(fm(gg, filter[7]), fm(bb, filter[8])))).clamp(0, 255);
+
+          *u32.add(o) = r | (g << 8) | (b << 16) | (c >> 24 << 24);
+        }
+      }
+    }
+
+    pub fn hue_rotate(fb: &mut fb, deg: f32) {
+      let u32 = fb.ptr_mut::<u32>();
+      let cos = f32::cos(deg.to_radians());
+      let sin = f32::sin(deg.to_radians());
+
+      let filter: [f32; 9] = [
+        0.213 + cos * 0.787 - sin * 0.213, 0.715 - cos * 0.715 - sin * 0.715, 0.072 - cos * 0.072 + sin * 0.928,
+        0.213 - cos * 0.213 + sin * 0.143, 0.715 + cos * 0.285 + sin * 0.140, 0.072 - cos * 0.072 - sin * 0.283,
+        0.213 - cos * 0.213 - sin * 0.787, 0.715 - cos * 0.715 + sin * 0.715, 0.072 + cos * 0.928 + sin * 0.072,
+      ];
+
+      for o in 0..(fb.len() / 4) {
+        unsafe {
+          use std::intrinsics::{fadd_fast as fa, fmul_fast as fm, float_to_int_unchecked as fi};
+
+          let c = *u32.add(o);
+          let rr = (c & 0xff) as f32;
+          let gg = ((c >> 8) & 0xff) as f32;
+          let bb = ((c >> 16) & 0xff) as f32;
+          let r = fi::<f32, u32>(fa(fm(rr, filter[0]), fa(fm(gg, filter[1]), fm(bb, filter[2])))).clamp(0, 255);
+          let g = fi::<f32, u32>(fa(fm(rr, filter[3]), fa(fm(gg, filter[4]), fm(bb, filter[5])))).clamp(0, 255);
+          let b = fi::<f32, u32>(fa(fm(rr, filter[6]), fa(fm(gg, filter[7]), fm(bb, filter[8])))).clamp(0, 255);
+
+          *u32.add(o) = r | (g << 8) | (b << 16) | (c >> 24 << 24);
+        }
+      }
+    }
+
+    pub fn drop_shadow(fb: &mut fb, x: isize, y: isize, sigma: f32, color: Option<colors::rgba>) {
+      let mut old = fb.clone();
+      let u32 = old.ptr_mut::<u32>();
+      ops::blur::gaussian(&mut old, sigma);
+
+      if color.is_some() {
+        unsafe {
+          let cc: u32 = color.unwrap_unchecked().into();
+
+          let ca = cc >> 24;
+          let cc = cc & 0xffffff;
+
+          for o in 0..(fb.len() / 4) {
+            let c = *u32.add(o);
+            if 0 != (c >> 24) { *u32.add(o) = cc | (c >> 24 << 24) }
+          }
+
+          if ca != 255 { ops::filter::opacity(&mut old, 1.0 / 255.0 * ca as f32); }
+        }
+      }
+
+      ops::overlay::background(fb, &old, x, y);
+    }
+
+    pub fn invert(fb: &mut fb, mut amount: f32) {
+      let u32 = fb.ptr_mut::<u32>();
+      amount = amount.clamp(0.0, 1.0);
+
+      if 1.0 == amount {
+        for o in 0..(fb.len() / 4) {
+          unsafe {
+            let c = *u32.add(o);
+            *u32.add(o) = !c & 0xffffff | (c >> 24 << 24);
+          }
+        }
+      }
 
       else {
-        let width = fb.width;
-        let height = fb.height;
-        let u32 = fb.ptr_mut::<u32>();
-        unsafe { std::slice::from_raw_parts_mut(u32, width).fill(u32::from_be_bytes([r, g, b, a])); }
-        for y in 1..height { unsafe { std::ptr::copy_nonoverlapping(u32 as *const u32, u32.add(y * width), width); } }
+        let inv = 1.0 - amount;
+
+        for o in 0..(fb.len() / 4) {
+          use std::intrinsics::{fadd_fast as fa, fsub_fast as fs, fmul_fast as fm, float_to_int_unchecked as fi};
+
+          unsafe {
+            let c = *u32.add(o);
+            let r = (c & 0xff) as f32;
+            let g = ((c >> 8) & 0xff) as f32;
+            let b = ((c >> 16) & 0xff) as f32;
+            let r = fi::<f32, u32>(fa(fm(r, amount), fm(inv, fs(255.0, r))));
+            let g = fi::<f32, u32>(fa(fm(g, amount), fm(inv, fs(255.0, g))));
+            let b = fi::<f32, u32>(fa(fm(b, amount), fm(inv, fs(255.0, b))));
+            *u32.add(o) = r | ((g & 0xff) << 8) | ((b & 0xff) << 16) | (c >> 24 << 24);
+          }
+        }
       }
+    }
+  }
+
+  pub mod crop {
+    use super::*;
+    use std::ops::Neg;
+
+    pub fn r#box(fb: &fb, x: isize, y: isize, width: usize, height: usize) -> fb {
+      let old = fb;
+      let mut fb = fb::new(width, height);
+      ops::overlay::replace(&mut fb, old, x.neg(), y.neg());
+
+      return fb;
     }
   }
 
@@ -103,6 +352,56 @@ pub mod ops {
     }
   }
 
+  pub mod fill {
+    use super::*;
+
+    pub fn function<F>(fb: &mut fb, f: F) where F: Fn(usize, usize) -> u32 {
+      let width = fb.width;
+      let height = fb.height;
+      let u32 = fb.ptr_mut::<u32>();
+
+      for y in 0..height {
+        let yoffset = y * width;
+        for x in 0..width { unsafe { *u32.add(x + yoffset) = f(x, y); } }
+      }
+    }
+
+    pub fn color(fb: &mut fb, color: colors::rgba) {
+      if color.r == color.g && color.r == color.b && color.r == color.a { unsafe { fb.ptr_mut::<u8>().write_bytes(color.r, fb.len()); } }
+
+      else {
+        let width = fb.width;
+        let height = fb.height;
+        let u32 = fb.ptr_mut::<u32>();
+        unsafe { std::slice::from_raw_parts_mut(u32, width).fill(color.into()); }
+        for y in 1..height { unsafe { u32.copy_to_nonoverlapping(u32.add(y * width), width); } }
+      }
+    }
+
+    pub fn background(fb: &mut fb, color: colors::rgba) {
+      let width = fb.width;
+      let bg = color.into();
+      let height = fb.height;
+      let u32 = fb.ptr_mut::<u32>();
+
+      for y in 0..height {
+        let yoffset = y * width;
+
+        for x in 0..width {
+          unsafe {
+            let fg = *u32.add(x + yoffset);
+
+            match (fg >> 24) & 0xff {
+              0xff => {},
+              0x00 => *u32.add(x + yoffset) = bg,
+              _ => *u32.add(x + yoffset) = colors::blend(bg, fg),
+            }
+          }
+        }
+      }
+    }
+  }
+
   pub mod rotate {
     use super::*;
 
@@ -114,7 +413,9 @@ pub mod ops {
       let width = fb.width;
       let height = fb.height;
       let u32 = fb.ptr_mut::<u32>();
-      let o32 = fb.clone().ptr::<u32>();
+      let o32 = alloc(fb.len()) as *mut u32;
+      unsafe { u32.copy_to_nonoverlapping(o32, fb.len() / 4); }
+
 
       fb.width = height;
       fb.height = width;
@@ -124,13 +425,16 @@ pub mod ops {
         let heighty1 = height - 1 - y;
         for x in 0..width { unsafe { *u32.add(heighty1 + x * height) = *o32.add(x + yoffset); } }
       }
+
+      free(o32 as *mut u8, fb.len());
     }
 
     pub fn rotate270(fb: &mut fb) {
       let width = fb.width;
       let height = fb.height;
       let u32 = fb.ptr_mut::<u32>();
-      let o32 = fb.clone().ptr::<u32>();
+      let o32 = alloc(fb.len()) as *mut u32;
+      unsafe { u32.copy_to_nonoverlapping(o32, fb.len() / 4); }
 
       fb.width = height;
       fb.height = width;
@@ -139,6 +443,8 @@ pub mod ops {
         let yoffset = y * width;
         for x in 0..width { unsafe { *u32.add(y + height * (width - 1 - x)) = *o32.add(x + yoffset); } }
       }
+
+      free(o32 as *mut u8, fb.len());
     }
   }
 
@@ -188,7 +494,7 @@ pub mod ops {
           unsafe {
             let fg = *f32.offset(xx + yyoffset);
 
-            match (fg >> 24) & 0xff {
+            match fg >> 24 {
               0x00 => {},
               0xff => *b32.offset(xx + yoffset) = fg,
 
@@ -199,7 +505,48 @@ pub mod ops {
                 let r = (alpha * (fg & 0xff) + inv_alpha * (bg & 0xff)) >> 8;
                 let g = (alpha * ((fg >> 8) & 0xff) + inv_alpha * ((bg >> 8) & 0xff)) >> 8;
                 let b = (alpha * ((fg >> 16) & 0xff) + inv_alpha * ((bg >> 16) & 0xff)) >> 8;
-                *b32.offset(xx + yoffset) = r | ((g & 0xff) << 8) | ((b & 0xff) << 16) | (fa.max((bg >> 24) & 0xff) << 24);
+                *b32.offset(xx + yoffset) = r | ((g & 0xff) << 8) | ((b & 0xff) << 16) | (fa.max(bg >> 24) << 24);
+              },
+            }
+          }
+        }
+      }
+    }
+
+    pub fn background(fb: &mut fb, bg: &fb, x: isize, y: isize) {
+      let bb32 = bg.ptr::<u32>();
+      let b32 = fb.ptr_mut::<u32>();
+      let (bw, bh) = (fb.width as isize, fb.height as isize);
+      let (fw, fh) = (bg.width as isize, bg.height as isize);
+
+      let top = y.max(0);
+      let left = x.max(0);
+      let ox = x.min(0).abs();
+      let oy = y.min(0).abs();
+      let width = bw.min(x + fw) - left;
+      let height = bh.min(y + fh) - top;
+      if 0 >= width || 0 >= height { return; }
+
+      for yy in 0..height {
+        let yyoffset = ox + fw * (yy + oy);
+        let yoffset = left + bw * (yy + top);
+
+        for xx in 0..width {
+          unsafe {
+            let fg = *b32.offset(xx + yoffset);
+
+            match fg >> 24 {
+              0xff => {},
+              0x00 => *b32.offset(xx + yoffset) = *bb32.offset(xx + yyoffset),
+
+              fa => {
+                let alpha = 1 + fa;
+                let inv_alpha = 256 - fa;
+                let bg = *bb32.offset(xx + yyoffset);
+                let r = (alpha * (fg & 0xff) + inv_alpha * (bg & 0xff)) >> 8;
+                let g = (alpha * ((fg >> 8) & 0xff) + inv_alpha * ((bg >> 8) & 0xff)) >> 8;
+                let b = (alpha * ((fg >> 16) & 0xff) + inv_alpha * ((bg >> 16) & 0xff)) >> 8;
+                *b32.offset(xx + yoffset) = r | ((g & 0xff) << 8) | ((b & 0xff) << 16) | (fa.max(bg >> 24) << 24);
               },
             }
           }
@@ -247,7 +594,7 @@ pub mod ops {
       return fb;
     }
 
-    pub fn linear(fb: &fb, width: usize, height: usize) -> fb {
+    pub unsafe fn linear(fb: &fb, width: usize, height: usize) -> fb {
       let owidth = fb.width;
       let oheight = fb.height;
       let o8 = fb.ptr::<u8>();
@@ -275,12 +622,12 @@ pub mod ops {
           let s2 = clamped(xxi, 1 + yyi, owidth, oheight);
           let s3 = clamped(1 + xxi, 1 + yyi, owidth, oheight);
 
-          unsafe {
+          // unsafe {
             *u8.offset(offset) = lerp(lerp(*o8.add(s0), *o8.add(s2), tx), lerp(*o8.add(s1), *o8.add(s3), tx), ty);
             *u8.offset(1 + offset) = lerp(lerp(*o8.add(1 + s0), *o8.add(1 + s2), tx), lerp(*o8.add(1 + s1), *o8.add(1 + s3), tx), ty);
             *u8.offset(2 + offset) = lerp(lerp(*o8.add(2 + s0), *o8.add(2 + s2), tx), lerp(*o8.add(2 + s1), *o8.add(2 + s3), tx), ty);
             *u8.offset(3 + offset) = lerp(lerp(*o8.add(3 + s0), *o8.add(3 + s2), tx), lerp(*o8.add(3 + s1), *o8.add(3 + s3), tx), ty);
-          }
+          // }
 
           offset += 4;
         };
@@ -289,7 +636,7 @@ pub mod ops {
       return fb;
     }
 
-    pub fn cubic(fb: &fb, width: usize, height: usize) -> fb {
+    pub unsafe fn cubic(fb: &fb, width: usize, height: usize) -> fb {
       let owidth = fb.width;
       let oheight = fb.height;
       let o8 = fb.ptr::<u8>();
@@ -336,7 +683,7 @@ pub mod ops {
           let s14 = clamped(1 + xxi, 2 + yyi, owidth, oheight);
           let s15 = clamped(2 + xxi, 2 + yyi, owidth, oheight);
 
-          unsafe {
+          // unsafe {
             let c0 = hermite(*o8.add(s0) as f64, *o8.add(s1) as f64, *o8.add(s2) as f64, *o8.add(s3) as f64, tx);
             let c00 = hermite(*o8.add(1 + s0) as f64, *o8.add(1 + s1) as f64, *o8.add(1 + s2) as f64, *o8.add(1 + s3) as f64, tx);
             let c000 = hermite(*o8.add(2 + s0) as f64, *o8.add(2 + s1) as f64, *o8.add(2 + s2) as f64, *o8.add(2 + s3) as f64, tx);
@@ -361,7 +708,7 @@ pub mod ops {
             *u8.offset(1 + offset) = hermite(c00, c11, c22, c33, ty) as u8;
             *u8.offset(2 + offset) = hermite(c000, c111, c222, c333, ty) as u8;
             *u8.offset(3 + offset) = hermite(c0000, c1111, c2222, c3333, ty) as u8;
-          }
+          // }
 
           offset += 4;
         };
@@ -375,6 +722,8 @@ pub mod ops {
     use super::*;
 
     pub fn gaussian(fb: &mut fb, sigma: f32) {
+      if 0.0 == sigma { return; }
+
       let cof = {
         let a = (0.726f32).powi(2).exp() / sigma;
 
@@ -466,9 +815,9 @@ pub mod ops {
           *u8.add(2 + offset) = fi(fa(fub, *f32.offset(2 + toffset)));
           *u8.add(3 + offset) = fi(fa(fua, *f32.offset(3 + toffset)));
 
-          ooffset -= 4;
-          toffset -= 4;
-          offset -= height4;
+          ooffset = ooffset.saturating_sub(4);
+          toffset = toffset.saturating_sub(4);
+          offset = offset.saturating_sub(height4);
         }
       }
     }
