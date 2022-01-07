@@ -1,60 +1,10 @@
-var __create = Object.create;
 var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __markAsModule = (target) => __defProp(target, "__esModule", { value: true });
-var __require = typeof require !== "undefined" ? require : (x2) => {
-  throw new Error('Dynamic require of "' + x2 + '" is not supported');
-};
-var __commonJS = (cb, mod) => function __require2() {
-  return mod || (0, cb[Object.keys(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-};
 var __export = (target, all) => {
   __markAsModule(target);
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
-var __reExport = (target, module2, desc) => {
-  if (module2 && typeof module2 === "object" || typeof module2 === "function") {
-    for (let key of __getOwnPropNames(module2))
-      if (!__hasOwnProp.call(target, key) && key !== "default")
-        __defProp(target, key, { get: () => module2[key], enumerable: !(desc = __getOwnPropDesc(module2, key)) || desc.enumerable });
-  }
-  return target;
-};
-var __toModule = (module2) => {
-  return __reExport(__markAsModule(__defProp(module2 != null ? __create(__getProtoOf(module2)) : {}, "default", module2 && module2.__esModule && "default" in module2 ? { get: () => module2.default, enumerable: true } : { value: module2, enumerable: true })), module2);
-};
-
-// v2/util/mem.js
-var require_mem = __commonJS({
-  "v2/util/mem.js"(exports, module2) {
-    function view3(buffer, shared = false) {
-      if (buffer instanceof ArrayBuffer)
-        return new Uint8Array(buffer);
-      if (shared && buffer instanceof SharedArrayBuffer)
-        return new Uint8Array(buffer);
-      if (ArrayBuffer.isView(buffer))
-        return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-      throw new TypeError("The provided value is not of type '(ArrayBuffer or ArrayBufferView)'");
-    }
-    function from_parts2(buffers, shared = false) {
-      let length = 0;
-      let offset = 0;
-      buffers.forEach((buffer) => length += buffer.byteLength == null ? buffer.length : buffer.byteLength);
-      const u82 = new Uint8Array(shared ? new SharedArrayBuffer(length) : length);
-      buffers.forEach((buffer) => {
-        const ref = Array.isArray(buffer) ? buffer : view3(buffer, true);
-        u82.set(ref, offset);
-        offset += ref.length;
-      });
-      return u82;
-    }
-    module2.exports = { view: view3, from_parts: from_parts2 };
-  }
-});
 
 // v2/framebuffer.mjs
 __export(exports, {
@@ -343,8 +293,16 @@ var colors = new Map([
   ["yellowgreen", 2597139199]
 ]);
 
-// v2/framebuffer.mjs
-var import_mem2 = __toModule(require_mem());
+// v2/util/mem.js
+function view(buffer, shared = false) {
+  if (buffer instanceof ArrayBuffer)
+    return new Uint8Array(buffer);
+  if (shared && buffer instanceof SharedArrayBuffer)
+    return new Uint8Array(buffer);
+  if (ArrayBuffer.isView(buffer))
+    return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  throw new TypeError("The provided value is not of type '(ArrayBuffer or ArrayBufferView)'");
+}
 
 // v2/ops/flip.js
 var flip_exports = {};
@@ -776,9 +734,9 @@ function clamped(x2, y, width, height) {
   return 4 * (clamp3(0, x2, width - 1) + clamp3(0, y, height - 1) * width);
 }
 function hermite(A, B, C, D, t) {
-  const c = C / 2 + -A / 2;
-  const b = A + 2 * C - D / 2 - 5 * B / 2;
-  const a = D / 2 + -A / 2 + 3 * B / 2 - 3 * C / 2;
+  const c = C / 2 + A / -2;
+  const b = A + C * 2 - D / 2 - B * 2.5;
+  const a = D / 2 + A / -2 + B * 1.5 - C * 1.5;
   const t2 = t * t;
   return B + c * t + b * t2 + a * t * t2;
 }
@@ -1001,50 +959,64 @@ function pawn(point0, point1, weight, ref, inn) {
 // v2/ops/overlay.js
 var overlay_exports = {};
 __export(overlay_exports, {
-  overlay: () => overlay,
+  blend: () => blend2,
   replace: () => replace
 });
 function replace(bg, fg, x2, y) {
-  const fwidth = fg.width | 0;
-  const bwidth = bg.width | 0;
-  const fheight = fg.height | 0;
-  const bheight = bg.height | 0;
-  let mw = Math.min(bwidth, fwidth) | 0;
-  let mh = Math.min(bheight, fheight) | 0;
   const b32 = bg.u32;
   const f32 = fg.u32;
-  for (let yy = y | 0; yy < mh; yy++) {
-    const yoffset = yy * bwidth;
-    const yyoffset = fwidth * (yy - y);
-    for (let xx = x2 | 0; xx < mw; xx++) {
-      b32[xx + yoffset] = f32[xx - x2 + yyoffset];
-    }
+  const fw = fg.width | 0;
+  const bw = bg.width | 0;
+  const fh = fg.height | 0;
+  const bh = bg.height | 0;
+  const ox = (x2 > 0 ? 0 : -x2) | 0;
+  const oy = (y > 0 ? 0 : -y) | 0;
+  const top = (y > 0 ? y : 0) | 0;
+  const left = (x2 > 0 ? x2 : 0) | 0;
+  const width = Math.min(bw, x2 + fw) - left | 0;
+  const height = Math.min(bh, y + fh) - top | 0;
+  if (0 >= width || 0 >= height)
+    return;
+  for (let yy = 0 | 0; yy < height; yy++) {
+    const yyoffset = ox + fw * (yy + oy);
+    const yoffset = left + bw * (yy + top);
+    b32.subarray(yoffset, width + yoffset).set(f32.subarray(yyoffset, width + yyoffset));
   }
 }
-function overlay(background, foreground, x2, y) {
-  x2 = x2 | 0;
-  y = y | 0;
-  const fwidth = foreground.width | 0;
-  const bwidth = background.width | 0;
-  const fheight = foreground.height | 0;
-  const bheight = background.height | 0;
-  const mw = Math.min(bwidth, fwidth) | 0;
-  const mh = Math.min(bheight, fheight) | 0;
-  const fview = foreground.view;
-  const bview = background.view;
-  for (let yy = y | 0; yy < mh; yy++) {
-    const yoffset = yy * bwidth;
-    const yyoffset = fwidth * (yy - y);
-    for (let xx = x2 | 0; xx < mw; xx++) {
-      const offset = 4 * (xx + yoffset);
-      const fg = fview.getUint32(4 * (xx - x2 + yyoffset), false);
-      const bg = bview.getUint32(offset, false);
-      if ((fg & 255) === 255)
-        bview.setUint32(offset, fg, false);
-      else if ((fg & 255) === 0)
-        bview.setUint32(offset, bg, false);
-      else
-        bview.setUint32(offset, blend(fg, bg), false);
+function blend2(bg, fg, x2, y) {
+  const b32 = bg.u32;
+  const f32 = fg.u32;
+  const fw = fg.width | 0;
+  const bw = bg.width | 0;
+  const fh = fg.height | 0;
+  const bh = bg.height | 0;
+  const ox = (x2 > 0 ? 0 : -x2) | 0;
+  const oy = (y > 0 ? 0 : -y) | 0;
+  const top = (y > 0 ? y : 0) | 0;
+  const left = (x2 > 0 ? x2 : 0) | 0;
+  const width = Math.min(bw, x2 + fw) - left | 0;
+  const height = Math.min(bh, y + fh) - top | 0;
+  if (0 >= width || 0 >= height)
+    return;
+  for (let yy = 0 | 0; yy < height; yy++) {
+    const yyoffset = ox + fw * (yy + oy);
+    const yoffset = left + bw * (yy + top);
+    for (let xx = 0 | 0; xx < width; xx++) {
+      const F = f32[xx + yyoffset];
+      const fa = F >> 24 & 255;
+      if (fa === 0)
+        continue;
+      else if (fa === 255)
+        b32[xx + yoffset] = F;
+      else {
+        const alpha = 1 + fa;
+        const inv_alpha = 256 - fa;
+        const B = b32[xx + yoffset];
+        const r = alpha * (F & 255) + inv_alpha * (B & 255) >> 8;
+        const g = alpha * (F >> 8 & 255) + inv_alpha * (B >> 8 & 255) >> 8;
+        const b = alpha * (F >> 16 & 255) + inv_alpha * (B >> 16 & 255) >> 8;
+        b32[xx + yoffset] = Math.max(fa, B >> 24 & 255) << 24 | (b & 255) << 16 | (g & 255) << 8 | r;
+      }
     }
   }
 }
@@ -1364,7 +1336,7 @@ function crc32(buffer) {
 }
 
 // png/src/mem.js
-function view(buffer, shared = false) {
+function view2(buffer, shared = false) {
   if (buffer instanceof ArrayBuffer)
     return new Uint8Array(buffer);
   if (shared && buffer instanceof SharedArrayBuffer)
@@ -1379,7 +1351,7 @@ function from_parts(buffers, shared = false) {
   buffers.forEach((buffer) => length += buffer.byteLength == null ? buffer.length : buffer.byteLength);
   const u82 = new Uint8Array(shared ? new SharedArrayBuffer(length) : length);
   buffers.forEach((buffer) => {
-    const ref = Array.isArray(buffer) ? buffer : view(buffer, true);
+    const ref = Array.isArray(buffer) ? buffer : view2(buffer, true);
     u82.set(ref, offset);
     offset += ref.length;
   });
@@ -2223,7 +2195,7 @@ var framebuffer = class {
   constructor(width, height, buffer) {
     this.width = width | 0;
     this.height = height | 0;
-    this.u8 = buffer ? (0, import_mem2.view)(buffer) : new Uint8Array(4 * this.width * this.height);
+    this.u8 = buffer ? view(buffer) : new Uint8Array(4 * this.width * this.height);
     this.view = new DataView(this.u8.buffer, this.u8.byteOffset, this.u8.byteLength);
     this.u32 = new Uint32Array(this.u8.buffer, this.u8.byteOffset, this.u8.byteLength / 4);
     if (this.u8.length !== 4 * this.width * this.height)
@@ -2251,7 +2223,7 @@ var framebuffer = class {
     return this.resize(type, factor * this.width, factor * this.height);
   }
   overlay(frame, x2 = 0, y = 0) {
-    return overlay_exports.overlay(this, frame, x2 | 0, y | 0), this;
+    return overlay_exports.blend(this, frame, x2 | 0, y | 0), this;
   }
   replace(frame, x2 = 0, y = 0) {
     return overlay_exports.replace(this, frame, x2 | 0, y | 0), this;

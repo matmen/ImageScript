@@ -1,7 +1,7 @@
-import Color from './ops/color.js';
-import { view } from './util/mem.js';
-import * as ops from './ops/index.js';
-import * as png from '../png/src/png.js';
+import Color from './ops/color.mjs';
+import { view } from './util/mem.mjs';
+import * as ops from './ops/index.mjs';
+import * as png from '../png/src/png.mjs';
 
 export { Color };
 
@@ -25,7 +25,7 @@ export default class framebuffer {
   set(x, y, color) { this.view.setUint32((x | 0) + (y | 0) * this.width, color, false); }
   toJSON() { return { width: this.width, height: this.height, buffer: Array.from(this.u8) } }
   scale(type, factor) { return this.resize(type, factor * this.width, factor * this.height); }
-  overlay(frame, x = 0, y = 0) { return (ops.overlay.overlay(this, frame, x | 0, y | 0), this); }
+  overlay(frame, x = 0, y = 0) { return (ops.overlay.blend(this, frame, x | 0, y | 0), this); }
   replace(frame, x = 0, y = 0) { return (ops.overlay.replace(this, frame, x | 0, y | 0), this); }
   at(x, y) { const offset = 4 * ((x | 0) + (y | 0) * this.width); return this.u8.subarray(offset, 4 + offset); }
   static from(framebuffer) { return new this(framebuffer.width, framebuffer.height, framebuffer.u8 || framebuffer.buffer); }

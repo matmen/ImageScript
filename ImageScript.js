@@ -693,46 +693,9 @@ class Image {
      * @returns {Image}
      */
     composite(source, x = 0, y = 0) {
-        x = ~~x;
-        y = ~~y;
-
-        for (let yy = 0; yy < source.height; yy++) {
-            let y_offset = y + yy;
-            if (y_offset < 0) continue;
-            if (y_offset >= this.height) break;
-
-            for (let xx = 0; xx < source.width; xx++) {
-                let x_offset = x + xx;
-                if (x_offset < 0) continue;
-                if (x_offset >= this.width) break;
-
-                const offset = 4 * (x_offset + y_offset * this.width);
-                const fg = source.__view__.getUint32(4 * (xx + yy * source.width), false);
-                const bg = this.__view__.getUint32(offset, false);
-
-                if ((fg & 0xff) === 0xff) this.__view__.setUint32(offset, fg, false);
-                else if ((fg & 0xff) === 0x00) this.__view__.setUint32(offset, bg, false);
-                else this.__view__.setUint32(offset, Image.__alpha_blend__(fg, bg), false);
-            }
-        }
+        new v2(this.width, this.height, this.bitmap).overlay(new v2(source.width, source.height, source.bitmap), x, y);
 
         return this;
-    }
-
-    /**
-     * @private
-     * @param {number} fg
-     * @param {number} bg
-     * @returns {number}
-     */
-    static __alpha_blend__(fg, bg) {
-        const fa = fg & 0xff;
-        const alpha = fa + 1;
-        const inv_alpha = 256 - fa;
-        const r = (alpha * (fg >>> 24) + inv_alpha * (bg >>> 24)) >> 8;
-        const b = (alpha * (fg >> 8 & 0xff) + inv_alpha * (bg >> 8 & 0xff)) >> 8;
-        const g = (alpha * (fg >> 16 & 0xff) + inv_alpha * (bg >> 16 & 0xff)) >> 8;
-        return (((r & 0xff) << 24) | ((g & 0xff) << 16) | ((b & 0xff) << 8) | (Math.max(fa, bg & 0xff) & 0xff));
     }
 
     /**
