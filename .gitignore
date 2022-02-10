@@ -3,4 +3,4 @@ old/
 coverage/
 .DS_Store
 .nyc_output/
-.node_modules/
+node_modules/
