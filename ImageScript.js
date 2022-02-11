@@ -1,8 +1,9 @@
+import v2 from './v2/framebuffer.mjs';
 import * as png from './utils/png.js';
-import * as fontlib from './utils/wasm/font.js';
 import * as svglib from './utils/wasm/svg.js';
-import * as jpeglib from './utils/wasm/jpeg.js';
 import * as giflib from './utils/wasm/gif.js';
+import * as fontlib from './utils/wasm/font.js';
+import * as jpeglib from './utils/wasm/jpeg.js';
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -313,19 +314,7 @@ export class Image {
      * @returns {Image}
      */
     fill(color) {
-        const type = typeof color;
-        if (type !== 'function') {
-            this.__view__.setUint32(0, color, false);
-            this.__u32__.fill(this.__u32__[0]);
-        } else {
-            let offset = 0;
-            for (let y = 1; y <= this.height; y++) {
-                for (let x = 1; x <= this.width; x++) {
-                    this.__view__.setUint32(offset, color(x, y), false);
-                    offset += 4;
-                }
-            }
-        }
+        new v2(this.width, this.height, this.bitmap).fill(color);
 
         return this;
     }
@@ -447,22 +436,11 @@ export class Image {
      */
     __resize_nearest_neighbor__(width, height) {
         const image = new this.constructor(width, height);
+        const frame = new v2(this.width, this.height, this.bitmap).resize('nearest', width, height);
 
-        for (let y = 0; y < height; y++) {
-            for (let x = 0; x < width; x++) {
-                const ySrc = Math.floor((y * this.height) / height);
-                const xSrc = Math.floor((x * this.width) / width);
+        image.bitmap.set(frame.u8);
 
-                const destPos = (y * width + x) * 4;
-                const srcPos = (ySrc * this.width + xSrc) * 4;
-
-                image.__view__.setUint32(destPos, this.__view__.getUint32(srcPos, false), false);
-            }
-        }
-
-        this.__apply__(image);
-
-        return this;
+        return image;
     }
 
     /**
@@ -594,19 +572,7 @@ export class Image {
      * @returns {Image}
      */
     cropCircle(max = false, feathering = 0) {
-        const rad = Math[max ? 'max' : 'min'](this.width, this.height) / 2;
-        const radSquared = rad ** 2;
-        const centerX = this.width / 2;
-        const centerY = this.height / 2;
-
-        for (const [x, y] of this) {
-            const distanceFromCenter = (x - centerX) ** 2 + (y - centerY) ** 2;
-            const alphaIdx = ((y - 1) * this.width + (x - 1)) * 4 + 3;
-            if (distanceFromCenter > radSquared)
-                this.bitmap[alphaIdx] = 0;
-            else if (feathering)
-                this.bitmap[alphaIdx] *= Math.max(0, Math.min(1, 1 - (distanceFromCenter / radSquared) * feathering ** (1 / 2)));
-        }
+        new v2(this.width, this.height, this.bitmap).crop('circle', feathering);
 
         return this;
     }
@@ -722,46 +688,9 @@ export class Image {
      * @returns {Image}
      */
     composite(source, x = 0, y = 0) {
-        x = ~~x;
-        y = ~~y;
-
-        for (let yy = 0; yy < source.height; yy++) {
-            let y_offset = y + yy;
-            if (y_offset < 0) continue;
-            if (y_offset >= this.height) break;
-
-            for (let xx = 0; xx < source.width; xx++) {
-                let x_offset = x + xx;
-                if (x_offset < 0) continue;
-                if (x_offset >= this.width) break;
-
-                const offset = 4 * (x_offset + y_offset * this.width);
-                const fg = source.__view__.getUint32(4 * (xx + yy * source.width), false);
-                const bg = this.__view__.getUint32(offset, false);
-
-                if ((fg & 0xff) === 0xff) this.__view__.setUint32(offset, fg, false);
-                else if ((fg & 0xff) === 0x00) this.__view__.setUint32(offset, bg, false);
-                else this.__view__.setUint32(offset, Image.__alpha_blend__(fg, bg), false);
-            }
-        }
+        new v2(this.width, this.height, this.bitmap).overlay(new v2(source.width, source.height, source.bitmap), x, y);
 
         return this;
-    }
-
-    /**
-     * @private
-     * @param {number} fg
-     * @param {number} bg
-     * @returns {number}
-     */
-    static __alpha_blend__(fg, bg) {
-        const fa = fg & 0xff;
-        const alpha = fa + 1;
-        const inv_alpha = 256 - fa;
-        const r = (alpha * (fg >>> 24) + inv_alpha * (bg >>> 24)) >> 8;
-        const b = (alpha * (fg >> 8 & 0xff) + inv_alpha * (bg >> 8 & 0xff)) >> 8;
-        const g = (alpha * (fg >> 16 & 0xff) + inv_alpha * (bg >> 16 & 0xff)) >> 8;
-        return (((r & 0xff) << 24) | ((g & 0xff) << 16) | ((b & 0xff) << 8) | (Math.max(fa, bg & 0xff) & 0xff));
     }
 
     /**
@@ -886,108 +815,12 @@ export class Image {
      * @param {boolean} resize Whether to resize the image so it fits all pixels or just ignore outlying pixels
      */
     rotate(angle, resize = true) {
-        if (angle % 360 === 0) return this;
-        if (angle % 180 === 0) return this.__rotate_180__();
+        const frame = new v2(this.width, this.height, this.bitmap).rotate(360 - (angle % 360), resize);
 
-        const rad = Math.PI * (angle / 180);
+        const out = new Image(frame.width, frame.height);
 
-        const sin = Math.sin(rad);
-        const cos = Math.cos(rad);
-
-        const width = resize
-            ? Math.abs(this.width * sin) + Math.abs(this.height * cos)
-            : this.width;
-        const height = resize
-            ? Math.abs(this.width * cos) + Math.abs(this.height * sin)
-            : this.height;
-
-        const out = new Image(width, height);
-
-        const out_cx = width / 2 - .5;
-        const out_cy = height / 2 - .5;
-        const src_cx = this.width / 2 - .5;
-        const src_cy = this.height / 2 - .5;
-
-        let h = 0;
-        do {
-            let w = 0;
-            const ysin = src_cx - sin * (h - out_cy);
-            const ycos = src_cy + cos * (h - out_cy);
-
-            do {
-                const xf = ysin + cos * (w - out_cx);
-                const yf = ycos + sin * (w - out_cx);
-                Image.__interpolate__(this, out, w, h, xf, yf);
-            } while (w++ < width);
-        } while (h++ < height);
-
+        out.bitmap.set(frame.u8);
         return this.__apply__(out);
-    }
-
-    /**
-     * @returns {Image}
-     * @private
-     */
-    __rotate_180__() {
-        let offset = 0;
-        this.bitmap.reverse();
-        while (offset < this.bitmap.length) this.bitmap.subarray(offset, offset += 4).reverse();
-
-        return this;
-    }
-
-    /**
-     * @param {Image} src
-     * @param {Image} out
-     * @param {number} x0
-     * @param {number} y0
-     * @param {number} x1
-     * @param {number} y1
-     * @private
-     */
-    static __interpolate__(src, out, x0, y0, x1, y1) {
-        const x2 = ~~x1;
-        const y2 = ~~y1;
-        const xq = x1 - x2;
-        const yq = y1 - y2;
-        const out_slice = out.bitmap.subarray(4 * (x0 + y0 * out.width), -4);
-
-        const ref = {
-            r: 0,
-            g: 0,
-            b: 0,
-            a: 0,
-        };
-
-        Image.__pawn__(x2, y2, (1 - xq) * (1 - yq), ref, src);
-        Image.__pawn__(1 + x2, y2, xq * (1 - yq), ref, src);
-        Image.__pawn__(x2, 1 + y2, (1 - xq) * yq, ref, src);
-        Image.__pawn__(1 + x2, 1 + y2, xq * yq, ref, src);
-
-        out_slice[3] = ref.a;
-        out_slice[0] = ref.r / ref.a;
-        out_slice[1] = ref.g / ref.a;
-        out_slice[2] = ref.b / ref.a;
-    }
-
-    /** @private */
-    static __pawn__(point0, point1, weight, ref, src) {
-        if (
-            point0 > 0
-            && point1 > 0
-            && point0 < src.width
-            && point1 < src.height
-        ) {
-            const offset = 4 * (point0 + point1 * src.width);
-            const src_slice = src.bitmap.subarray(offset, offset + 4);
-
-            const wa = weight * src_slice[3];
-
-            ref.a += wa;
-            ref.r += wa * src_slice[0];
-            ref.g += wa * src_slice[1];
-            ref.b += wa * src_slice[2];
-        }
     }
 
     /**
@@ -1160,6 +993,7 @@ export class Image {
      * @return {Promise<Uint8Array>} The encoded data
      */
     async encode(compression = 1) {
+        // return new v2(this.width, this.height, this.bitmap).encode('png', { compression: 'fast' });
         return await png.encode(this.bitmap, {width: this.width, height: this.height, level: compression, channels: 4});
     }
 
@@ -1517,19 +1351,90 @@ export class GIF extends Array {
         }
 
         if ((view.getUint32(0, false) >>> 8) === 0x474946) { // GIF
+            const frames = [];
             const decoder = new giflib.Decoder(data);
-            let frames = [];
-            for (const frameData of decoder.frames()) {
-                const frame = new Frame(frameData.width, frameData.height, frameData.delay * 10, frameData.x, frameData.y, frameData.dispose);
-                frame.bitmap.set(frameData.buffer);
-                frames.push(frame);
+
+            const gwidth = decoder.width | 0;
+            const gheight = decoder.height | 0;
+            const u32 = new Uint32Array(decoder.width * decoder.height);
+            const u8 = new Uint8Array(u32.buffer, u32.byteOffset, u32.byteLength);
+
+            for (const frame of decoder.frames()) {
+                let offset8 = 0 | 0;
+                let offset32 = 0 | 0;
+                const fx = frame.x | 0;
+                const fy = frame.y | 0;
+                const f8 = frame.buffer;
+                const mode = frame.dispose;
+                const width = frame.width | 0;
+                const height = frame.height | 0;
+                const f32 = new Uint32Array(f8.buffer, f8.byteOffset, width * height);
+                const f = frames[frames.push(new Frame(gwidth, gheight, 10 * frame.delay, 0, 0, 3)) - 1];
+
+                const t8 = f.bitmap;
+                const t32 = new Uint32Array(t8.buffer);
+
+                t8.set(u8);
+
+                if (2 === mode) {
+                    for (let y = 0 | 0; y < height; y++) {
+                        const y_offset = fx + gwidth * (y + fy) | 0;
+
+                        for (let x = 0 | 0; x < width; x++) {
+                            const x_offset = x + y_offset;
+
+                            if (0 === f8[3 + offset8])
+                            t32[x_offset] = u32[x_offset];
+                            else t32[x_offset] = f32[offset32];
+
+                            offset32++;
+                            offset8 += 4;
+                        }
+                    }
+                }
+
+                else if (3 === mode) {
+                    for (let y = 0 | 0; y < height; y++) {
+                        const y_offset = fx + gwidth * (y + fy) | 0;
+
+                        for (let x = 0 | 0; x < width; x++) {
+                            const x_offset = x + y_offset;
+
+                            if (0 === f8[3 + offset8])
+                            t32[x_offset] = u32[x_offset];
+                            else t32[x_offset] = f32[offset32];
+
+                            offset32++;
+                            offset8 += 4;
+                            u32[x_offset] = 0;
+                        }
+                    }
+                }
+
+                else if (0 === mode || 1 === mode) {
+                    t8.set(u8);
+                    for (let y = 0 | 0; y < height; y++) {
+                        const y_offset = fx + gwidth * (y + fy) | 0;
+
+                        for (let x = 0 | 0; x < width; x++) {
+                            const x_offset = x + y_offset;
+
+                            if (0 === f8[3 + offset8])
+                                t32[x_offset] = u32[x_offset];
+                            else t32[x_offset] = f32[offset32];
+
+                            offset32++;
+                            offset8 += 4;
+                            u32[x_offset] = t32[x_offset];
+                        }
+                    }
+                }
 
                 if (onlyExtractFirstFrame)
                     break;
             }
 
             decoder.free();
-
             image = new GIF(frames);
         } else throw new Error('Unsupported image type');
 

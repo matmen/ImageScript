@@ -5,7 +5,7 @@
         console.log(`running test ${file}`);
         const start = Date.now();
         const proc = Deno.run({
-            cmd: ['deno', 'run', '--allow-read', '--allow-net', `./tests/${file}`],
+            cmd: ['deno', 'run', '-A', `./tests/${file}`],
             stdout: 'piped',
             stderr: 'piped'
         });
