@@ -34,4 +34,15 @@ const panic = message => {
         const desired = await fs.readFile('./tests/targets/font-2.png');
         if (!desired.equals(Buffer.from(encoded))) panic('font 2 doesn\'t match');
     }
+
+    {
+        const font = await Image.renderText(await fs.readFile('./tests/fonts/opensans bold.ttf'), 128, 'Extra\n-Test\nnewline');
+        const encoded = await font.encode(1, {creationTime: 0, software: ''});
+
+        if (process.env.OVERWRITE_TEST)
+            await fs.writeFile('./tests/targets/font-3.png', encoded);
+
+        const desired = await fs.readFile('./tests/targets/font-3.png');
+        if (!desired.equals(Buffer.from(encoded))) panic('font 3 doesn\'t match');
+    }
 })();
