@@ -2,6 +2,7 @@ import v2 from './v2/framebuffer.mjs';
 import * as png from './utils/png.js';
 import * as svglib from './utils/wasm/svg.js';
 import * as giflib from './utils/wasm/gif.js';
+import * as pnglib from './utils/wasm/png.js';
 import * as fontlib from './utils/wasm/font.js';
 import * as jpeglib from './utils/wasm/jpeg.js';
 
@@ -1024,7 +1025,7 @@ export class Image {
         }
 
         if (ImageType.isPNG(view)) { // PNG
-            const {width, height, pixels} = await png.decode(data);
+            const {width, height, framebuffer: pixels} = pnglib.decode(data);
             image = new Image(width, height);
             image.bitmap.set(pixels);
         } else if (ImageType.isJPEG(view)) { // JPEG
