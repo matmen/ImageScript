@@ -149,7 +149,7 @@ export class Frame extends Image {
 
   static get DISPOSAL_BACKGROUND(): string
 
-  static __convert_disposal_mode__(mode: string | number): any;
+  private static __convert_disposal_mode__(mode: string | number): any;
 
   constructor(width: number, height: number, duration?: number, xOffset?: number, yOffset?: number, disposalMode?: typeof Frame.DISPOSAL_KEEP | string);
 
