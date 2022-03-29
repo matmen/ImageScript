@@ -114,7 +114,7 @@ export class Image {
 
   private __apply__(image: Image | Frame): Image | Frame;
 
-  static gradient(colors: { [x: number]: number; }): (function(number): number);
+  static gradient(colors: { [position: number]: number; }): ((position: number) => number);
 
   roundCorners(radius?: number): Image;
 
