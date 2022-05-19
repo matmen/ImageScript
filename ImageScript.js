@@ -6,6 +6,9 @@ import * as pnglib from './utils/wasm/png.js';
 import * as fontlib from './utils/wasm/font.js';
 import * as jpeglib from './utils/wasm/jpeg.js';
 
+const decode_utf8 = globalThis.Deno?.core?.decode ?? TextDecoder.prototype.decode.bind(new TextDecoder);
+const encode_utf8 = globalThis.Deno?.core?.encode ?? globalThis.Buffer?.from.bind(globalThis.Buffer) ?? TextEncoder.prototype.encode.bind(new TextEncoder);
+
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
     JPEG: 0xffd8ff,
@@ -1111,7 +1114,7 @@ export class Image {
         if (mode !== this.SVG_MODE_SCALE && size < 1)
             throw new RangeError('SVG size must be >= 1')
 
-        if (typeof svg === 'string') svg = Deno.core.encode(svg);
+        if (typeof svg === 'string') svg = encode_utf8(svg);
 
         const framebuffer = svglib.rasterize(svg, mode, size);
         const image = new Image(framebuffer.width, framebuffer.height);

@@ -24,15 +24,8 @@ class mem {
   }
 }
 
-const encode_utf8 = 'Deno' in globalThis ? Deno.core.encode : (() => {
-  const encoder = new TextEncoder();
-  return string => encoder.encode(string);
-})();
-
-const decode_utf8 = 'Deno' in globalThis ? Deno.core.decode : (() => {
-  const decoder = new TextDecoder();
-  return buffer => decoder.decode(buffer);
-})();
+const decode_utf8 = globalThis.Deno?.core?.decode ?? TextDecoder.prototype.decode.bind(new TextDecoder);
+const encode_utf8 = globalThis.Deno?.core?.encode ?? globalThis.Buffer?.from.bind(globalThis.Buffer) ?? TextEncoder.prototype.encode.bind(new TextEncoder);
 
 if ('FinalizationRegistry' in globalThis) {
   registry = new FinalizationRegistry(([t, ptr]) => {
