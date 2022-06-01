@@ -1567,7 +1567,7 @@ class TextLayout {
         if (!['top', 'middle', 'bottom'].includes(this.horizontalAlign))
             throw new RangeError('Invalid horizontalAlign');
 
-        this.wrapHardBreaks = wrapHardBreaks || true;
+        this.wrapHardBreaks = typeof wrapHardBreaks === 'undefined' ? true : wrapHardBreaks;
         if (typeof this.wrapHardBreaks !== 'boolean')
             throw new TypeError('Invalid wrapHardBreaks');
     }
