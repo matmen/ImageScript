@@ -29,7 +29,7 @@
     "thumbnail"
   ],
   "author": "matmen <matmen@dreadful.tech>",
-  "license": "GPL-3.0-or-later",
+  "license": "AGPL-3.0-or-later",
   "bugs": {
     "url": "https://github.com/matmen/ImageScript/issues"
   },
