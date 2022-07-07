@@ -5,6 +5,7 @@ import * as giflib from './utils/wasm/gif.js';
 import * as pnglib from './utils/wasm/png.js';
 import * as fontlib from './utils/wasm/font.js';
 import * as jpeglib from './utils/wasm/jpeg.js';
+import * as tifflib from './utils/wasm/tiff.js';
 
 const decode_utf8 = globalThis.Deno?.core?.decode ?? TextDecoder.prototype.decode.bind(new TextDecoder);
 const encode_utf8 = globalThis.Deno?.core?.encode ?? globalThis.Buffer?.from.bind(globalThis.Buffer) ?? TextEncoder.prototype.encode.bind(new TextEncoder);
