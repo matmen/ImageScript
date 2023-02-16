@@ -1,6 +1,6 @@
 {
   "name": "imagescript",
-  "version": "1.2.9",
+  "version": "1.2.15",
   "description": "zero-dependency javascript image manipulation",
   "main": "ImageScript.js",
   "types": "ImageScript.d.ts",
@@ -30,7 +30,7 @@
     "thumbnail"
   ],
   "author": "Mathis Mensing <mathis@matmen.dev>",
-  "license": "GPL-3.0-or-later",
+  "license": "AGPL-3.0-or-later",
   "bugs": {
     "url": "https://github.com/matmen/ImageScript/issues"
   },
