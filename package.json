@@ -30,7 +30,7 @@
     "thumbnail"
   ],
   "author": "Mathis Mensing <mathis@matmen.dev>",
-  "license": "AGPL-3.0-or-later",
+  "license": "(AGPL-3.0-or-later OR MIT)",
   "bugs": {
     "url": "https://github.com/matmen/ImageScript/issues"
   },
