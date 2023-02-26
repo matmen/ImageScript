@@ -153,6 +153,16 @@ export class Frame extends Image {
 
   constructor(width: number, height: number, duration?: number, xOffset?: number, yOffset?: number, disposalMode?: typeof Frame.DISPOSAL_KEEP | string);
 
+  duration: number;
+
+  xOffset: number;
+
+  yOffset: number;
+
+  get disposalMode(): number;
+
+  set disposalMode(disposalMode: string|number);
+  
   toString(): string;
 
   static from(image: Image, duration?: number, xOffset?: number, yOffset?: number, disposalMode?: typeof Frame.DISPOSAL_KEEP | string): Frame;
