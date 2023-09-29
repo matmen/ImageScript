@@ -1269,13 +1269,27 @@ class Frame extends Image {
         if (isNaN(duration) || duration < 0)
             throw new RangeError('Invalid frame duration');
 
-        disposalMode = Frame.__convert_disposal_mode__(disposalMode);
-
         super(width, height);
         this.duration = duration;
         this.xOffset = xOffset;
         this.yOffset = yOffset;
         this.disposalMode = disposalMode;
+    }
+
+    /**
+     * The Frame's disposal mode
+     * @returns {number}
+     */
+    get disposalMode() {
+        return this.__disposalMode__;
+    }
+
+    /**
+     * Sets the frame's disposal mode, converting it to the internal numeric value.
+     * @param {string|number} disposalMode The frame's disposal mode
+     */
+    set disposalMode(disposalMode) {
+        this.__disposalMode__ = Frame.__convert_disposal_mode__(disposalMode);
     }
 
     toString() {
@@ -1294,8 +1308,6 @@ class Frame extends Image {
     static from(image, duration, xOffset, yOffset, disposalMode = Frame.DISPOSAL_KEEP) {
         if (!(image instanceof Image))
             throw new TypeError('Invalid image passed');
-
-        disposalMode = Frame.__convert_disposal_mode__(disposalMode);
 
         const frame = new Frame(image.width, image.height, duration, xOffset, yOffset, disposalMode);
         frame.bitmap.set(image.bitmap);
