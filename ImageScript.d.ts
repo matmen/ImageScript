@@ -129,7 +129,7 @@ export class Image {
 
   async encodeWEBP(quality?: null | number): Promise<Uint8Array>;
 
-  static async encode(data: Buffer | Uint8Array): Promise<Image>
+  static async decode(data: Buffer | Uint8Array): Promise<Image>
 
   static get SVG_MODE_SCALE(): number;
 
