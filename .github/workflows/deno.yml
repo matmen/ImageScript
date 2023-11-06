@@ -16,7 +16,7 @@ jobs:
 
     strategy:
       matrix:
-        deno: ["v1.x", "nightly"]
+        deno: ["v1.x", "canary"]
 
     steps:
       - uses: actions/checkout@v4
