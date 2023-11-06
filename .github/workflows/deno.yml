@@ -19,9 +19,9 @@ jobs:
         deno: ["v1.x", "nightly"]
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Setup Deno ${{ matrix.deno }}
-        uses: denolib/setup-deno@v2
+        uses: denoland/setup-deno@v1
         with:
           deno-version: ${{ matrix.deno }}
       - run: deno run --allow-read --allow-run tests/run.js
