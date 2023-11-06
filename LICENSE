@@ -2,6 +2,11 @@ This software is licensed under the following license(s):
 - GNU AFFERO GENERAL PUBLIC LICENSE, Version 3
 - MIT License
 
+== SPDX-License-Identifier: AGPL-3.0-or-later OR MIT ==
+
+You may choose to comply with either one of the above
+mentioned licenses, but a license must be chosen.
+
 The corresponding license files can be found in the projects
 root directory, prefixed with LICENSE, suffixed with their
 corresponding SPDX identifier.
