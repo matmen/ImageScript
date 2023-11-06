@@ -2,15 +2,16 @@ import {Image} from '../ImageScript.js';
 import {equals} from "https://deno.land/std@0.80.0/bytes/mod.ts";
 
 (async () => {
+    const decoder = new TextDecoder('utf-8');
     const [backgroundSVG, avatarBinary, badges, font] = await Promise.all([
-        Deno.readFile('./tests/svgs/background.svg').then(b => Deno.core.decode(b)),
+        Deno.readFile('./tests/svgs/background.svg').then(b => decoder.decode(b)),
         Deno.readFile('./tests/targets/external.png'),
         Promise.all(
             [
                 'crown', 'potato', 'mask', 'microbe', 'petri_dish', 'thermometer', 'cigarette'
             ].map(
                 x => Deno.readFile(`./tests/svgs/${x}.svg`)
-                    .then(b => Deno.core.decode(b)))
+                    .then(b => decoder.decode(b)))
         ),
         Deno.readFile('./tests/fonts/carbon phyber.ttf')
     ]);
