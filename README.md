@@ -39,6 +39,11 @@ binaries for decoding and encoding.
 
 ### Example
 
+Check out one of these examples:
+* **NodeJS**: [README image generation](https://github.com/matmen/ImageScript/blob/master/tests/readme.js)
+* **Deno**: [README image generation](https://github.com/matmen/ImageScript/blob/deno/tests/readme.js)
+* **Browser**: [Grayscale Conversion Example Page](https://github.com/matmen/ImageScript/blob/browser/example/index.html) (via CDN)
+
 [![Example](https://github.com/matmen/ImageScript/raw/master/tests/targets/readme.png)](https://github.com/matmen/ImageScript/blob/master/tests/readme.js)
 
 ---
