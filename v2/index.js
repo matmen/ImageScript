@@ -1,4 +1,4 @@
-const mem = require('./util/mem.js');
+const mem = require('../utils/mem.js');
 const png = require('../png/node.js');
 const magic = require('./codecs/magic.js');
 const codecs = require('../codecs/node/index.js');
