@@ -1490,7 +1490,7 @@ class GIF extends Array {
     /**
      * Creates a new GIF image.
      * @param {Frame[]} frames The frames to create the GIF from
-     * @param {number} [loopCount=0] How often to loop the GIF for (-1 = unlimited)
+     * @param {number} [loopCount=-1] How often to loop the GIF for (-1 = unlimited)
      * @property {number} loopCount How often the GIF will loop for
      */
     constructor(frames, loopCount = -1) {
