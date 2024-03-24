@@ -1,8 +1,8 @@
-const fs = require('fs').promises;
-const {Image} = require('../ImageScript');
+import {Image} from '../ImageScript.js';
+import {equals} from 'https://deno.land/std@0.80.0/bytes/mod.ts';
 
 (async () => {
-    const input = await fs.readFile('./tests/targets/external.png');
+    const input = await Deno.readFile('./tests/targets/external.png');
 
     {
         const image = await Image.decode(input);
@@ -10,12 +10,9 @@ const {Image} = require('../ImageScript');
 
         const output = await image.encode(1, {creationTime: 0, software: ''});
 
-        if (process.env.OVERWRITE_TEST)
-            await fs.writeFile('./tests/targets/flip-horizontal.png', output);
+        const target = await Deno.readFile('./tests/targets/flip-horizontal.png');
 
-        const target = await fs.readFile('./tests/targets/flip-horizontal.png');
-
-        if (!Buffer.from(target).equals(Buffer.from(output)))
+        if (!equals(output, target))
             process.exit(1);
     }
 
@@ -25,12 +22,9 @@ const {Image} = require('../ImageScript');
 
         const output = await image.encode(1, {creationTime: 0, software: ''});
 
-        if (process.env.OVERWRITE_TEST)
-            await fs.writeFile('./tests/targets/flip-vertical.png', output);
+        const target = await Deno.readFile('./tests/targets/flip-vertical.png');
 
-        const target = await fs.readFile('./tests/targets/flip-vertical.png');
-
-        if (!Buffer.from(target).equals(Buffer.from(output)))
+        if (!equals(output, target))
             process.exit(1);
     }
 })();
