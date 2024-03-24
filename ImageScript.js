@@ -830,16 +830,14 @@ class Image {
     }
 
     /**
-     * Flips the image horizontally or vertically
-     * @param {'horizontal' | 'vertical'} type The type of flip
+     * Flips / mirrors the image horizontally or vertically
+     * @param {'horizontal' | 'vertical'} direction The direction to flip
      */
-    flip(type) {
-        const frame = new v2(this.width, this.height, this.bitmap).flip(type);
+    flip(direction) {
+        const frame = new v2(this.width, this.height, this.bitmap).flip(direction);
 
-        const out = new Image(frame.width, frame.height);
-
-        out.bitmap.set(frame.u8);
-        return this.__apply__(out);
+        this.bitmap.set(frame.u8);
+        return this;
     }
 
     /**
