@@ -17,7 +17,7 @@ export class Image {
   * [Symbol.iterator](): void;
 
   * iterateWithColors(): Generator<[x: number, y: number, color: number], void, unknown>;
-  
+
   static rgbaToColor(r: number, g: number, b: number, a: number): number;
 
   static rgbToColor(r: number, g: number, b: number): number;
@@ -112,6 +112,8 @@ export class Image {
 
   rotate(angle: number, resize?: boolean): Image;
 
+  flip(direction: 'horizontal' | 'vertical'): Image;
+
   private __apply__(image: Image | Frame): Image | Frame;
 
   static gradient(colors: { [position: number]: number; }): ((position: number) => number);
@@ -162,7 +164,7 @@ export class Frame extends Image {
   get disposalMode(): number;
 
   set disposalMode(disposalMode: string|number);
-  
+
   toString(): string;
 
   static from(image: Image, duration?: number, xOffset?: number, yOffset?: number, disposalMode?: typeof Frame.DISPOSAL_KEEP | string): Frame;

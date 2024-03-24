@@ -830,6 +830,17 @@ class Image {
     }
 
     /**
+     * Flips / mirrors the image horizontally or vertically
+     * @param {'horizontal' | 'vertical'} direction The direction to flip
+     */
+    flip(direction) {
+        const frame = new v2(this.width, this.height, this.bitmap).flip(direction);
+
+        this.bitmap.set(frame.u8);
+        return this;
+    }
+
+    /**
      * @private
      * @param {Image|Frame} image
      * @returns {Image|Frame}
