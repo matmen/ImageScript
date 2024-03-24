@@ -112,6 +112,8 @@ export class Image {
 
   rotate(angle: number, resize?: boolean): Image;
 
+  flip(type: 'horizontal' | 'vertical'): Image;
+
   private __apply__(image: Image | Frame): Image | Frame;
 
   static gradient(colors: { [position: number]: number; }): ((position: number) => number);
