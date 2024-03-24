@@ -100,10 +100,10 @@ module.exports = {
 
     const width = view.getUint32(16);
     const height = view.getUint32(20);
-    const bpc = array[24];
-    const pixel_type = array[25];
-    let channels = ({ 3: 1, 0: 1, 4: 2, 2: 3, 6: 4 })[pixel_type];
-    const bytespp = channels * bpc / 8;
+    let bit_depth = array[24];
+    const color_type = array[25];
+    let channels = ({ 3: 1, 0: 1, 4: 2, 2: 3, 6: 4 })[color_type];
+    const bytespp = channels * bit_depth / 8;
 
     const row_length = width * bytespp;
     let pixels = new Uint8Array(height * row_length);
@@ -156,7 +156,7 @@ module.exports = {
       p_offset += row_length;
     }
 
-    if (pixel_type === 3) {
+    if (color_type === 3) {
       if (!palette)
         throw new Error('Indexed color PNG has no PLTE');
 
@@ -164,16 +164,17 @@ module.exports = {
         for (let i = 0; i < alphaPalette.length; i++)
           palette[i] &= 0xffffff00 | alphaPalette[i];
 
-      channels = 4;
       const newPixels = new Uint8Array(width * height * 4);
       const pixelView = new DataView(newPixels.buffer, newPixels.byteOffset, newPixels.byteLength);
-      for (let i = 0; i < pixels.length; i++)
-        pixelView.setUint32(i * 4, palette[pixels[i]], false);
+      for (let i = 0; i < pixels.length * (8 / bit_depth); i++)
+        pixelView.setUint32(i * 4, palette[pixels[~~(i / (8 / bit_depth))] & (2**bit_depth-1)], false);
+      channels = 4;
+      bit_depth = 8;
       pixels = newPixels;
     }
 
-    if (bpc !== 8) {
-      const newPixels = new Uint8Array(pixels.length / bpc * 8);
+    if (bit_depth !== 8) {
+      const newPixels = new Uint8Array(pixels.length / bit_depth * 8);
       for (let i = 0; i < pixels.length; i += 2)
         newPixels[i / 2] = pixels[i];
       pixels = newPixels;
