@@ -1763,7 +1763,7 @@ class ImageType {
      * @returns {boolean}
      */
     static isPNG(view) {
-        return view.getUint32(0, false) === MAGIC_NUMBERS.PNG;
+        return view.byteLength >= 4 && view.getUint32(0, false) === MAGIC_NUMBERS.PNG;
     }
 
     /**
@@ -1771,7 +1771,7 @@ class ImageType {
      * @returns {boolean}
      */
     static isJPEG(view) {
-        return (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.JPEG;
+        return view.byteLength >= 4 && (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.JPEG;
     }
 
     /**
@@ -1779,7 +1779,7 @@ class ImageType {
      * @returns {boolean}
      */
     static isTIFF(view) {
-        return view.getUint32(0, false) === MAGIC_NUMBERS.TIFF;
+        return view.byteLength >= 4 && view.getUint32(0, false) === MAGIC_NUMBERS.TIFF;
     }
 
     /**
@@ -1787,7 +1787,7 @@ class ImageType {
      * @returns {boolean}
      */
     static isGIF(view) {
-        return (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.GIF;
+        return view.byteLength >= 4 && (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.GIF;
     }
 }
 
