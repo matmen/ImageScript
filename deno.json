@@ -1,0 +1,11 @@
+{
+  "name": "@matmen/imagescript",
+  "version": "1.3.0",
+  "exports": "./mod.ts",
+  "imports": {
+    "@std/bytes": "jsr:@std/bytes@^1.0.0"
+  },
+  "publish": {
+    "exclude": ["tests/"]
+  }
+}

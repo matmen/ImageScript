@@ -5,7 +5,7 @@
  */
 
 import {Image} from '../ImageScript.js';
-import {equals} from "https://deno.land/std@0.80.0/bytes/mod.ts";
+import {equals} from "@std/bytes";
 
 const panic = message => {
     console.error(message);

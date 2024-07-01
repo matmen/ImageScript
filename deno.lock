@@ -1,0 +1,19 @@
+{
+  "version": "3",
+  "packages": {
+    "specifiers": {
+      "jsr:@std/bytes@^1.0.0": "jsr:@std/bytes@1.0.0"
+    },
+    "jsr": {
+      "@std/bytes@1.0.0": {
+        "integrity": "9392e72af80adccaa1197912fa19990ed091cb98d5c9c4344b0c301b22d7c632"
+      }
+    }
+  },
+  "remote": {},
+  "workspace": {
+    "dependencies": [
+      "jsr:@std/bytes@^1.0.0"
+    ]
+  }
+}
