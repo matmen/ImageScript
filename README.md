@@ -1,10 +1,10 @@
 # ImageScript
 ##### zero-dependency JavaScript image manipulation
-[![Discord Server](https://img.shields.io/discord/691713541262147687.svg?label=Discord&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2&style=for-the-badge)](https://discord.gg/8hPrwAH)
+![NPM Version](https://img.shields.io/npm/v/imagescript?style=for-the-badge&label=NPM%20(Node.JS))
+![JSR Version](https://img.shields.io/jsr/v/%40matmen/imagescript?style=for-the-badge&label=JSR%20(Deno))
 [![Documentation](https://img.shields.io/badge/Documentation-informational?style=for-the-badge)](https://imagescript.matmen.dev/)
 [![Github](https://img.shields.io/badge/Github-Repository-181717?logo=github&style=for-the-badge)](https://github.com/matmen/ImageScript)
-[![deno.land](https://shields.io/badge/deno.land-gray?logo=deno&style=for-the-badge)](https://deno.land/x/imagescript@1.2.9)
-[![NPM](https://nodei.co/npm/imagescript.png)](https://www.npmjs.com/package/imagescript)
+[![Discord Server](https://img.shields.io/discord/691713541262147687.svg?label=Discord&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2&style=for-the-badge)](https://discord.gg/8hPrwAH)
 
 ---
 
@@ -38,8 +38,16 @@ binaries for decoding and encoding.
 
 ### Example
 
-[![Example](https://github.com/matmen/ImageScript/raw/master/tests/targets/readme.png)](https://github.com/matmen/ImageScript/blob/master/tests/readme.js)
+```js
+import {Image} from "jsr:@matmen/imagescript";
 
+const input = await Deno.readFile('./image.png');
+const image = await Image.decode(input);
+image.rotate(180);
+
+const output = await image.encode();
+await Deno.writeFile('./output.png', output);
+```
 ---
 
 If you have any additional questions, feel free to join the [discord support server](https://discord.gg/8hPrwAH).

@@ -1,10 +1,5 @@
-let wasm_mod;
-let ref = { deref() { } };
-
-{
-  const path = new URL(import.meta.url.replace('.js', '.wasm'));
-  wasm_mod = new WebAssembly.Module(await ('file:' === path.protocol ? Deno.readFile(path) : fetch(path).then(r => r.arrayBuffer())));
-}
+import * as wasm_mod from './png.wasm';
+let ref = { deref() {} };
 
 function wasm() {
   let u8;
@@ -12,13 +7,7 @@ function wasm() {
   const {
     wfree, walloc, decode, memory,
     width: wwidth, height: wheight,
-  } = new WebAssembly.Instance(wasm_mod, {
-    env: {
-      emscripten_notify_memory_growth() {
-        u8 = new Uint8Array(memory.buffer);
-      },
-    },
-  }).exports;
+  } = wasm_mod;
 
   u8 = new Uint8Array(memory.buffer);
 
