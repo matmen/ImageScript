@@ -20,10 +20,10 @@ if (new Image(1, 1).toString() !== 'Image<1x1>')
     panic('toString failed');
 
 for (const [x, y] of new Image(1, 1))
-    if (x !== 1 || y !== 1) panic('Symbol.iterator failed');
+    if (x !== 0 || y !== 0) panic('Symbol.iterator failed');
 
 for (const [x, y, color] of new Image(1, 1).fill(0xff8000ff).iterateWithColors())
-    if (x !== 1 || y !== 1 || color !== 0xff8000ff) panic('iterateWithColors failed');
+    if (x !== 0 || y !== 0 || color !== 0xff8000ff) panic('iterateWithColors failed');
 
 if (Image.rgbToColor(0xff, 0x80, 0x00) !== 0xff8000ff)
     panic('rgbToColor failed');
@@ -51,12 +51,12 @@ if (Image.hslaToColor(0, 0, 1, 0xff) !== 0xffffffff)
 
 {
     const image = new Image(1, 1);
-    image.setPixelAt(1, 1, 0xff8000ff);
+    image.setPixelAt(0, 0, 0xff8000ff);
 
-    const pixel = image.getPixelAt(1, 1);
+    const pixel = image.getPixelAt(0, 0);
     if (pixel !== 0xff8000ff) panic('getPixelAt fails');
 
-    const rgba = image.getRGBAAt(1, 1);
+    const rgba = image.getRGBAAt(0, 0);
     const target = [0xff, 0x80, 0x00, 0xff];
     for (let i = 0; i < 4; i++)
         if (rgba[i] !== target[i])
@@ -141,12 +141,12 @@ if (Image.hslaToColor(0, 0, 1, 0xff) !== 0xffffffff)
 
 {
     const image = new Image(1, 1);
-    image.drawBox(1, 1, 1, 1, 0xff8000ff);
-    if (image.getPixelAt(1, 1) !== 0xff8000ff)
+    image.drawBox(0, 0, 1, 1, 0xff8000ff);
+    if (image.getPixelAt(0, 0) !== 0xff8000ff)
         panic('static drawBox failed');
 
-    image.drawBox(1, 1, 1, 1, () => 0x00ff00ff);
-    if (image.getPixelAt(1, 1) !== 0x00ff00ff)
+    image.drawBox(0, 0, 1, 1, () => 0x00ff00ff);
+    if (image.getPixelAt(0, 0) !== 0x00ff00ff)
         panic('fn drawBox failed');
 }
 

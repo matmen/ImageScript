@@ -70,9 +70,9 @@ const panic = message => {
             panic('disposal: incorrect loop count');
 
         const expect = (frame, pixels) => {
-            for (let y = 1; y <= 4; y++)
-                for (let x = 1; x <= 4; x++) {
-                    const want = pixels[(y - 1) * 4 + x - 1];
+            for (let y = 0; y < 4; y++)
+                for (let x = 0; x < 4; x++) {
+                    const want = pixels[y * 4 + x];
                     const got = decoded[frame].getPixelAt(x, y);
                     if (want === 'B' ? got !== black : want === 'W' ? got !== white : got !== 0)
                         panic(`disposal: frame ${frame} pixel ${x},${y} is ${got.toString(16)}`);

@@ -11,14 +11,14 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
 (async () => {
     // rotating non-square images by right angles (#29)
     {
-        const image = new Image(3, 2).fill((x, y) => Image.rgbaToColor(x, y, 0, 255));
+        const image = new Image(3, 2).fill((x, y) => Image.rgbaToColor(x + 1, y + 1, 0, 255));
         const ccw = image.clone().rotate(90);
         assert(ccw.width === 2 && ccw.height === 3, 'rotate(90): dimensions not swapped');
-        assert(rgba(ccw, 1, 3).slice(0, 2).join() === '1,1', 'rotate(90): top left should end up bottom left');
-        assert(rgba(ccw, 2, 1).slice(0, 2).join() === '3,2', 'rotate(90): bottom right should end up top right');
+        assert(rgba(ccw, 0, 2).slice(0, 2).join() === '1,1', 'rotate(90): top left should end up bottom left');
+        assert(rgba(ccw, 1, 0).slice(0, 2).join() === '3,2', 'rotate(90): bottom right should end up top right');
 
         const cw = image.clone().rotate(270);
-        assert(rgba(cw, 2, 1).slice(0, 2).join() === '1,1', 'rotate(270): top left should end up top right');
+        assert(rgba(cw, 1, 0).slice(0, 2).join() === '1,1', 'rotate(270): top left should end up top right');
         for (const [x, y, color] of cw.iterateWithColors()) assert((color & 0xff) === 255, `rotate(270): hole at ${x},${y}`);
     }
 
@@ -31,10 +31,10 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
     // compositing respects the destination alpha
     {
         const image = new Image(1, 1).composite(new Image(1, 1).fill(Image.rgbaToColor(255, 255, 255, 128)));
-        assert(rgba(image, 1, 1).join() === '255,255,255,128', 'composite: semi-transparent white onto transparent turned ' + rgba(image, 1, 1));
+        assert(rgba(image, 0, 0).join() === '255,255,255,128', 'composite: semi-transparent white onto transparent turned ' + rgba(image, 0, 0));
 
         const blend = new Image(1, 1).fill(Image.rgbaToColor(255, 0, 0, 128)).composite(new Image(1, 1).fill(Image.rgbaToColor(0, 0, 255, 128)));
-        assert(rgba(blend, 1, 1)[3] === 192, 'composite: alpha should combine to 0.75');
+        assert(rgba(blend, 0, 0)[3] === 192, 'composite: alpha should combine to 0.75');
     }
 
     // cropCircle(max)
@@ -45,9 +45,9 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
 
     // crop is clipped to the image
     {
-        const image = new Image(10, 2).fill((x, y) => Image.rgbaToColor(x, y, 0, 255)).crop(5, 0, 10, 2);
+        const image = new Image(10, 2).fill((x, y) => Image.rgbaToColor(x + 1, y + 1, 0, 255)).crop(5, 0, 10, 2);
         assert(image.width === 5 && image.height === 2, 'crop: region not clipped');
-        assert(rgba(image, 1, 2).slice(0, 2).join() === '6,2', 'crop: wrong pixels');
+        assert(rgba(image, 0, 1).slice(0, 2).join() === '6,2', 'crop: wrong pixels');
 
         let threw = false;
         try { new Image(10, 10).crop(20, 20, 5, 5); } catch { threw = true; }
@@ -56,17 +56,17 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
 
     // drawBox outside of the image
     {
-        new Image(10, 10).drawBox(1, 20, 5, 5, 0xffffffff).drawBox(20, 1, 5, 5, 0xffffffff).drawBox(-10, -10, 5, 5, 0xffffffff);
-        const image = new Image(4, 4).drawBox(-1, -1, 3, 3, 0xffffffff);
-        assert(image.getPixelAt(1, 1) === 0xffffffff && image.getPixelAt(2, 2) === 0, 'drawBox: clipping failed');
+        new Image(10, 10).drawBox(0, 20, 5, 5, 0xffffffff).drawBox(20, 0, 5, 5, 0xffffffff).drawBox(-10, -10, 5, 5, 0xffffffff);
+        const image = new Image(4, 4).drawBox(-2, -2, 3, 3, 0xffffffff);
+        assert(image.getPixelAt(0, 0) === 0xffffffff && image.getPixelAt(1, 1) === 0, 'drawBox: clipping failed');
     }
 
     // averageColor is weighted by alpha
     {
         assert(new Image(2, 2).fill(Image.rgbaToColor(255, 0, 0, 128)).averageColor() === 0xff0000ff, 'averageColor: semi-transparent red');
         const image = new Image(2, 1);
-        image.setPixelAt(1, 1, 0x00ff00ff);
-        image.setPixelAt(2, 1, 0xff000000);
+        image.setPixelAt(0, 0, 0x00ff00ff);
+        image.setPixelAt(1, 0, 0xff000000);
         assert(image.averageColor() === 0x00ff00ff, 'averageColor: transparent pixels must not count');
     }
 
@@ -103,6 +103,32 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         const gif = new GIF([new Frame(10, 10), new Frame(4, 4, 100, 6, 6)]).resize(5, 5);
         assert(gif.width === 5 && gif.height === 5, `GIF.resize: canvas is ${gif.width}x${gif.height}`);
         assert(gif[1].width === 2 && gif[1].xOffset === 3, 'GIF.resize: partial frame not scaled');
+    }
+
+    // coordinates are 0-based everywhere
+    {
+        const image = new Image(3, 3);
+        image.setPixelAt(0, 0, 0xff0000ff);
+        assert(image.bitmap[0] === 0xff, 'setPixelAt(0, 0) should set the first pixel');
+        assert([...image][0].join() === '0,0' && [...image].pop().join() === '2,2', 'iterator should be 0-based');
+
+        let threw = false;
+        try { image.getPixelAt(3, 0); } catch { threw = true; }
+        assert(threw, 'getPixelAt(width, 0) should be out of bounds');
+
+        const filled = [];
+        new Image(2, 1).fill((x, y) => (filled.push([x, y]), 0));
+        assert(filled.join(';') === '0,0;1,0', 'fill callback should be 0-based');
+
+        const box = new Image(3, 3).drawBox(1, 1, 1, 1, 0xffffffff);
+        assert(box.getPixelAt(1, 1) === 0xffffffff && box.getPixelAt(0, 0) === 0, 'drawBox should be 0-based');
+
+        const target = new Image(3, 3).composite(new Image(1, 1).fill(0xffffffff), 1, 1);
+        assert(target.getPixelAt(1, 1) === 0xffffffff, 'composite and getPixelAt should agree');
+
+        const corners = new Image(8, 8).fill(0xffffffff).roundCorners(3);
+        assert([[0, 0], [7, 0], [0, 7], [7, 7]].every(([x, y]) => (corners.getPixelAt(x, y) & 0xff) === 0)
+            && corners.getPixelAt(1, 0) === 0xffffffff && corners.getPixelAt(6, 7) === 0xffffffff, 'roundCorners should be symmetric');
     }
 
     // text layout accepts the pre 3.0 (swapped) option names
