@@ -1,1 +1,0 @@
-import lib from './lib.js';

@@ -345,13 +345,10 @@ export class Image {
   async encodeJPEG(quality?: JPEGQuality): Promise<Uint8Array>;
 
   /**
-   * Encodes the image into a WEBP.
-   *
-   * @param quality `0`-`100`, or `null` for lossless. `0` is lowest quality
-   *     (highest compression) and `100` is highest quality (lowest compression).
-   *     Default: `null`
+   * WebP encoding is no longer supported, this always rejects.
+   * @deprecated Use {@link encode} (PNG) or {@link encodeJPEG} instead.
    */
-  async encodeWEBP(quality?: null | WEBPQuality): Promise<Uint8Array>;
+  async encodeWEBP(quality?: null | WEBPQuality): Promise<never>;
 
   /**
    * Decodes an image (PNG, JPEG or TIFF).
