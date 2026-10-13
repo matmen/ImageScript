@@ -1,4 +1,4 @@
-const png = require('./png/node.js');
+const png = require('./formats/png.js');
 const mem = require('./utils/mem.js');
 const {version} = require('./package.json');
 const codecs = require('./codecs/node/index.js');
@@ -7,7 +7,6 @@ const { default: v2 } = require('./v2/framebuffer.js');
 // old
 const svglib = require('./wasm/node/svg.js');
 const giflib = require('./wasm/node/gif.js');
-const pnglib = require('./wasm/node/png.js');
 const fontlib = require('./wasm/node/font.js');
 const jpeglib = require('./wasm/node/jpeg.js');
 const tifflib = require('./wasm/node/tiff.js');
@@ -1094,9 +1093,9 @@ class Image {
         const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
         if (ImageType.isPNG(view)) { // PNG
-            const {width, height, framebuffer} = (await pnglib.init()).decode(data);
+            const {width, height, pixels} = png.decode(data);
             image = new Image(width, height);
-            image.bitmap.set(framebuffer);
+            image.bitmap.set(pixels);
         } else if (ImageType.isJPEG(view)) { // JPEG
             const framebuffer = (await jpeglib.init()).decode(data);
 
