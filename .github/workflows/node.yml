@@ -13,7 +13,7 @@ jobs:
 
     strategy:
       matrix:
-        version: [22.x, 24.x, 26.x]
+        version: [22.13.0, 22.x, 24.x, 26.x]
         os: [macos-latest, ubuntu-latest, windows-latest]
 
     steps:

@@ -8,7 +8,7 @@ supports (including Alpine/musl and bundled serverless functions).
 
 ### Breaking changes
 
-- **Node.js 22.12 or newer is required.** The package is ES modules only; `require('imagescript')` keeps working
+- **Node.js 22.13 or newer is required.** The package is ES modules only; `require('imagescript')` keeps working
   through Node's `require(esm)`.
 - **All coordinates are 0-based.** `getPixelAt`, `setPixelAt`, `getRGBAAt`, iteration, `fill` callbacks, `drawBox`
   and `drawCircle` used 1-based coordinates while `crop` and `composite` used 0-based offsets. Code that addressed
@@ -36,6 +36,13 @@ supports (including Alpine/musl and bundled serverless functions).
   greyscale or RGB, with an alpha channel only if needed. Rows of non-palette images are paeth filtered, which makes
   photos about 25% and gradients up to 95% smaller. Compression uses the runtime's native zlib when available
   (node:zlib), which is several times faster than the JS fallback.
+- **JPEGs and TIFFs are rotated/mirrored as their orientation tag (Exif) says**, like browsers display them. Photos
+  taken with a rotated camera used to come out sideways. `Image.decode(data, {applyOrientation: false})` keeps the
+  stored pixels.
+- **`rgbaToColor()` / `rgbToColor()` round and clamp the components** to 0..255. Out of range values used to wrap
+  around (256 became 0) and fractions were truncated.
+- **`Frame.disposalMode` returns the mode's name** (`'keep'`, ...), matching the `Frame.DISPOSAL_*` constants and what
+  it is set to; it used to return the numeric id.
 - **`invertValue()`** inverts the HSV value (the brightest channel `v` becomes `255 - v`, black becomes white). It used
   to invert HSL lightness, which `invertLightness()` does now.
 - **`invertHue()`** shifts every hue to its complementary hue (180 degrees). It used to mirror the hue (`h -> 1 - h`),
@@ -61,6 +68,7 @@ supports (including Alpine/musl and bundled serverless functions).
 - `cover()` could return an image a pixel smaller than requested, `contain()` one a pixel smaller than the box
 - Big endian TIFFs weren't recognized, and most TIFFs failed to decode
 - Text alignment was ignored (#37)
+- Assigning `image.bitmap` left `getPixelAt()` and other methods reading the old pixels
 - GIF frame durations were truncated to centiseconds (16 ms became 10 ms), they are rounded now
 - `invert()`, `dominantColor()`, `rotate()`, `hueShift()`, `lightness()`, `saturation()` and the other HSL based
   functions are several times faster; PNG decoding uses native zlib when available
@@ -69,6 +77,9 @@ supports (including Alpine/musl and bundled serverless functions).
 
 - `invertLightness()`, which does what `invertValue()` used to do (invert HSL lightness)
 - `encodePNG()`, an alias of `encode()`
+- Options objects as an alternative to positional arguments: `cropCircle({max, feathering})`,
+  `dominantColor({ignoreBlack, ignoreWhite, threshold})`, `rotate(angle, {resize})`
+- `Frame.DISPOSAL_ANY`; `ImageType.isPNG()` and the other checks accept any binary data, not only a `DataView`
 - Parameter names describe what they are: `red/green/blue(factor)`, `renderText(font, size, ...)`, `fisheye(strength)`
 - Resize modes `Image.RESIZE_BILINEAR` (default), `Image.RESIZE_BICUBIC` and `Image.RESIZE_AREA`, all usable with
   `resize`, `scale`, `contain`, `fit`, `cover` and `GIF.resize`

@@ -70,7 +70,7 @@ function clamp8(v: number): number {
  * @param {{transform?: 'ycc'|'rgb'|'cmyk'}} [options] overrides the color transform detected from JFIF/Adobe markers (used by TIFF)
  * @return {{width: number, height: number, pixels: Uint8Array}}
  */
-export function decode(data: Uint8Array, { transform }: DecodeOptions = {}): { width: number, height: number, pixels: Uint8Array } {
+export function decode(data: Uint8Array, { transform }: DecodeOptions = {}): { width: number, height: number, pixels: Uint8Array, orientation: number } {
     if (data[0] !== 0xff || data[1] !== 0xd8) throw new Error('JPEG: invalid signature');
 
     const quantizationTables: Int32Array[] = [];
@@ -79,6 +79,7 @@ export function decode(data: Uint8Array, { transform }: DecodeOptions = {}): { w
     let frame: Frame | null = null;
     let adobe: { transform: number } | null = null;
     let jfif = false;
+    let orientation = 1;
     let restartInterval = 0;
     let pos = 2;
 
@@ -164,6 +165,10 @@ export function decode(data: Uint8Array, { transform }: DecodeOptions = {}): { w
                 if (data[start] === 0x4a && data[start + 1] === 0x46 && data[start + 2] === 0x49 && data[start + 3] === 0x46 && data[start + 4] === 0) jfif = true;
                 break;
 
+            case 0xe1: // APP1, the first Exif block holds the orientation
+                if (orientation === 1) orientation = exifOrientation(data.subarray(start, end));
+                break;
+
             case 0xee: // APP14
                 if (length >= 14 && data[start] === 0x41 && data[start + 1] === 0x64 && data[start + 2] === 0x6f && data[start + 3] === 0x62 && data[start + 4] === 0x65)
                     adobe = { transform: data[start + 11] };
@@ -208,7 +213,35 @@ export function decode(data: Uint8Array, { transform }: DecodeOptions = {}): { w
     }
 
     if (!frame) throw new Error('JPEG: missing frame header');
-    return { width: frame.width, height: frame.height, pixels: output(frame, adobe, jfif, transform) };
+    return { width: frame.width, height: frame.height, pixels: output(frame, adobe, jfif, transform), orientation };
+}
+
+/**
+ * Reads the orientation tag (0x0112) from the first IFD of an Exif block
+ * @return the orientation (1-8), 1 if it is missing or invalid
+ */
+function exifOrientation(block: Uint8Array): number {
+    // "Exif\0\0", then a TIFF header
+    if (block.length < 14 || block[0] !== 0x45 || block[1] !== 0x78 || block[2] !== 0x69 || block[3] !== 0x66 || block[4] !== 0 || block[5] !== 0) return 1;
+
+    const tiff = new DataView(block.buffer, block.byteOffset + 6, block.byteLength - 6);
+    const little = tiff.getUint16(0) === 0x4949;
+    if (!little && tiff.getUint16(0) !== 0x4d4d) return 1;
+
+    const ifd = tiff.getUint32(4, little);
+    if (ifd + 2 > tiff.byteLength) return 1;
+
+    for (let i = 0, count = tiff.getUint16(ifd, little); i < count; i++) {
+        const entry = ifd + 2 + i * 12;
+        if (entry + 12 > tiff.byteLength) break;
+        if (tiff.getUint16(entry, little) !== 0x0112) continue;
+
+        // a SHORT, stored in the first two bytes of the value field
+        const value = tiff.getUint16(entry + 8, little);
+        return value >= 1 && value <= 8 ? value : 1;
+    }
+
+    return 1;
 }
 
 function createFrame(progressive: boolean, height: number, width: number, componentData: Uint8Array): Frame {

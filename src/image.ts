@@ -23,6 +23,32 @@ export type ResizeMode = 'RESIZE_NEAREST_NEIGHBOR' | 'RESIZE_BILINEAR' | 'RESIZE
 
 export type SVGScaleMode = 1 | 2 | 3;
 
+export interface DecodeOptions {
+    /** Whether to rotate/mirror JPEGs and TIFFs as their orientation tag (Exif) says. Default: `true` */
+    applyOrientation?: boolean;
+}
+
+export interface CropCircleOptions {
+    /** Whether to use the larger dimension for the size. Default: `false` */
+    max?: boolean;
+    /** Share of the radius (0..1) over which the edge fades out. Default: `0` */
+    feathering?: number;
+}
+
+export interface DominantColorOptions {
+    /** Whether to ignore dark colors (all channels below the threshold). Default: `true` */
+    ignoreBlack?: boolean;
+    /** Whether to ignore light colors (all channels above 255 minus the threshold). Default: `true` */
+    ignoreWhite?: boolean;
+    /** The black/white threshold (0-64, in steps of 4 channel values). Default: `15` */
+    threshold?: number;
+}
+
+export interface RotateOptions {
+    /** Whether to resize the image so it fits all pixels or just ignore outlying pixels. Default: `true` */
+    resize?: boolean;
+}
+
 export interface PNGMetadata {
     title?: string;
     author?: string;
@@ -42,13 +68,11 @@ export class Image {
     /** @internal */
     protected __height__: number;
     /** @internal */
-    protected __buffer__: ArrayBuffer;
+    protected __view__!: DataView;
     /** @internal */
-    protected __view__: DataView;
+    protected __u32__!: Uint32Array;
     /** @internal */
-    protected __u32__: Uint32Array;
-    /** The image's RGBA pixel data */
-    bitmap: Uint8ClampedArray;
+    protected __bitmap__!: Uint8ClampedArray;
 
     /**
      * Creates a new image with the given dimensions
@@ -66,10 +90,36 @@ export class Image {
 
         this.__width__ = width;
         this.__height__ = height;
-        this.__buffer__ = new ArrayBuffer(width * height * 4);
-        this.__view__ = new DataView(this.__buffer__);
-        this.__u32__ = new Uint32Array(this.__buffer__);
-        this.bitmap = new Uint8ClampedArray(this.__buffer__);
+        this.__set_bitmap__(new Uint8ClampedArray(width * height * 4));
+    }
+
+    /**
+     * The image's RGBA pixel data. It can be replaced by any 8-bit array with width * height * 4 bytes
+     * (it is used as is, without copying)
+     */
+    get bitmap(): Uint8ClampedArray {
+        return this.__bitmap__;
+    }
+
+    set bitmap(bitmap: Uint8ClampedArray | Uint8Array) {
+        if (!(bitmap instanceof Uint8ClampedArray || bitmap instanceof Uint8Array))
+            throw new TypeError('The bitmap has to be a Uint8ClampedArray or Uint8Array');
+        if (bitmap.length !== this.width * this.height * 4)
+            throw new RangeError(`The bitmap has to have ${this.width * this.height * 4} bytes (width * height * 4), got ${bitmap.length}`);
+
+        this.__set_bitmap__(bitmap instanceof Uint8ClampedArray ? bitmap : new Uint8ClampedArray(bitmap.buffer, bitmap.byteOffset, bitmap.length));
+    }
+
+    /**
+     * Sets the pixel data and the views on it
+     * @internal
+     */
+    protected __set_bitmap__(bitmap: Uint8ClampedArray): void {
+        // 32-bit views need an aligned offset
+        if (bitmap.byteOffset % 4) bitmap = bitmap.slice();
+        this.__bitmap__ = bitmap;
+        this.__view__ = new DataView(bitmap.buffer, bitmap.byteOffset, bitmap.byteLength);
+        this.__u32__ = new Uint32Array(bitmap.buffer, bitmap.byteOffset, bitmap.length >> 2);
     }
 
     /**
@@ -116,7 +166,7 @@ export class Image {
     }
 
     /**
-     * Converts RGBA components to an RGBA value
+     * Converts RGBA components to an RGBA value, values are rounded and clamped to 0..255
      * @param r red (0..255)
      * @param g green (0..255)
      * @param b blue (0..255)
@@ -124,7 +174,7 @@ export class Image {
      * @returns RGBA value
      */
     static rgbaToColor(r: number, g: number, b: number, a: number): Color {
-        return (((r & 0xff) << 24) | ((g & 0xff) << 16) | ((b & 0xff) << 8) | (a & 0xff)) >>> 0;
+        return (channel(r) << 24 | channel(g) << 16 | channel(b) << 8 | channel(a)) >>> 0;
     }
 
     /**
@@ -653,10 +703,14 @@ export class Image {
 
     /**
      * Crops the image into a circle with an antialiased edge
-     * @param [max=false] Whether to use the larger dimension for the size
+     * @param [max=false] Whether to use the larger dimension for the size (or the options)
      * @param [feathering=0] Share of the radius (0..1) over which the edge fades out
      */
-    cropCircle(max = false, feathering = 0): this {
+    cropCircle(options?: CropCircleOptions): this;
+    cropCircle(max?: boolean, feathering?: number): this;
+    cropCircle(maxOrOptions: boolean | CropCircleOptions = false, featheringArgument = 0): this {
+        const { max = false, feathering = 0 } = typeof maxOrOptions === 'object' && maxOrOptions !== null
+            ? maxOrOptions : { max: maxOrOptions, feathering: featheringArgument };
         const radius = (max ? Math.max : Math.min)(this.width, this.height) / 2;
         const cx = this.width / 2, cy = this.height / 2;
         // width of the soft edge, at least the one pixel of antialiasing
@@ -966,13 +1020,17 @@ export class Image {
     /**
      * Gets the images dominant color: the colors are grouped into a few clusters (median cut and k-means),
      * the average color of the largest one is returned
-     * @param [ignoreBlack=true] Whether to ignore dark colors (all channels below the threshold)
+     * @param [ignoreBlack=true] Whether to ignore dark colors (all channels below the threshold), or the options
      * @param [ignoreWhite=true] Whether to ignore light colors (all channels above 255 minus the threshold)
      * @param [bwThreshold=0xf] The black/white threshold (0-64, in steps of 4 channel values)
      * @return The images dominant color (fully opaque); mostly transparent pixels are ignored.
      *     If every pixel is ignored as black or white, the filter is dropped
      */
-    dominantColor(ignoreBlack = true, ignoreWhite = true, bwThreshold = 0xf): Color {
+    dominantColor(options?: DominantColorOptions): Color;
+    dominantColor(ignoreBlack?: boolean, ignoreWhite?: boolean, bwThreshold?: number): Color;
+    dominantColor(ignoreBlackOrOptions: boolean | DominantColorOptions = true, ignoreWhiteArgument = true, thresholdArgument = 0xf): Color {
+        const { ignoreBlack = true, ignoreWhite = true, threshold: bwThreshold = 0xf } = typeof ignoreBlackOrOptions === 'object' && ignoreBlackOrOptions !== null
+            ? ignoreBlackOrOptions : { ignoreBlack: ignoreBlackOrOptions, ignoreWhite: ignoreWhiteArgument, threshold: thresholdArgument };
         const threshold = Math.min(64, Math.max(0, bwThreshold)) * 4;
         const pixels = this.__bytes__();
 
@@ -986,9 +1044,12 @@ export class Image {
     /**
      * Rotates the image counterclockwise by the given amount of degrees
      * @param angle The angle to rotate the image for (in degrees)
-     * @param resize Whether to resize the image so it fits all pixels or just ignore outlying pixels
+     * @param [resize=true] Whether to resize the image so it fits all pixels or just ignore outlying pixels (or the options)
      */
-    rotate(angle: number, resize = true): this {
+    rotate(angle: number, options?: RotateOptions): this;
+    rotate(angle: number, resize?: boolean): this;
+    rotate(angle: number, resizeOrOptions: boolean | RotateOptions = true): this {
+        const { resize = true } = typeof resizeOrOptions === 'object' && resizeOrOptions !== null ? resizeOrOptions : { resize: resizeOrOptions };
         angle = ((angle % 360) + 360) % 360;
         if (angle === 0) return this;
 
@@ -1111,10 +1172,9 @@ export class Image {
     protected __apply__(image: Image): this {
         this.__width__ = image.__width__;
         this.__height__ = image.__height__;
-        this.__buffer__ = image.__buffer__;
+        this.__bitmap__ = image.__bitmap__;
         this.__view__ = image.__view__;
         this.__u32__ = image.__u32__;
-        this.bitmap = image.bitmap;
 
         return this;
     }
@@ -1336,29 +1396,56 @@ export class Image {
     /**
      * Decodes an image (PNG, JPEG or TIFF)
      * @param data The binary data to decode
+     * @param [options.applyOrientation=true] Whether to rotate/mirror JPEGs and TIFFs as their orientation tag (Exif) says,
+     *     like browsers do: photos taken with a rotated camera are stored sideways and only displayed upright
      * @return The decoded image
      */
-    static async decode(input: BinaryData): Promise<Image> {
-        let image: Image;
-
+    static async decode(input: BinaryData, { applyOrientation = true }: DecodeOptions = {}): Promise<Image> {
         const data = view(input);
         const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
-        if (ImageType.isPNG(dataView)) { // PNG
-            const {width, height, pixels} = await png.decode(data);
-            image = new Image(width, height);
-            image.bitmap.set(pixels);
-        } else if (ImageType.isJPEG(dataView)) { // JPEG
-            const {width, height, pixels} = jpeg.decode(data);
-            image = new Image(width, height);
-            image.bitmap.set(pixels);
-        } else if (ImageType.isTIFF(dataView)) { // TIFF
-            const {width, height, pixels} = await tiff.decode(data);
-            image = new Image(width, height);
-            image.bitmap.set(pixels);
-        } else throw new Error('Unsupported image type');
+        let decoded: { width: number, height: number, pixels: Uint8Array, orientation?: number };
+        if (ImageType.isPNG(dataView)) decoded = await png.decode(data);
+        else if (ImageType.isJPEG(dataView)) decoded = jpeg.decode(data);
+        else if (ImageType.isTIFF(dataView)) decoded = await tiff.decode(data);
+        else throw new Error('Unsupported image type');
 
-        return image;
+        const image = new Image(decoded.width, decoded.height);
+        image.bitmap.set(decoded.pixels);
+        return applyOrientation && decoded.orientation ? image.__orient__(decoded.orientation) : image;
+    }
+
+    /**
+     * Applies an Exif orientation (1-8), turning the stored pixels into the displayed ones
+     * @internal
+     */
+    protected __orient__(orientation: number): this {
+        if (orientation <= 1 || orientation > 8) return this;
+
+        const w = this.width, h = this.height;
+        const swap = orientation >= 5;
+        const out = new Image(swap ? h : w, swap ? w : h);
+        const src = this.__u32__, dst = out.__u32__;
+        const ow = out.width, oh = out.height;
+
+        // source pixel of every output pixel (X, Y)
+        for (let Y = 0; Y < oh; Y++) {
+            for (let X = 0; X < ow; X++) {
+                let x: number, y: number;
+                switch (orientation) {
+                    case 2: x = w - 1 - X; y = Y; break; // mirrored horizontally
+                    case 3: x = w - 1 - X; y = h - 1 - Y; break; // rotated 180
+                    case 4: x = X; y = h - 1 - Y; break; // mirrored vertically
+                    case 5: x = Y; y = X; break; // transposed
+                    case 6: x = Y; y = h - 1 - X; break; // needs a 90 degree clockwise rotation
+                    case 7: x = w - 1 - Y; y = h - 1 - X; break; // transversed
+                    default: x = w - 1 - Y; y = X; break; // 8, needs a 90 degree counterclockwise rotation
+                }
+                dst[Y * ow + X] = src[y * w + x];
+            }
+        }
+
+        return this.__apply__(out);
     }
 
     /**
@@ -1452,6 +1539,11 @@ function circleCoverage(px: number, py: number, cx: number, cy: number, radius: 
     if (d <= radius - Math.SQRT1_2) return 1;
     if (d >= radius + Math.SQRT1_2) return 0;
     return pixelCoverage(px, py, (x, y) => (x - cx) ** 2 + (y - cy) ** 2 <= radius * radius);
+}
+
+// rounds and clamps a channel value to 0..255 (NaN becomes 0)
+function channel(value: number): number {
+    return value > 255 ? 255 : value > 0 ? Math.round(value) : 0;
 }
 
 interface HSLA {
