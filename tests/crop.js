@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const {Image} = require('..');
+const samePixels = require('./util/pixels');
 
 (async () => {
     const image = new Image(512, 512);
@@ -12,5 +13,5 @@ const {Image} = require('..');
         await fs.writeFile('./tests/targets/crop.png', encoded);
 
     const target = await fs.readFile('./tests/targets/crop.png');
-    if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+    if (!await samePixels(target, encoded)) process.exit(1);
 })();

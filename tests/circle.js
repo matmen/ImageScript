@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const {Image} = require('..');
+const samePixels = require('./util/pixels');
 
 const panic = message => {
     console.error(message);
@@ -17,7 +18,7 @@ const panic = message => {
             await fs.writeFile('./tests/targets/circle.png', encoded);
 
         const target = await fs.readFile('./tests/targets/circle.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('drawCircle 128 failed');
+        if (!await samePixels(target, encoded)) panic('drawCircle 128 failed');
     }
 
     {
@@ -30,7 +31,7 @@ const panic = message => {
             await fs.writeFile('./tests/targets/circle2.png', encoded);
 
         const target = await fs.readFile('./tests/targets/circle2.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('drawCircle 320 failed');
+        if (!await samePixels(target, encoded)) panic('drawCircle 320 failed');
     }
 
     {
@@ -44,7 +45,7 @@ const panic = message => {
             await fs.writeFile('./tests/targets/circle3.png', encoded);
 
         const target = await fs.readFile('./tests/targets/circle3.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('cropCircle failed');
+        if (!await samePixels(target, encoded)) panic('cropCircle failed');
     }
 
     {
@@ -58,6 +59,6 @@ const panic = message => {
             await fs.writeFile('./tests/targets/circle4.png', encoded);
 
         const target = await fs.readFile('./tests/targets/circle4.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('cropCircle max feathering failed');
+        if (!await samePixels(target, encoded)) panic('cropCircle max feathering failed');
     }
 })();

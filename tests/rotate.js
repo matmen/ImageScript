@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const {Image} = require('..');
+const samePixels = require('./util/pixels');
 const panic = msg => {
     console.error(msg);
     process.exit(1);
@@ -16,7 +17,7 @@ const panic = msg => {
         if (process.env.OVERWRITE_TEST)
             await fs.writeFile('./tests/targets/rotate-45.png', encoded);
         const target = await fs.readFile('./tests/targets/rotate-45.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('rotate 45 failed');
+        if (!await samePixels(target, encoded)) panic('rotate 45 failed');
     }
 
     {
@@ -30,7 +31,7 @@ const panic = msg => {
             await fs.writeFile('./tests/targets/rotate-45-noresize.png', encoded);
 
         const target = await fs.readFile('./tests/targets/rotate-45-noresize.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('rotate 45 noresize failed');
+        if (!await samePixels(target, encoded)) panic('rotate 45 noresize failed');
     }
 
     {
@@ -43,7 +44,7 @@ const panic = msg => {
         if (process.env.OVERWRITE_TEST)
             await fs.writeFile('./tests/targets/rotate-90.png', encoded);
         const target = await fs.readFile('./tests/targets/rotate-90.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('rotate 90 failed');
+        if (!await samePixels(target, encoded)) panic('rotate 90 failed');
     }
 
     {
@@ -56,7 +57,7 @@ const panic = msg => {
         if (process.env.OVERWRITE_TEST)
             await fs.writeFile('./tests/targets/rotate-180.png', encoded);
         const target = await fs.readFile('./tests/targets/rotate-180.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('rotate 180 failed');
+        if (!await samePixels(target, encoded)) panic('rotate 180 failed');
     }
 
     {
@@ -69,7 +70,7 @@ const panic = msg => {
         if (process.env.OVERWRITE_TEST)
             await fs.writeFile('./tests/targets/rotate-270.png', encoded);
         const target = await fs.readFile('./tests/targets/rotate-270.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('rotate 270 failed');
+        if (!await samePixels(target, encoded)) panic('rotate 270 failed');
     }
 
     {

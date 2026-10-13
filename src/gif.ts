@@ -84,7 +84,8 @@ export class GIF extends Array<Frame> {
                 y: frame.yOffset,
                 width: frame.width,
                 height: frame.height,
-                delay: ~~(frame.duration / 10),
+                // gifs store centiseconds; rounding keeps e.g. 16 ms (60 fps) from becoming 10 ms
+                delay: Math.round(frame.duration / 10),
                 dispose: frame.disposalMode,
                 pixels: new Uint8Array(frame.bitmap.buffer, frame.bitmap.byteOffset, frame.bitmap.byteLength)
             });

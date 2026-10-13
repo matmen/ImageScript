@@ -9,7 +9,10 @@ const DISPOSAL_MODES: readonly FrameDisposalModeName[] = ['any', 'keep', 'previo
  * Represents a frame in a GIF
  */
 export class Frame extends Image {
-    /** Milliseconds */
+    /**
+     * Milliseconds. GIFs store hundredths of a second, so this is rounded to 10 ms when encoding;
+     * note that browsers play frames shorter than 20 ms with 100 ms
+     */
     duration: number;
     xOffset: number;
     yOffset: number;

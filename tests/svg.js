@@ -1,5 +1,6 @@
 const {Image} = require('..');
 const fs = require('fs').promises;
+const samePixels = require('./util/pixels');
 
 const panic = message => {
     console.error(message);
@@ -16,7 +17,7 @@ const panic = message => {
             await fs.writeFile('./tests/targets/potato.png', encoded);
 
         const target = await fs.readFile('./tests/targets/potato.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('potato doesn\'t match');
+        if (!await samePixels(target, encoded)) panic('potato doesn\'t match');
     }
 
     {
@@ -31,7 +32,7 @@ const panic = message => {
             await fs.writeFile('./tests/targets/svg-features.png', encoded);
 
         const target = await fs.readFile('./tests/targets/svg-features.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('features don\'t match');
+        if (!await samePixels(target, encoded)) panic('features don\'t match');
     }
 
     {
