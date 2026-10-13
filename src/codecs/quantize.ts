@@ -23,13 +23,16 @@ export interface Quantized {
     transparentIndex: number;
 }
 
-interface Point {
-    c: [number, number, number];
-    w: number;
+interface Points {
+    /** mean color per channel */
+    c: [Float64Array, Float64Array, Float64Array];
+    /** pixel count */
+    w: Float64Array;
 }
 
 interface Box {
-    points: Point[];
+    /** indices into the points */
+    members: Int32Array;
     weight: number;
     mean: number[];
     axis: number;
@@ -115,31 +118,39 @@ function medianCut(pixels: Uint8Array, colors: number, iterations: number): Uint
         sumB[bin] += b;
     }
 
-    // collapse non-empty bins into weighted points (mean color + count)
-    const bins: Point[] = [];
-    for (let i = 0; i < 32768; i++)
-        if (count[i]) bins.push({ c: [sumR[i] / count[i], sumG[i] / count[i], sumB[i] / count[i]], w: count[i] });
+    // collapse non-empty bins into weighted points (mean color + count), stored per channel
+    let n = 0;
+    for (let i = 0; i < 32768; i++) if (count[i]) n++;
 
-    const boxes = [makeBox(bins)];
+    const points: Points = { c: [new Float64Array(n), new Float64Array(n), new Float64Array(n)], w: new Float64Array(n) };
+    for (let i = 0, p = 0; i < 32768; i++) {
+        if (!count[i]) continue;
+        points.c[0][p] = sumR[i] / count[i];
+        points.c[1][p] = sumG[i] / count[i];
+        points.c[2][p] = sumB[i] / count[i];
+        points.w[p++] = count[i];
+    }
+
+    const boxes = [makeBox(points, Int32Array.from({ length: n }, (_, i) => i))];
+    const scratch = new Int32Array(n);
     while (boxes.length < colors) {
         let target = -1;
         for (let i = 0; i < boxes.length; i++)
-            if (boxes[i].points.length > 1 && (target === -1 || boxes[i].error > boxes[target].error)) target = i;
+            if (boxes[i].members.length > 1 && (target === -1 || boxes[i].error > boxes[target].error)) target = i;
         if (target === -1) break;
 
-        const box = boxes[target];
-        const axis = box.axis;
-        box.points.sort((a, b) => a.c[axis] - b.c[axis]);
+        const { members, axis, weight } = boxes[target];
+        sortBy(members, points.c[axis], scratch);
 
         // split at the weighted median, keeping at least one point on each side
-        const half = box.weight / 2;
+        const half = weight / 2;
         let split = 1;
-        for (let acc = 0; split < box.points.length - 1; split++) {
-            acc += box.points[split - 1].w;
+        for (let acc = 0; split < members.length - 1; split++) {
+            acc += points.w[members[split - 1]];
             if (acc >= half) break;
         }
 
-        boxes.splice(target, 1, makeBox(box.points.slice(0, split)), makeBox(box.points.slice(split)));
+        boxes.splice(target, 1, makeBox(points, members.subarray(0, split)), makeBox(points, members.subarray(split)));
     }
 
     const palette = new Float64Array(boxes.length * 3);
@@ -147,15 +158,17 @@ function medianCut(pixels: Uint8Array, colors: number, iterations: number): Uint
 
     // k-means: reassign every point to its nearest palette color and move colors to their cluster means
     const entries = boxes.length;
+    const [pr, pg, pb] = points.c, pw = points.w;
     for (let iteration = 0; iteration < iterations; iteration++) {
         const acc = new Float64Array(entries * 4);
+        const nearest = nearestSearch(palette, entries);
 
-        for (const point of bins) {
-            const index = nearest(palette, entries, point.c[0], point.c[1], point.c[2]);
-            acc[index * 4] += point.c[0] * point.w;
-            acc[index * 4 + 1] += point.c[1] * point.w;
-            acc[index * 4 + 2] += point.c[2] * point.w;
-            acc[index * 4 + 3] += point.w;
+        for (let i = 0; i < n; i++) {
+            const index = nearest(pr[i], pg[i], pb[i]);
+            acc[index * 4] += pr[i] * pw[i];
+            acc[index * 4 + 1] += pg[i] * pw[i];
+            acc[index * 4 + 2] += pb[i] * pw[i];
+            acc[index * 4 + 3] += pw[i];
         }
 
         for (let i = 0; i < entries; i++) {
@@ -170,17 +183,20 @@ function medianCut(pixels: Uint8Array, colors: number, iterations: number): Uint
     return Uint8Array.from(palette, Math.round);
 }
 
-function makeBox(points: Point[]): Box {
+function makeBox({ c: [r, g, b], w }: Points, members: Int32Array): Box {
     let weight = 0;
     const sum = [0, 0, 0];
     const sq = [0, 0, 0];
 
-    for (const { c, w } of points) {
-        weight += w;
-        for (let k = 0; k < 3; k++) {
-            sum[k] += c[k] * w;
-            sq[k] += c[k] * c[k] * w;
-        }
+    for (let m = 0; m < members.length; m++) {
+        const i = members[m];
+        weight += w[i];
+        sum[0] += r[i] * w[i];
+        sq[0] += r[i] * r[i] * w[i];
+        sum[1] += g[i] * w[i];
+        sq[1] += g[i] * g[i] * w[i];
+        sum[2] += b[i] * w[i];
+        sq[2] += b[i] * b[i] * w[i];
     }
 
     const mean = sum.map(v => v / weight);
@@ -188,32 +204,117 @@ function makeBox(points: Point[]): Box {
     const error = sq.map((v, k) => (v - sum[k] * mean[k]) * [WR, WG, WB][k]);
     const axis = error.indexOf(Math.max(...error));
 
-    return { points, weight, mean, axis, error: error[0] + error[1] + error[2] };
+    return { members, weight, mean, axis, error: error[0] + error[1] + error[2] };
 }
 
-function nearest(palette: ArrayLike<number>, entries: number, r: number, g: number, b: number): number {
-    let best = 0, bestDistance = Infinity;
+// stable bottom-up merge sort of indices by their keys, in place
+function sortBy(indices: Int32Array, keys: Float64Array, scratch: Int32Array): void {
+    const n = indices.length;
+    const RUN = 16;
 
-    for (let i = 0; i < entries; i++) {
-        const dr = r - palette[i * 3], dg = g - palette[i * 3 + 1], db = b - palette[i * 3 + 2];
-        const distance = WR * dr * dr + WG * dg * dg + WB * db * db;
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            best = i;
+    // insertion sort short runs
+    for (let start = 0; start < n; start += RUN) {
+        const end = Math.min(n, start + RUN);
+        for (let i = start + 1; i < end; i++) {
+            const v = indices[i], key = keys[v];
+            let j = i - 1;
+            for (; j >= start && keys[indices[j]] > key; j--) indices[j + 1] = indices[j];
+            indices[j + 1] = v;
         }
     }
 
-    return best;
+    let src = indices, dst = scratch.subarray(0, n);
+    for (let width = RUN; width < n; width *= 2) {
+        for (let start = 0; start < n; start += 2 * width) {
+            const mid = Math.min(n, start + width), end = Math.min(n, start + 2 * width);
+            let i = start, j = mid, o = start;
+            // already ordered halves are copied as is
+            if (mid >= end || keys[src[mid - 1]] <= keys[src[mid]]) {
+                dst.set(src.subarray(start, end), start);
+                continue;
+            }
+            while (i < mid && j < end) dst[o++] = keys[src[j]] < keys[src[i]] ? src[j++] : src[i++];
+            while (i < mid) dst[o++] = src[i++];
+            while (j < end) dst[o++] = src[j++];
+        }
+        [src, dst] = [dst, src];
+    }
+
+    if (src !== indices) indices.set(src);
+}
+
+/**
+ * Returns a function finding the palette entry closest to a color, with the same result as a linear scan
+ * (ties go to the lowest index). Entries are sorted along the axis with the largest weighted spread and
+ * searched outwards from the color's position, until that axis' distance alone exceeds the best match
+ */
+function nearestSearch(palette: ArrayLike<number>, entries: number): (r: number, g: number, b: number) => number {
+    const weights = [WR, WG, WB];
+    let axis = 0, spread = -1;
+    for (let k = 0; k < 3; k++) {
+        let min = Infinity, max = -Infinity;
+        for (let i = 0; i < entries; i++) {
+            min = Math.min(min, palette[i * 3 + k]);
+            max = Math.max(max, palette[i * 3 + k]);
+        }
+        if ((max - min) * weights[k] > spread) {
+            spread = (max - min) * weights[k];
+            axis = k;
+        }
+    }
+
+    const order = Int32Array.from({ length: entries }, (_, i) => i).sort((a, b) => palette[a * 3 + axis] - palette[b * 3 + axis]);
+    const keys = Float64Array.from(order, i => palette[i * 3 + axis]);
+    const weight = weights[axis];
+
+    return (r: number, g: number, b: number): number => {
+        const key = axis === 0 ? r : axis === 1 ? g : b;
+        let best = 0, bestDistance = Infinity;
+
+        const test = (i: number): void => {
+            const dr = r - palette[i * 3], dg = g - palette[i * 3 + 1], db = b - palette[i * 3 + 2];
+            const distance = WR * dr * dr + WG * dg * dg + WB * db * db;
+            if (distance < bestDistance || (distance === bestDistance && i < best)) {
+                bestDistance = distance;
+                best = i;
+            }
+        };
+
+        // first entry with a key >= the color's
+        let lo = 0, hi = entries;
+        while (lo < hi) {
+            const mid = lo + hi >> 1;
+            if (keys[mid] < key) lo = mid + 1;
+            else hi = mid;
+        }
+
+        // the axis term alone bounds the distance, equal bounds can still win a tie
+        for (let up = lo, down = lo - 1; up < entries || down >= 0;) {
+            if (up < entries) {
+                const d = key - keys[up];
+                if (weight * d * d > bestDistance) up = entries;
+                else test(order[up++]);
+            }
+            if (down >= 0) {
+                const d = key - keys[down];
+                if (weight * d * d > bestDistance) down = -1;
+                else test(order[down--]);
+            }
+        }
+
+        return best;
+    };
 }
 
 // caches nearest palette lookups on an 18-bit color key
 function createLookup(palette: Uint8Array, entries: number): (r: number, g: number, b: number) => number {
     const cache = new Int16Array(1 << 18).fill(-1);
+    const nearest = nearestSearch(palette, entries);
 
     return (r: number, g: number, b: number): number => {
         const key = (r >> 2) << 12 | (g >> 2) << 6 | b >> 2;
         let index = cache[key];
-        if (index === -1) index = cache[key] = nearest(palette, entries, r, g, b);
+        if (index === -1) index = cache[key] = nearest(r, g, b);
         return index;
     };
 }
@@ -248,13 +349,9 @@ function ditherMap(pixels: Uint8Array, width: number, palette: Uint8Array, entri
             const eb = b - palette[index * 3 + 2];
 
             const forward = reverse ? -3 : 3;
-            for (let k = 0; k < 3; k++) {
-                const error = k === 0 ? er : k === 1 ? eg : eb;
-                current[e + forward + k] += error * 7 / 16;
-                next[e - forward + k] += error * 3 / 16;
-                next[e + k] += error * 5 / 16;
-                next[e + forward + k] += error / 16;
-            }
+            diffuse(current, next, e, forward, er);
+            diffuse(current, next, e + 1, forward, eg);
+            diffuse(current, next, e + 2, forward, eb);
         }
 
         [current, next] = [next, current];
@@ -262,6 +359,14 @@ function ditherMap(pixels: Uint8Array, width: number, palette: Uint8Array, entri
     }
 
     return indices;
+}
+
+// floyd-steinberg weights: 7/16 ahead, 3/16 behind below, 5/16 below, 1/16 ahead below
+function diffuse(current: Float32Array, next: Float32Array, i: number, forward: number, error: number): void {
+    current[i + forward] += error * 7 / 16;
+    next[i - forward] += error * 3 / 16;
+    next[i] += error * 5 / 16;
+    next[i + forward] += error / 16;
 }
 
 function clamp(v: number): number {
