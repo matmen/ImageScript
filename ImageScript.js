@@ -2,6 +2,7 @@ const png = require('./formats/png.js');
 const gif = require('./formats/gif.js');
 const jpeg = require('./formats/jpeg.js');
 const tiff = require('./formats/tiff.js');
+const textRenderer = require('./formats/text.js');
 const mem = require('./utils/mem.js');
 const {version} = require('./package.json');
 const codecs = require('./codecs/node/index.js');
@@ -9,7 +10,6 @@ const { default: v2 } = require('./v2/framebuffer.js');
 
 // old
 const svglib = require('./wasm/node/svg.js');
-const fontlib = require('./wasm/node/font.js');
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -1168,33 +1168,18 @@ class Image {
      * @return {Promise<Image>} The rendered text
      */
     static async renderText(font, scale, text, color = 0xffffffff, layout = new TextLayout()) {
-        const { Font, Layout } = await fontlib.init();
-
-        font = new Font(scale, font);
+        const {width, height, coverage} = textRenderer.render(mem.view(font), scale, text, layout);
         const [r, g, b, a] = Image.colorToRGBA(color);
 
-        const layoutOptions = new Layout();
+        const image = new Image(width, height);
+        for (let i = 0; i < coverage.length; i++) {
+            if (!coverage[i]) continue;
+            image.bitmap[i * 4] = r;
+            image.bitmap[i * 4 + 1] = g;
+            image.bitmap[i * 4 + 2] = b;
+            image.bitmap[i * 4 + 3] = coverage[i];
+        }
 
-        layoutOptions.reset({
-            max_width: layout.maxWidth,
-            max_height: layout.maxHeight,
-            wrap_style: layout.wrapStyle,
-            vertical_align: layout.verticalAlign,
-            horizontal_align: layout.horizontalAlign,
-            wrap_hard_breaks: layout.wrapHardBreaks
-        });
-
-        layoutOptions.append(font, text, {scale});
-        const framebuffer = layoutOptions.rasterize(r, g, b);
-        const image = new Image(framebuffer.width, framebuffer.height);
-
-        image.bitmap.set(framebuffer.buffer);
-
-        if (image.height > layout.maxHeight)
-            image.crop(0, 0, image.width, Math.floor(layoutOptions.lines() / image.height * layout.maxHeight) * (image.height / layoutOptions.lines()));
-
-        font.free();
-        layoutOptions.free();
         return image.opacity(a / 0xff);
     }
 
