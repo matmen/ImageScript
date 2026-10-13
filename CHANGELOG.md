@@ -13,7 +13,9 @@ supports (including Alpine/musl and bundled serverless functions).
 - **All coordinates are 0-based.** `getPixelAt`, `setPixelAt`, `getRGBAAt`, iteration, `fill` callbacks, `drawBox`
   and `drawCircle` used 1-based coordinates while `crop` and `composite` used 0-based offsets. Code that addressed
   pixels starting at 1 now has to subtract 1; out of range coordinates throw.
-- **WebP encoding was removed.** `encodeWEBP()` rejects; use `encode()` (PNG) or `encodeJPEG()`.
+- **WebP encoding and `encodeWEBP()` were removed**, use `encode()` (PNG) or `encodeJPEG()`.
+- **`invertSaturation()` and `invertHue()` were removed.** `invertHue()` mirrored the hue (`h -> 1 - h`); for the
+  complementary color use `hueShift(180)`.
 - **The experimental `imagescript/v2` API was removed.**
 - **`TextLayout` alignment options are named correctly:** `horizontalAlign` takes `left`/`center`/`right`,
   `verticalAlign` takes `top`/`middle`/`bottom`. Values passed under the old (swapped) names are still accepted.
@@ -45,8 +47,6 @@ supports (including Alpine/musl and bundled serverless functions).
   it is set to; it used to return the numeric id.
 - **`invertValue()`** inverts the HSV value (the brightest channel `v` becomes `255 - v`, black becomes white). It used
   to invert HSL lightness, which `invertLightness()` does now.
-- **`invertHue()`** shifts every hue to its complementary hue (180 degrees). It used to mirror the hue (`h -> 1 - h`),
-  which kept reds red and swapped greens and blues.
 - **`rotate()`** is documented as counterclockwise, which it always was.
 - **`averageColor()`** weights pixels by their opacity.
 
@@ -75,6 +75,12 @@ supports (including Alpine/musl and bundled serverless functions).
 
 ### New
 
+- `blur(radius)` (gaussian, radius = standard deviation like CSS' `blur()`) and `sharpen(amount, radius)` (unsharp mask)
+- `brightness(factor)`, `contrast(factor)`, `gamma(gamma)`, `greyscale()` (ITU-R 601 luma, like Pillow) and `sepia()`
+- `composite(source, x, y, {opacity, mode})` with the blend modes of CSS' `mix-blend-mode` (`multiply`, `screen`,
+  `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`)
+  and `add`
+- Outlined text: `renderText(font, size, text, color, layout, {strokeWidth, strokeColor})`
 - `invertLightness()`, which does what `invertValue()` used to do (invert HSL lightness)
 - `encodePNG()`, an alias of `encode()`
 - Options objects as an alternative to positional arguments: `cropCircle({max, feathering})`,
