@@ -131,7 +131,7 @@ function inflate(dat: Uint8Array, buf: Uint8Array): Uint8Array {
                 // stored block
                 const s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
                 if (t > sl) throw new Error('zlib: unexpected end of data');
-                buf.set(dat.subarray(s, Math.min(t, s + buf.length - bt)), bt);
+                if (bt < buf.length) buf.set(dat.subarray(s, Math.min(t, s + buf.length - bt)), bt);
                 bt += l;
                 pos = t * 8;
                 continue;
