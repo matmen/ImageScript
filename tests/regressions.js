@@ -306,12 +306,15 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         assert(Buffer.from((await Image.decode(await gradient.encode(9))).bitmap).equals(Buffer.from(gradient.bitmap)), 'PNG: filtered roundtrip failed');
     }
 
-    // invertHue shifts to the complementary hue, invertValue is the deprecated name of invertLightness
+    // invertHue shifts to the complementary hue, invertValue inverts HSV value and invertLightness HSL lightness
     {
         const orange = new Image(1, 1).fill(Image.rgbToColor(255, 128, 0));
         assert(rgba(orange.clone().invertHue(), 0, 0).join() === '0,127,255,255', 'invertHue should give the complementary color, got ' + rgba(orange.clone().invertHue(), 0, 0));
         assert(orange.clone().invertHue().invertHue().getPixelAt(0, 0) === orange.getPixelAt(0, 0), 'invertHue twice should restore the color');
-        assert(orange.clone().invertValue().getPixelAt(0, 0) === orange.clone().invertLightness().getPixelAt(0, 0), 'invertValue should equal invertLightness');
+        const value = new Image(3, 1).fill(x => [Image.rgbaToColor(200, 100, 50, 128), Image.rgbToColor(0, 0, 0), Image.rgbToColor(255, 128, 0)][x]).invertValue();
+        assert([0, 1, 2].map(x => rgba(value, x, 0).join(' ')).join() === '55 28 14 128,255 255 255 255,0 0 0 255', 'invertValue should invert HSV value, got ' + [0, 1, 2].map(x => rgba(value, x, 0)));
+        const lightness = new Image(1, 1).fill(Image.rgbToColor(200, 100, 50)).invertLightness();
+        assert(rgba(lightness, 0, 0).join() === '205,105,55,255', 'invertLightness should invert HSL lightness, got ' + rgba(lightness, 0, 0));
     }
 
     // encodePNG is an alias of encode

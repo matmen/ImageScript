@@ -36,6 +36,8 @@ supports (including Alpine/musl and bundled serverless functions).
   greyscale or RGB, with an alpha channel only if needed. Rows of non-palette images are paeth filtered, which makes
   photos about 25% and gradients up to 95% smaller. Compression uses the runtime's native zlib when available
   (node:zlib), which is several times faster than the JS fallback.
+- **`invertValue()`** inverts the HSV value (the brightest channel `v` becomes `255 - v`, black becomes white). It used
+  to invert HSL lightness, which `invertLightness()` does now.
 - **`invertHue()`** shifts every hue to its complementary hue (180 degrees). It used to mirror the hue (`h -> 1 - h`),
   which kept reds red and swapped greens and blues.
 - **`rotate()`** is documented as counterclockwise, which it always was.
@@ -65,7 +67,7 @@ supports (including Alpine/musl and bundled serverless functions).
 
 ### New
 
-- `invertLightness()`, the new name of `invertValue()` (deprecated, it inverts HSL lightness rather than HSV value)
+- `invertLightness()`, which does what `invertValue()` used to do (invert HSL lightness)
 - `encodePNG()`, an alias of `encode()`
 - Parameter names describe what they are: `red/green/blue(factor)`, `renderText(font, size, ...)`, `fisheye(strength)`
 - Resize modes `Image.RESIZE_BILINEAR` (default), `Image.RESIZE_BICUBIC` and `Image.RESIZE_AREA`, all usable with

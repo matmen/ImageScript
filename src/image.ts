@@ -836,11 +836,26 @@ export class Image {
     }
 
     /**
-     * Inverts the images lightness (HSL)
-     * @deprecated Renamed to {@link Image.invertLightness}, it inverts HSL lightness rather than HSV value
+     * Inverts the images value (HSV), keeping hue and saturation: the brightest channel `v` becomes `255 - v`
+     * and the others scale along, black becomes white
      */
     invertValue(): this {
-        return this.invertLightness();
+        const bitmap = this.bitmap;
+        for (let i = 0; i < bitmap.length; i += 4) {
+            const max = Math.max(bitmap[i], bitmap[i + 1], bitmap[i + 2]);
+            if (max === 0) {
+                bitmap[i] = bitmap[i + 1] = bitmap[i + 2] = 255;
+                continue;
+            }
+
+            // the clamped bitmap rounds on assignment
+            const factor = (255 - max) / max;
+            bitmap[i] *= factor;
+            bitmap[i + 1] *= factor;
+            bitmap[i + 2] *= factor;
+        }
+
+        return this;
     }
 
     /**
