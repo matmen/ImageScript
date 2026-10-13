@@ -20,6 +20,20 @@ supports (including Alpine/musl and bundled serverless functions).
   Alignment and `wrapStyle: 'char'` actually work now, which changes the output of code that set them.
 - **`GIF.encode(quality)`** scales the palette size: 1 = 8 colors, 50 = 55, 90 and above = 256.
 - **`GIF.decode`** returns the GIF's real loop count (it always returned -1); GIFs without a loop extension play once (0).
+- **Resizing defaults to bilinear filtering** (`Image.RESIZE_BILINEAR`) instead of nearest neighbor, which aliased
+  badly when shrinking photos. Pass `Image.RESIZE_NEAREST_NEIGHBOR` for pixel art; it now samples the pixel centers,
+  which shifts its output by up to a pixel. `RESIZE_AUTO` rounds the computed side instead of flooring it.
+- **`drawCircle()`, `cropCircle()` and `roundCorners()` are antialiased.** `drawCircle(x, y, r)` is centered on the
+  center of pixel (x, y) and has a radius of exactly `r`. `cropCircle(max, feathering)`: `feathering` is now the share
+  of the radius (0..1) over which the edge fades out; it used to fade the whole circle.
+- **`dominantColor()`** groups the colors into clusters (median cut and k-means) and returns the average color of the
+  largest one, instead of the most common bucket of a fine HSL histogram (which returned shifted colors, e.g. `#fb0000`
+  for pure red, and let small flat areas beat large varied ones). `bwThreshold` (still 0-64) now ignores colors whose
+  channels are all below / above the threshold, so dark saturated colors like navy are no longer discarded as black.
+- **Text is laid out with subpixel precision and kerning** (GPOS and kern tables). Glyph advances used to be rounded
+  up to whole pixels, so text gets narrower and more evenly spaced.
+- **`encode()`** writes the smallest lossless PNG color type: a palette for images with up to 256 colors, otherwise
+  greyscale or RGB, with an alpha channel only if needed.
 - **`rotate()`** is documented as counterclockwise, which it always was.
 - **`averageColor()`** weights pixels by their opacity.
 
@@ -39,9 +53,14 @@ supports (including Alpine/musl and bundled serverless functions).
 - HSL conversions truncated instead of rounding, so `lightness(1)`, `saturation(1)` or `hueShift(360)` changed the
   image and repeated adjustments drifted darker; negative hues (e.g. `hueShift(-300)`) produced wrong colors
 - `cover()` could return an image a pixel smaller than requested, `contain()` one a pixel smaller than the box
-- `invert()`, `dominantColor()` and `rotate()` are several times faster
 - Big endian TIFFs weren't recognized, and most TIFFs failed to decode
 - Text alignment was ignored (#37)
+- `invert()`, `dominantColor()` and `rotate()` are several times faster
+
+### New
+
+- Resize modes `Image.RESIZE_BILINEAR` (default), `Image.RESIZE_BICUBIC` and `Image.RESIZE_AREA`, all usable with
+  `resize`, `scale`, `contain`, `fit`, `cover` and `GIF.resize`
 
 ### Codecs
 

@@ -23,6 +23,26 @@ export interface Quantized {
     transparentIndex: number;
 }
 
+interface Clusters {
+    /** mean color per cluster, packed RGB */
+    palette: Float64Array;
+    /** pixel count per cluster */
+    weights: Float64Array;
+}
+
+/**
+ * Finds the color of the largest cluster among the opaque pixels that pass the filter
+ * @return packed RGB, or null if no pixel qualifies
+ */
+export function dominantColor(pixels: Uint8Array, include: (r: number, g: number, b: number) => boolean, clusters = 8): [number, number, number] | null {
+    const { palette, weights } = medianCut(pixels, clusters, 4, include);
+    if (!weights.length) return null;
+
+    let best = 0;
+    for (let i = 1; i < weights.length; i++) if (weights[i] > weights[best]) best = i;
+    return [Math.round(palette[best * 3]), Math.round(palette[best * 3 + 1]), Math.round(palette[best * 3 + 2])];
+}
+
 interface Points {
     /** mean color per channel */
     c: [Float64Array, Float64Array, Float64Array];
@@ -56,7 +76,7 @@ export function quantize(pixels: Uint8Array, width: number, { maxColors = 256, q
     let palette: Uint8Array, indices: Uint8Array;
     if (exact) ({ palette, indices } = exact);
     else {
-        palette = medianCut(pixels, colors, Math.ceil(quality / 25));
+        palette = Uint8Array.from(medianCut(pixels, colors, Math.ceil(quality / 25)).palette, Math.round);
         indices = ditherMap(pixels, width, palette, palette.length / 3);
     }
 
@@ -102,7 +122,7 @@ function exactPalette(pixels: Uint8Array, limit: number): { palette: Uint8Array,
 }
 
 // weighted median cut on a 15-bit histogram, followed by k-means refinement
-function medianCut(pixels: Uint8Array, colors: number, iterations: number): Uint8Array {
+function medianCut(pixels: Uint8Array, colors: number, iterations: number, include?: (r: number, g: number, b: number) => boolean): Clusters {
     const count = new Float64Array(32768);
     const sumR = new Float64Array(32768);
     const sumG = new Float64Array(32768);
@@ -111,6 +131,7 @@ function medianCut(pixels: Uint8Array, colors: number, iterations: number): Uint
     for (let i = 0; i < pixels.length; i += 4) {
         if (pixels[i + 3] < 128) continue;
         const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+        if (include && !include(r, g, b)) continue;
         const bin = (r >> 3) << 10 | (g >> 3) << 5 | b >> 3;
         count[bin]++;
         sumR[bin] += r;
@@ -131,6 +152,7 @@ function medianCut(pixels: Uint8Array, colors: number, iterations: number): Uint
         points.w[p++] = count[i];
     }
 
+    if (!n) return { palette: new Float64Array(0), weights: new Float64Array(0) };
     const boxes = [makeBox(points, Int32Array.from({ length: n }, (_, i) => i))];
     const scratch = new Int32Array(n);
     while (boxes.length < colors) {
@@ -159,6 +181,7 @@ function medianCut(pixels: Uint8Array, colors: number, iterations: number): Uint
     // k-means: reassign every point to its nearest palette color and move colors to their cluster means
     const entries = boxes.length;
     const [pr, pg, pb] = points.c, pw = points.w;
+    const weights = Float64Array.from(boxes, box => box.weight);
     for (let iteration = 0; iteration < iterations; iteration++) {
         const acc = new Float64Array(entries * 4);
         const nearest = nearestSearch(palette, entries);
@@ -172,7 +195,7 @@ function medianCut(pixels: Uint8Array, colors: number, iterations: number): Uint
         }
 
         for (let i = 0; i < entries; i++) {
-            const w = acc[i * 4 + 3];
+            const w = weights[i] = acc[i * 4 + 3];
             if (!w) continue;
             palette[i * 3] = acc[i * 4] / w;
             palette[i * 3 + 1] = acc[i * 4 + 1] / w;
@@ -180,7 +203,7 @@ function medianCut(pixels: Uint8Array, colors: number, iterations: number): Uint
         }
     }
 
-    return Uint8Array.from(palette, Math.round);
+    return { palette, weights };
 }
 
 function makeBox({ c: [r, g, b], w }: Points, members: Int32Array): Box {

@@ -128,8 +128,11 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         assert(target.getPixelAt(1, 1) === 0xffffffff, 'composite and getPixelAt should agree');
 
         const corners = new Image(8, 8).fill(0xffffffff).roundCorners(3);
-        assert([[0, 0], [7, 0], [0, 7], [7, 7]].every(([x, y]) => (corners.getPixelAt(x, y) & 0xff) === 0)
-            && corners.getPixelAt(1, 0) === 0xffffffff && corners.getPixelAt(6, 7) === 0xffffffff, 'roundCorners should be symmetric');
+        const alpha = (x, y) => corners.getPixelAt(x, y) & 0xff;
+        for (let y = 0; y < 8; y++)
+            for (let x = 0; x < 8; x++)
+                assert(alpha(x, y) === alpha(7 - x, y) && alpha(x, y) === alpha(x, 7 - y), `roundCorners should be symmetric (${x}, ${y})`);
+        assert(alpha(0, 0) < 64 && alpha(3, 0) === 255 && alpha(0, 1) > 0 && alpha(0, 1) < 255, 'roundCorners should antialias the arc');
     }
 
     // text layout accepts the pre 3.0 (swapped) option names
@@ -226,5 +229,74 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         let error = null;
         try { await Image.renderSVG(svg); } catch (err) { error = err; }
         assert(error && /entity expansion/.test(error.message), 'SVG: entity expansion should be limited');
+    }
+
+    // resizing filters average instead of skipping pixels, in premultiplied alpha
+    {
+        const checker = new Image(64, 64).fill((x, y) => (x + y) & 1 ? 0xffffffff : 0x000000ff);
+        for (const mode of [Image.RESIZE_BILINEAR, Image.RESIZE_BICUBIC, Image.RESIZE_AREA]) {
+            const small = checker.clone().resize(8, 8, mode);
+            for (const [x, y, color] of small.iterateWithColors())
+                assert(Math.abs((color >>> 24) - 128) <= 2, `${mode}: checkerboard should average to grey at ${x},${y}, got ${color >>> 24}`);
+        }
+
+        // fully transparent pixels must not bleed their (garbage) color
+        const half = new Image(4, 1).fill((x) => x < 2 ? 0xff000000 : 0x0000ffff).resize(2, 1);
+        assert(rgba(half, 0, 0).slice(0, 3).join() === '0,0,255', 'resize: transparent pixels bled into the result: ' + rgba(half, 0, 0));
+
+        const nearest = new Image(4, 1).fill((x) => Image.rgbToColor(x, 0, 0)).resize(2, 1, Image.RESIZE_NEAREST_NEIGHBOR);
+        assert(rgba(nearest, 0, 0)[0] === 1 && rgba(nearest, 1, 0)[0] === 3, 'nearest neighbor should sample pixel centers');
+
+        let threw = false;
+        try { checker.clone().resize(8, 8, 'RESIZE_FOO'); } catch { threw = true; }
+        assert(threw, 'resize should reject unknown modes');
+    }
+
+    // circles are antialiased and symmetric around the pixel center
+    {
+        const circle = new Image(9, 9).drawCircle(4, 4, 3.5, 0xffffffff);
+        const alpha = (x, y) => circle.getPixelAt(x, y) & 0xff;
+        for (let y = 0; y < 9; y++)
+            for (let x = 0; x < 9; x++)
+                assert(alpha(x, y) === alpha(8 - x, y) && alpha(x, y) === alpha(y, x), `drawCircle should be symmetric (${x}, ${y})`);
+        assert(alpha(4, 4) === 255 && alpha(0, 0) === 0 && alpha(1, 2) > 0 && alpha(1, 2) < 255, 'drawCircle should antialias its edge');
+
+        const cropped = new Image(6, 6).fill(0xffffffff).cropCircle();
+        const a = (x, y) => cropped.getPixelAt(x, y) & 0xff;
+        for (let y = 0; y < 6; y++)
+            for (let x = 0; x < 6; x++)
+                assert(a(x, y) === a(5 - x, y) && a(x, y) === a(x, 5 - y), `cropCircle should be symmetric (${x}, ${y})`);
+
+        const feathered = new Image(41, 41).fill(0xffffffff).cropCircle(false, 0.5);
+        const f = x => feathered.getPixelAt(x, 20) & 0xff;
+        assert(f(20) === 255 && f(12) === 255 && f(5) > 0 && f(5) < 255 && f(0) < 32, 'cropCircle feathering should only soften the outer part');
+    }
+
+    // dominant colors are exact and dark saturated colors aren't treated as black
+    {
+        assert(new Image(4, 4).fill(0xff0000ff).dominantColor() === 0xff0000ff, 'dominantColor of pure red');
+        assert(new Image(4, 4).fill(0x336699ff).dominantColor() === 0x336699ff, 'dominantColor of #336699');
+
+        const navy = new Image(10, 10).fill(0x00006eff).drawBox(0, 0, 2, 2, 0xc8c800ff);
+        assert(navy.dominantColor() === 0x00006eff, 'dominantColor: navy should beat a small yellow area');
+        assert(new Image(4, 4).fill(0x000000ff).dominantColor() === 0x000000ff, 'dominantColor: all black falls back to black');
+        assert(new Image(4, 4).dominantColor() === 0x000000ff, 'dominantColor: transparent image');
+    }
+
+    // PNGs use the smallest lossless color type
+    {
+        const cases = {
+            palette: [new Image(20, 10).fill((x) => x & 1 ? 0xff000080 : 0x00ff00ff), 3],
+            greys: [new Image(300, 1).fill((x) => Image.rgbToColor(x & 255, x & 255, x & 255)), 3],
+            greyAlpha: [new Image(300, 3).fill((x, y) => Image.rgbaToColor(x & 255, x & 255, x & 255, 100 + y)), 4],
+            rgb: [new Image(300, 2).fill((x, y) => Image.rgbToColor(x & 255, x >> 8, y)), 2],
+            rgba: [new Image(300, 2).fill((x, y) => Image.rgbaToColor(x & 255, x >> 8, y, 200)), 6]
+        };
+        for (const [name, [image, type]] of Object.entries(cases)) {
+            const encoded = await image.encode();
+            const decoded = await Image.decode(encoded);
+            assert(Buffer.from(decoded.bitmap).equals(Buffer.from(image.bitmap)), `PNG ${name}: roundtrip failed`);
+            assert(encoded[25] === type, `PNG ${name}: expected color type ${type}, got ${encoded[25]}`);
+        }
     }
 })();

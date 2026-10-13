@@ -69,9 +69,9 @@ const panic = message => {
             return -1;
         };
 
-        // metrics match the previous (fontdue based) renderer
+        // line metrics match the previous (fontdue based) renderer, glyphs are placed with subpixel precision
         const single = await render('Hi');
-        if (single.width !== 41 || single.height !== 55) panic(`layout: unexpected size ${single.width}x${single.height}`);
+        if (single.width !== 40 || single.height !== 55) panic(`layout: unexpected size ${single.width}x${single.height}`);
 
         // alignment is relative to the widest line
         const left = await render('Hi\nHello there');
@@ -80,6 +80,10 @@ const panic = message => {
         const row = 30;
         if (!(inkStart(left, row) < inkStart(center, row) && inkStart(center, row) < inkStart(right, row)))
             panic('layout: horizontal alignment has no effect');
+
+        // kerning pulls 'To' together (without it, the pair is wider than both glyphs' ink)
+        const big = text => Image.renderText(font, 200, text);
+        if ((await big('To')).width > (await big('T')).width + (await big('o')).width - 5) panic('layout: kerning has no effect');
 
         // wrapping
         const word = await render('Hello world foo bar', {maxWidth: 160});

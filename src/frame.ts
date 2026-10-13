@@ -99,7 +99,7 @@ export class Frame extends Image {
     /**
      * Resizes the frame, scaling its offsets along with it
      */
-    override resize(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
+    override resize(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
         const originalWidth = this.width;
         const originalHeight = this.height;
 
