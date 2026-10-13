@@ -80,25 +80,25 @@ class Image {
     }
 
     /**
-     * Yields an [x, y] array for every pixel in the image
+     * Yields an [x, y] array for every pixel in the image (0-based)
      * @yields {number[]} The coordinates of the pixel ([x, y])
      * @returns {void}
      */
     *[Symbol.iterator]() {
-        for (let y = 1; y <= this.height; y++)
-            for (let x = 1; x <= this.width; x++)
+        for (let y = 0; y < this.height; y++)
+            for (let x = 0; x < this.width; x++)
                 yield [x, y];
     }
 
     /**
-     * Yields an [x, y, color] array for every pixel in the image
+     * Yields an [x, y, color] array for every pixel in the image (0-based)
      * @yields {number[]} The coordinates and color of the pixel ([x, y, color])
      */
     *iterateWithColors() {
         const view = new DataView(this.bitmap.buffer, this.bitmap.byteOffset, this.bitmap.byteLength);
         let offset = 0;
-        for (let y = 1; y <= this.height; y++)
-            for (let x = 1; x <= this.width; x++, offset += 4)
+        for (let y = 0; y < this.height; y++)
+            for (let x = 0; x < this.width; x++, offset += 4)
                 yield [x, y, view.getUint32(offset, false)];
     }
 
@@ -233,30 +233,34 @@ class Image {
     }
 
     /**
-     * Gets the pixel color at the specified position
+     * Gets the pixel color at the specified position (0-based)
      * @param {number} x
      * @param {number} y
      * @returns {number} The color value
      */
     getPixelAt(x, y) {
+        x = ~~x;
+        y = ~~y;
         this.__check_boundaries__(x, y);
-        return this.__view__.getUint32(((~~y - 1) * this.width + (~~x - 1)) * 4, false);
+        return this.__view__.getUint32((y * this.width + x) * 4, false);
     }
 
     /**
-     * Gets the pixel color at the specified position
+     * Gets a view of the RGBA components of the pixel at the specified position (0-based)
      * @param {number} x
      * @param {number} y
      * @returns {Uint8ClampedArray} The RGBA value
      */
     getRGBAAt(x, y) {
+        x = ~~x;
+        y = ~~y;
         this.__check_boundaries__(x, y);
-        const idx = ((~~y - 1) * this.width + (~~x - 1)) * 4;
+        const idx = (y * this.width + x) * 4;
         return this.bitmap.subarray(idx, idx + 4);
     }
 
     /**
-     * Sets the pixel color for the specified position
+     * Sets the pixel color for the specified position (0-based)
      * @param {number} x
      * @param {number} y
      * @param {number} pixelColor
@@ -276,7 +280,7 @@ class Image {
      * @param {number} pixelColor
      */
     __set_pixel__(x, y, pixelColor) {
-        this.__view__.setUint32(((y - 1) * this.width + (x - 1)) * 4, pixelColor, false);
+        this.__view__.setUint32((y * this.width + x) * 4, pixelColor, false);
     }
 
     /**
@@ -287,14 +291,14 @@ class Image {
     __check_boundaries__(x, y) {
         if (isNaN(x)) throw new TypeError(`Invalid pixel coordinates (x=${x})`);
         if (isNaN(y)) throw new TypeError(`Invalid pixel coordinates (y=${y})`);
-        if (x < 1)
-            throw new RangeError(`${Image.__out_of_bounds__} (x=${x})<1`);
-        if (x > this.width)
-            throw new RangeError(`${Image.__out_of_bounds__} (x=${x})>(width=${this.width})`);
-        if (y < 1)
-            throw new RangeError(`${Image.__out_of_bounds__} (y=${y})<1`);
-        if (y > this.height)
-            throw new RangeError(`${Image.__out_of_bounds__} (y=${y})>(height=${this.height})`);
+        if (x < 0)
+            throw new RangeError(`${Image.__out_of_bounds__} (x=${x})<0`);
+        if (x >= this.width)
+            throw new RangeError(`${Image.__out_of_bounds__} (x=${x})>=(width=${this.width})`);
+        if (y < 0)
+            throw new RangeError(`${Image.__out_of_bounds__} (y=${y})<0`);
+        if (y >= this.height)
+            throw new RangeError(`${Image.__out_of_bounds__} (y=${y})>=(height=${this.height})`);
     }
 
     /**
@@ -306,8 +310,8 @@ class Image {
 
     /**
      * @callback colorFunction
-     * @param {number} x
-     * @param {number} y
+     * @param {number} x 0-based x coordinate
+     * @param {number} y 0-based y coordinate
      * @returns {number} pixel color
      */
 
@@ -321,8 +325,8 @@ class Image {
 
         if (typeof color === 'function') {
             let offset = 0;
-            for (let y = 1; y <= this.height; y++)
-                for (let x = 1; x <= this.width; x++, offset += 4)
+            for (let y = 0; y < this.height; y++)
+                for (let x = 0; x < this.width; x++, offset += 4)
                     view.setUint32(offset, color(x, y), false);
         } else {
             if (!this.bitmap.length) return this;
@@ -518,33 +522,25 @@ class Image {
     }
 
     /**
-     * Draws a box at the specified coordinates
+     * Draws a box at the specified coordinates (0-based), clipped to the image
      * @param {number} x The x offset
      * @param {number} y The y offset
      * @param {number} width The box width
      * @param {number} height The box height
-     * @param {number|colorFunction} color The color to fill the box in with
+     * @param {number|colorFunction} color The color to fill the box in with, a function gets coordinates relative to the box
      * @returns {Image}
      */
     drawBox(x, y, width, height, color) {
-        x = ~~(x - 1);
-        y = ~~(y - 1);
+        x = ~~x;
+        y = ~~y;
         width = ~~width;
         height = ~~height;
 
-        if (typeof color === 'function') {
-            for (let tY = 1; tY <= height; tY++) {
-                for (let tX = 1; tX <= width; tX++) {
-                    const nX = tX + x;
-                    const nY = tY + y;
-                    if (Math.min(nX, nY) < 1 || nX > this.width || nY > this.height)
-                        continue;
+        if (typeof color !== 'function') return this.__fast_box__(x, y, width, height, color);
 
-                    const tC = color(tX, tY);
-                    this.__set_pixel__(nX, nY, tC);
-                }
-            }
-        } else return this.__fast_box__(x, y, width, height, color);
+        for (let tY = Math.max(0, -y); tY < height && tY + y < this.height; tY++)
+            for (let tX = Math.max(0, -x); tX < width && tX + x < this.width; tX++)
+                this.__set_pixel__(tX + x, tY + y, color(tX, tY));
 
         return this;
     }
@@ -575,17 +571,19 @@ class Image {
     }
 
     /**
-     * Draws a circle at the specified coordinates with the specified radius
+     * Draws a circle around the specified center (0-based) with the specified radius
      * @param {number} x The center x position
      * @param {number} y The center y position
      * @param {number} radius The circles radius
-     * @param {number|colorFunction} color
+     * @param {number|colorFunction} color The color, a function gets coordinates relative to the circle's bounding box
      * @returns {Image}
      */
     drawCircle(x, y, radius, color) {
+        x = ~~x;
+        y = ~~y;
         const radSquared = radius ** 2;
-        for (let currentY = Math.max(1, y - radius); currentY <= Math.min(y + radius, this.height); currentY++) {
-            for (let currentX = Math.max(1, x - radius); currentX <= Math.min(x + radius, this.width); currentX++) {
+        for (let currentY = Math.max(0, Math.ceil(y - radius)); currentY < Math.min(y + radius, this.height); currentY++) {
+            for (let currentX = Math.max(0, Math.ceil(x - radius)); currentX < Math.min(x + radius, this.width); currentX++) {
                 if ((currentX - x) ** 2 + (currentY - y) ** 2 < radSquared)
                     this.__set_pixel__(currentX, currentY, typeof color === 'function' ? color(currentX - x + radius, currentY - y + radius) : color);
             }
@@ -1050,36 +1048,17 @@ class Image {
      * @return {Image}
      */
     roundCorners(radius = Math.min(this.width, this.height) / 4) {
-        const radSquared = radius ** 2;
-        for (let x = 1; x <= radius; x++) {
-            const xRad = (x - radius) ** 2;
-            for (let y = 1; y <= radius; y++) {
-                if (xRad + (y - radius) ** 2 > radSquared)
-                    this.bitmap[((y - 1) * this.width + x - 1) * 4 + 3] = 0;
-            }
-        }
+        radius = Math.min(radius, this.width / 2, this.height / 2);
+        const size = Math.ceil(radius);
 
-        for (let x = 1; x <= radius; x++) {
-            const xRad = (x - radius) ** 2;
-            for (let y = this.height - radius; y <= this.height; y++) {
-                if (xRad + ((this.height - y) - radius) ** 2 > radSquared)
-                    this.bitmap[((y - 1) * this.width + x - 1) * 4 + 3] = 0;
-            }
-        }
+        // pixels whose center lies outside the corner circle become transparent
+        for (let y = 0; y < size; y++) {
+            for (let x = 0; x < size; x++) {
+                const dx = radius - (x + 0.5), dy = radius - (y + 0.5);
+                if (dx <= 0 || dy <= 0 || dx * dx + dy * dy <= radius * radius) continue;
 
-        for (let x = this.width - radius; x <= this.width; x++) {
-            const xRad = ((this.width - x) - radius) ** 2;
-            for (let y = 1; y <= radius; y++) {
-                if (xRad + (y - radius) ** 2 > radSquared)
-                    this.bitmap[((y - 1) * this.width + x - 1) * 4 + 3] = 0;
-            }
-        }
-
-        for (let x = this.width - radius; x <= this.width; x++) {
-            const xRad = ((this.width - x) - radius) ** 2;
-            for (let y = this.height - radius; y <= this.height; y++) {
-                if (xRad + ((this.height - y) - radius) ** 2 > radSquared)
-                    this.bitmap[((y - 1) * this.width + x - 1) * 4 + 3] = 0;
+                for (const [px, py] of [[x, y], [this.width - 1 - x, y], [x, this.height - 1 - y], [this.width - 1 - x, this.height - 1 - y]])
+                    this.bitmap[(py * this.width + px) * 4 + 3] = 0;
             }
         }
 

@@ -1,9 +1,7 @@
 /**
  * Colors are 32-bit RGBA integers (`0xRRGGBBAA`), e.g. `0xff0000ff` for opaque red.
  *
- * Coordinates: pixel access ({@link Image.getPixelAt}, {@link Image.setPixelAt}, {@link Image.getRGBAAt}),
- * {@link Image.drawBox}, {@link Image.drawCircle}, iteration and {@link ColorFunction}s use 1-based coordinates,
- * {@link Image.crop} and {@link Image.composite} use 0-based offsets.
+ * All coordinates are 0-based: `(0, 0)` is the top left pixel.
  */
 export class Image {
   /** The image's RGBA pixel data */
@@ -18,10 +16,10 @@ export class Image {
 
   get height(): number;
 
-  /** Yields the 1-based `[x, y]` coordinates of every pixel. */
+  /** Yields the `[x, y]` coordinates of every pixel. */
   [Symbol.iterator](): Generator<[x: number, y: number], void, unknown>;
 
-  /** Yields `[x, y, color]` for every pixel (1-based coordinates). */
+  /** Yields `[x, y, color]` for every pixel. */
   iterateWithColors(): Generator<[x: number, y: number, color: number], void, unknown>;
 
   /** Converts RGBA components (`0`-`255`) to a color. */
@@ -43,13 +41,13 @@ export class Image {
 
   static colorToRGB(color: number): [r: number, g: number, b: number];
 
-  /** Gets the color of a pixel (1-based coordinates). */
+  /** Gets the color of a pixel. */
   getPixelAt(x: number, y: number): number;
 
-  /** Gets a view of a pixel's RGBA components (1-based coordinates). */
+  /** Gets a view of a pixel's RGBA components. */
   getRGBAAt(x: number, y: number): Uint8ClampedArray;
 
-  /** Sets the color of a pixel (1-based coordinates). */
+  /** Sets the color of a pixel. */
   setPixelAt(x: number, y: number, pixelColor: number): this;
 
   /**
@@ -115,18 +113,19 @@ export class Image {
   cover(width: number, height: number, mode?: ResizeMode): this;
 
   /**
-   * Crops the image to the given region (0-based offsets).
+   * Crops the image to the given region.
    * The region is clipped to the image, throws if it doesn't overlap it.
    */
   crop(x: number, y: number, width: number, height: number): this;
 
   /**
-   * Draws a box at the specified coordinates (1-based), clipped to the image.
+   * Draws a box at the specified coordinates, clipped to the image.
+   * A color function gets coordinates relative to the box.
    */
   drawBox(x: number, y: number, width: number, height: number, color: number | ColorFunction): this;
 
   /**
-   * Draws a circle around the specified center (1-based) with the specified radius.
+   * Draws a circle around the specified center with the specified radius.
    */
   drawCircle(x: number, y: number, radius: number, color: number | ColorFunction): this;
 
@@ -195,7 +194,7 @@ export class Image {
 
   /**
    * Composites (overlays) the source onto this image at the specified
-   * 0-based offset, using source-over alpha blending.
+   * offset, using source-over alpha blending.
    */
   composite(source: Image, x?: number, y?: number): this;
 
@@ -522,7 +521,7 @@ export type PNGMetadata = {
   comment?: string;
 };
 
-/** Called with 1-based coordinates, returns a color. */
+/** Called with the pixel's coordinates, returns a color. */
 export type ColorFunction = (x: number, y: number) => number;
 
 export type ResizeMode = "RESIZE_NEAREST_NEIGHBOR";

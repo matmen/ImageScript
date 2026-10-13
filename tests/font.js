@@ -64,7 +64,7 @@ const panic = message => {
         const render = (text, options) => Image.renderText(font, 40, text, 0xffffffff, new TextLayout(options));
         // first column with ink in the given row
         const inkStart = (image, y) => {
-            for (let x = 1; x <= image.width; x++)
+            for (let x = 0; x < image.width; x++)
                 if (image.getPixelAt(x, y) & 0xff) return x;
             return -1;
         };
