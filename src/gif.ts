@@ -116,7 +116,7 @@ export class GIF extends Array<Frame> {
      * Resizes the GIF to the given dimensions, scaling every frame and its offsets proportionally.
      * Use {@link Image.RESIZE_AUTO} as either width or height to automatically preserve the aspect ratio.
      */
-    resize(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
+    resize(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
         const originalWidth = this.width, originalHeight = this.height;
         if (width === Image.RESIZE_AUTO && height === Image.RESIZE_AUTO) throw new Error('RESIZE_AUTO can only be used for either width or height, not for both');
         if (width === Image.RESIZE_AUTO) width = originalWidth / originalHeight * height;

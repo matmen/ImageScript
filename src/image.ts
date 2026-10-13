@@ -1,12 +1,14 @@
 import * as png from './codecs/png.ts';
 import * as jpeg from './codecs/jpeg.ts';
 import * as tiff from './codecs/tiff.ts';
+import * as quantize from './codecs/quantize.ts';
 import * as textRenderer from './render/text.ts';
 import * as svgRenderer from './render/svg.ts';
 import { BinaryData, view } from './util/mem.ts';
 import { ImageType } from './image-type.ts';
 import { TextLayout } from './text-layout.ts';
 import { VERSION } from './version.ts';
+import { resample, BOX, TRIANGLE, CUBIC } from './util/resample.ts';
 
 /**
  * Represents an image; provides utility functions
@@ -17,7 +19,7 @@ export type Color = number;
 /** Called with a pixel's (0-based) coordinates, returns its color */
 export type ColorFunction = (x: number, y: number) => Color;
 
-export type ResizeMode = 'RESIZE_NEAREST_NEIGHBOR';
+export type ResizeMode = 'RESIZE_NEAREST_NEIGHBOR' | 'RESIZE_BILINEAR' | 'RESIZE_BICUBIC' | 'RESIZE_AREA';
 
 export type SVGScaleMode = 1 | 2 | 3;
 
@@ -371,6 +373,27 @@ export class Image {
     }
 
     /**
+     * Bilinear resizing (the default). When shrinking, the filter widens with the scale factor, so every source pixel contributes
+     */
+    static get RESIZE_BILINEAR(): 'RESIZE_BILINEAR' {
+        return 'RESIZE_BILINEAR';
+    }
+
+    /**
+     * Bicubic (Catmull-Rom) resizing, sharper than bilinear, especially when enlarging
+     */
+    static get RESIZE_BICUBIC(): 'RESIZE_BICUBIC' {
+        return 'RESIZE_BICUBIC';
+    }
+
+    /**
+     * Area averaging (box filter): every output pixel is the average of the source pixels it covers. Meant for shrinking
+     */
+    static get RESIZE_AREA(): 'RESIZE_AREA' {
+        return 'RESIZE_AREA';
+    }
+
+    /**
      * Used for automatically preserving an images aspect ratio when resizing.
      */
     static get RESIZE_AUTO(): -1 {
@@ -380,16 +403,16 @@ export class Image {
     /**
      * Resizes the image by the given factor
      * @param factor The factor to resize the image with
-     * @param [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @param [mode=Image.RESIZE_BILINEAR] The resizing mode to use
      */
-    scale(factor: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
+    scale(factor: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
         const image = this.__scale__(factor, mode);
         return this.__apply__(image);
     }
 
     /** @private */
     /** @internal */
-    protected __scale__(factor: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): Image {
+    protected __scale__(factor: number, mode: ResizeMode = Image.RESIZE_BILINEAR): Image {
         if (factor === 1) return this;
         return this.__resize__(this.width * factor, this.height * factor, mode);
     }
@@ -399,10 +422,10 @@ export class Image {
      * Use {@link Image.RESIZE_AUTO} as either width or height to automatically preserve the aspect ratio.
      * @param width The new width
      * @param height The new height
-     * @param [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @param [mode=Image.RESIZE_BILINEAR] The resizing mode to use
      * @returns The resized image
      */
-    resize(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
+    resize(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
         const image = this.__resize__(width, height, mode);
         return this.__apply__(image);
     }
@@ -412,10 +435,10 @@ export class Image {
      * Can return an image with one axis smaller than the given bounding box.
      * @param width The width of the bounding box
      * @param height The height of the bounding box
-     * @param [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @param [mode=Image.RESIZE_BILINEAR] The resizing mode to use
      * @returns The resized image
      */
-    contain(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
+    contain(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
         width = Math.floor(width);
         height = Math.floor(height);
         // round instead of flooring the scaled size, so the limiting axis matches the box exactly
@@ -428,10 +451,10 @@ export class Image {
      * Always returns the exact dimensions of the bounding box.
      * @param width The width of the bounding box
      * @param height The height of the bounding box
-     * @param [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @param [mode=Image.RESIZE_BILINEAR] The resizing mode to use
      * @returns The resized image
      */
-    fit(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
+    fit(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
         const result = new Image(width, height);
         this.contain(width, height, mode);
         result.composite(this, (width - this.width) / 2, (height - this.height) / 2);
@@ -443,10 +466,10 @@ export class Image {
      * Always returns the exact dimensions of the bounding box.
      * @param width The width of the bounding box
      * @param height The height of the bounding box
-     * @param [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @param [mode=Image.RESIZE_BILINEAR] The resizing mode to use
      * @returns The resized image
      */
-    cover(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
+    cover(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
         width = Math.floor(width);
         height = Math.floor(height);
         const scale = Math.max(width / this.width, height / this.height);
@@ -456,10 +479,10 @@ export class Image {
 
     /** @private */
     /** @internal */
-    protected __resize__(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): Image {
+    protected __resize__(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): Image {
         if (width === Image.RESIZE_AUTO && height === Image.RESIZE_AUTO) throw new Error('RESIZE_AUTO can only be used for either width or height, not for both');
-        else if (width === Image.RESIZE_AUTO) width = this.width / this.height * height;
-        else if (height === Image.RESIZE_AUTO) height = this.height / this.width * width;
+        else if (width === Image.RESIZE_AUTO) width = Math.max(1, Math.round(this.width / this.height * Math.floor(height)));
+        else if (height === Image.RESIZE_AUTO) height = Math.max(1, Math.round(this.height / this.width * Math.floor(width)));
 
         width = Math.floor(width);
         height = Math.floor(height);
@@ -468,11 +491,13 @@ export class Image {
         if (height < 1)
             throw new RangeError('Image has to be at least 1 pixel high');
 
-        let image: Image;
-        if (mode === Image.RESIZE_NEAREST_NEIGHBOR)
-            image = this.__resize_nearest_neighbor__(width, height);
-        else throw new Error('Invalid resize mode');
+        if (mode === Image.RESIZE_NEAREST_NEIGHBOR) return this.__resize_nearest_neighbor__(width, height);
 
+        const filter = mode === Image.RESIZE_BILINEAR ? TRIANGLE : mode === Image.RESIZE_BICUBIC ? CUBIC : mode === Image.RESIZE_AREA ? BOX : null;
+        if (!filter) throw new Error('Invalid resize mode');
+
+        const image = new Image(width, height);
+        resample(this.bitmap, this.width, this.height, width, height, filter, image.bitmap);
         return image;
     }
 
@@ -487,10 +512,11 @@ export class Image {
         const src = this.__u32__;
         const dst = image.__u32__;
 
+        // sample at the centers of the output pixels
         for (let y = 0; y < height; y++) {
-            const row = this.width * (y * (this.height / height) | 0);
+            const row = this.width * ((y + 0.5) * (this.height / height) | 0);
             for (let x = 0; x < width; x++)
-                dst[y * width + x] = src[row + (x * (this.width / width) | 0)];
+                dst[y * width + x] = src[row + ((x + 0.5) * (this.width / width) | 0)];
         }
 
         return image;
@@ -590,20 +616,26 @@ export class Image {
     }
 
     /**
-     * Draws a circle around the specified center (0-based) with the specified radius
+     * Draws an antialiased circle around the center of the specified pixel (0-based)
      * @param x The center x position
      * @param y The center y position
-     * @param radius The circles radius
+     * @param radius The circles radius in pixels
      * @param color The color, a function gets coordinates relative to the circle's bounding box
      */
     drawCircle(x: number, y: number, radius: number, color: Color | ColorFunction): this {
         x = ~~x;
         y = ~~y;
-        const radSquared = radius ** 2;
-        for (let currentY = Math.max(0, Math.ceil(y - radius)); currentY < Math.min(y + radius, this.height); currentY++) {
-            for (let currentX = Math.max(0, Math.ceil(x - radius)); currentX < Math.min(x + radius, this.width); currentX++) {
-                if ((currentX - x) ** 2 + (currentY - y) ** 2 < radSquared)
-                    this.__set_pixel__(currentX, currentY, typeof color === 'function' ? color(currentX - x + radius, currentY - y + radius) : color);
+        // the circle is centered on the pixel's center, its edge is antialiased
+        const cx = x + 0.5, cy = y + 0.5;
+
+        for (let py = Math.max(0, Math.floor(cy - radius)); py < Math.min(this.height, Math.ceil(cy + radius)); py++) {
+            for (let px = Math.max(0, Math.floor(cx - radius)); px < Math.min(this.width, Math.ceil(cx + radius)); px++) {
+                const coverage = circleCoverage(px, py, cx, cy, radius);
+                if (coverage <= 0) continue;
+
+                const value = typeof color === 'function' ? color(px - x + radius, py - y + radius) : color;
+                if (coverage >= 1) this.__set_pixel__(px, py, value);
+                else this.__blend_pixel__(px, py, value, coverage);
             }
         }
 
@@ -611,23 +643,46 @@ export class Image {
     }
 
     /**
-     * Crops the image into a circle
+     * Moves a pixel towards a color by the given amount (with premultiplied alpha)
+     * @internal
+     */
+    protected __blend_pixel__(x: number, y: number, color: Color, amount: number): void {
+        const i = (y * this.width + x) * 4, b = this.bitmap;
+        const sa = (color & 0xff) / 255 * amount, da = b[i + 3] / 255 * (1 - amount);
+        const a = sa + da;
+        if (a <= 0) {
+            b[i] = b[i + 1] = b[i + 2] = b[i + 3] = 0;
+            return;
+        }
+
+        b[i] = ((color >>> 24) * sa + b[i] * da) / a;
+        b[i + 1] = ((color >> 16 & 0xff) * sa + b[i + 1] * da) / a;
+        b[i + 2] = ((color >> 8 & 0xff) * sa + b[i + 2] * da) / a;
+        b[i + 3] = a * 255;
+    }
+
+    /**
+     * Crops the image into a circle with an antialiased edge
      * @param [max=false] Whether to use the larger dimension for the size
-     * @param [feathering=0] How much feathering to apply to the edges
+     * @param [feathering=0] Share of the radius (0..1) over which the edge fades out
      */
     cropCircle(max = false, feathering = 0): this {
         const radius = (max ? Math.max : Math.min)(this.width, this.height) / 2;
-        const radiusSquared = radius ** 2;
-        const centerX = this.width / 2;
-        const centerY = this.height / 2;
-        const featheringRoot = Math.sqrt(feathering);
+        const cx = this.width / 2, cy = this.height / 2;
+        // width of the soft edge, at least the one pixel of antialiasing
+        const band = Math.min(1, Math.max(0, feathering)) * radius;
 
         for (let y = 0; y < this.height; y++) {
             for (let x = 0; x < this.width; x++) {
-                const distance = (y - centerY) ** 2 + (x - centerX) ** 2;
                 const alpha = 4 * (y * this.width + x) + 3;
-                if (distance > radiusSquared) this.bitmap[alpha] = 0;
-                else if (feathering) this.bitmap[alpha] *= Math.max(0, Math.min(1, 1 - distance / radiusSquared * featheringRoot));
+                const dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+                // pixels well inside keep their alpha
+                if (dx * dx + dy * dy <= (radius - Math.max(band, 1)) ** 2) continue;
+
+                const factor = band > 1
+                    ? Math.min(1, Math.max(0, (radius - Math.hypot(dx, dy)) / band))
+                    : circleCoverage(x, y, cx, cy, radius);
+                if (factor < 1) this.bitmap[alpha] *= factor;
             }
         }
 
@@ -847,45 +902,23 @@ export class Image {
     }
 
     /**
-     * Gets the images dominant color
-     * @param [ignoreBlack=true] Whether to ignore dark colors below the threshold
-     * @param [ignoreWhite=true] Whether to ignore light colors above the threshold
-     * @param [bwThreshold=0xf] The black/white threshold (0-64)
-     * @return The images dominant color (fully transparent pixels are ignored)
+     * Gets the images dominant color: the colors are grouped into a few clusters (median cut and k-means),
+     * the average color of the largest one is returned
+     * @param [ignoreBlack=true] Whether to ignore dark colors (all channels below the threshold)
+     * @param [ignoreWhite=true] Whether to ignore light colors (all channels above 255 minus the threshold)
+     * @param [bwThreshold=0xf] The black/white threshold (0-64, in steps of 4 channel values)
+     * @return The images dominant color (fully opaque); mostly transparent pixels are ignored.
+     *     If every pixel is ignored as black or white, the filter is dropped
      */
     dominantColor(ignoreBlack = true, ignoreWhite = true, bwThreshold = 0xf): Color {
-        const colorCounts = new Uint32Array(0x40000);
-        for (let i = 0; i < this.bitmap.length; i += 4) {
-            if (this.bitmap[i + 3] === 0) continue;
-            const [hf, sf, lf] = Image.rgbaToHSLA(this.bitmap[i], this.bitmap[i + 1], this.bitmap[i + 2], 0xff);
-            const h = ~~(hf * 0x3f), s = ~~(sf * 0x3f), l = ~~(lf * 0x3f);
-            if (ignoreBlack && l < bwThreshold) continue;
-            if (ignoreWhite && l > 0x3f - bwThreshold) continue;
-            const key = h << 12 | s << 6 | l;
-            colorCounts[key]++;
-        }
+        const threshold = Math.min(64, Math.max(0, bwThreshold)) * 4;
+        const pixels = this.__bytes__();
 
-        // ties go to the highest key
-        let maxColorCount = 0;
-        let mostProminentValue = 0;
-        for (let i = 0; i < colorCounts.length; i++) {
-            if (!colorCounts[i] || colorCounts[i] < maxColorCount) continue;
-            maxColorCount = colorCounts[i];
-            mostProminentValue = i;
-        }
+        const color = quantize.dominantColor(pixels, (r, g, b) =>
+            !(ignoreBlack && Math.max(r, g, b) < threshold) && !(ignoreWhite && Math.min(r, g, b) > 255 - threshold))
+            || quantize.dominantColor(pixels, () => true);
 
-        // nothing left after ignoring dark/light colors: relax the threshold
-        if (maxColorCount === 0) {
-            if (bwThreshold > 0 && (ignoreBlack || ignoreWhite))
-                return this.dominantColor(ignoreBlack, ignoreWhite, bwThreshold - 1);
-            return Image.rgbaToColor(0, 0, 0, 0xff);
-        }
-
-        const h = (mostProminentValue >>> 12) & 0x3f;
-        const s = (mostProminentValue >>> 6) & 0x3f;
-        const l = mostProminentValue & 0x3f;
-
-        return Image.hslaToColor(h / 0x3f, s / 0x3f, l / 0x3f, 1);
+        return color ? Image.rgbToColor(...color) : Image.rgbaToColor(0, 0, 0, 0xff);
     }
 
     /**
@@ -1057,21 +1090,22 @@ export class Image {
     }
 
     /**
-     * Rounds the images corners
+     * Rounds the images corners, with antialiased edges
      * @param [radius=min(width,height)/4] The radius of the corners
      */
     roundCorners(radius: number = Math.min(this.width, this.height) / 4): this {
-        radius = Math.min(radius, this.width / 2, this.height / 2);
+        radius = Math.max(0, Math.min(radius, this.width / 2, this.height / 2));
         const size = Math.ceil(radius);
 
-        // pixels whose center lies outside the corner circle become transparent
+        // coverage of the top left corner, mirrored onto the others
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
-                const dx = radius - (x + 0.5), dy = radius - (y + 0.5);
-                if (dx <= 0 || dy <= 0 || dx * dx + dy * dy <= radius * radius) continue;
+                const coverage = pixelCoverage(x, y, (sx, sy) => sx >= radius || sy >= radius || (sx - radius) ** 2 + (sy - radius) ** 2 <= radius * radius);
+                if (coverage >= 1) continue;
 
-                for (const [px, py] of [[x, y], [this.width - 1 - x, y], [x, this.height - 1 - y], [this.width - 1 - x, this.height - 1 - y]])
-                    this.bitmap[(py * this.width + px) * 4 + 3] = 0;
+                // corners can share the middle row/column of odd sized images
+                const corners = new Set([[x, y], [this.width - 1 - x, y], [x, this.height - 1 - y], [this.width - 1 - x, this.height - 1 - y]].map(([px, py]) => py * this.width + px));
+                for (const pixel of corners) this.bitmap[pixel * 4 + 3] *= coverage;
             }
         }
 
@@ -1178,23 +1212,17 @@ export class Image {
         comment
     } = meta || {};
 
-        return png.encode(this.__bytes__(), {
-            width: this.width,
-            height: this.height,
-            level,
-            channels: 4,
-            text: {
-                Title: title,
-                Author: author,
-                Description: description,
-                Copyright: copyright,
-                'Creation Time': new Date(creationTime === undefined ? Date.now() : creationTime).toUTCString(),
-                Software: software === undefined ? `github.com/matmen/ImageScript v${VERSION}` : software,
-                Disclaimer: disclaimer,
-                Warning: warning,
-                Source: source,
-                Comment: comment
-            }
+        return png.encodeRGBA(this.__bytes__(), this.width, this.height, level, {
+            Title: title,
+            Author: author,
+            Description: description,
+            Copyright: copyright,
+            'Creation Time': new Date(creationTime === undefined ? Date.now() : creationTime).toUTCString(),
+            Software: software === undefined ? `github.com/matmen/ImageScript v${VERSION}` : software,
+            Disclaimer: disclaimer,
+            Warning: warning,
+            Source: source,
+            Comment: comment
         });
     }
 
@@ -1315,3 +1343,22 @@ export class Image {
 
 }
 
+// samples per pixel axis for antialiased edges
+const SUBSAMPLES = 4;
+
+// share of the pixel's area for which inside(x, y) holds, estimated on a regular grid
+function pixelCoverage(px: number, py: number, inside: (x: number, y: number) => boolean): number {
+    let count = 0;
+    for (let j = 0; j < SUBSAMPLES; j++)
+        for (let i = 0; i < SUBSAMPLES; i++)
+            if (inside(px + (i + 0.5) / SUBSAMPLES, py + (j + 0.5) / SUBSAMPLES)) count++;
+    return count / (SUBSAMPLES * SUBSAMPLES);
+}
+
+// share of the pixel covered by a circle, only edge pixels are sampled
+function circleCoverage(px: number, py: number, cx: number, cy: number, radius: number): number {
+    const d = Math.hypot(px + 0.5 - cx, py + 0.5 - cy);
+    if (d <= radius - Math.SQRT1_2) return 1;
+    if (d >= radius + Math.SQRT1_2) return 0;
+    return pixelCoverage(px, py, (x, y) => (x - cx) ** 2 + (y - cy) ** 2 <= radius * radius);
+}

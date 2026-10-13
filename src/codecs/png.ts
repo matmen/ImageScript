@@ -9,7 +9,6 @@ const PLTE = 0x504c5445;
 const tRNS = 0x74524e53;
 const IDAT = 0x49444154;
 const IEND = 0x49454e44;
-const IEND_CRC = crc32(Uint8Array.of(73, 69, 78, 68));
 
 const COLOR_TYPE_CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
 const CHANNELS_TO_COLOR_TYPE: Record<number, number> = { 1: 0, 2: 4, 3: 2, 4: 6 };
@@ -23,6 +22,10 @@ export interface EncodeOptions {
     channels: number;
     depth?: number;
     level?: number;
+    /** packed RGB palette, makes the data palette indices (1 channel) */
+    palette?: Uint8Array;
+    /** alpha per palette entry */
+    transparency?: Uint8Array;
 }
 
 export interface Decoded {
@@ -40,72 +43,123 @@ const ADAM7 = [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2,
 
 /**
  * Encodes raw pixel data into a PNG
- * @param {Uint8Array} data Raw pixel data (8 bits per channel)
- * @param {{text?: Object<string, string>, width: number, height: number, channels: number, depth?: number, level?: number}} options
- * @return {Uint8Array}
+ * @param data Raw pixel data, rows packed MSB first for depths below 8
  */
-export function encode(data: Uint8Array, { text, width, height, channels, depth = 8, level = 0 }: EncodeOptions): Uint8Array {
-    let offset = 0;
-    let tmp_offset = 0;
-    const row_length = width * channels;
-    const tmp = new Uint8Array(height + data.length);
+export function encode(data: Uint8Array, { text, width, height, channels, depth = 8, level = 0, palette, transparency }: EncodeOptions): Uint8Array {
+    // prefix every row with filter type 0 (none)
+    const rowBytes = Math.ceil(width * channels * depth / 8);
+    const filtered = new Uint8Array(height * (rowBytes + 1));
+    for (let y = 0; y < height; y++) filtered.set(data.subarray(y * rowBytes, (y + 1) * rowBytes), y * (rowBytes + 1) + 1);
 
-    while (offset < data.length) {
-        tmp[tmp_offset++] = 0;
-        tmp.set(data.subarray(offset, offset += row_length), tmp_offset);
-        tmp_offset += row_length;
+    const header = new Uint8Array(13);
+    const view = new DataView(header.buffer);
+    view.setUint32(0, width);
+    view.setUint32(4, height);
+    header[8] = depth;
+    header[9] = palette ? 3 : CHANNELS_TO_COLOR_TYPE[channels];
+
+    const chunks = [chunk(IHDR, header)];
+    if (palette) chunks.push(chunk(PLTE, palette));
+    if (transparency) chunks.push(chunk(tRNS, transparency));
+    chunks.push(chunk(IDAT, compress(filtered, level)));
+
+    for (const key in text) {
+        const value = text[key];
+        if (!value) continue;
+        chunks.push(chunk(0x74455874, concat([utf8(key), [0], utf8(value)])));
     }
 
-    let textChunks: Uint8Array | null = null;
-    if (text) {
-        const chunks: Uint8Array[] = [];
+    chunks.push(chunk(IEND, new Uint8Array(0)));
+    return concat([HEAD, ...chunks]);
+}
 
-        for (const key in text) {
-            const value = text[key];
-            if (!value) continue;
+function chunk(type: number, body: Uint8Array): Uint8Array {
+    const out = new Uint8Array(body.length + 12);
+    const view = new DataView(out.buffer);
+    view.setUint32(0, body.length);
+    view.setUint32(4, type);
+    out.set(body, 8);
+    view.setUint32(body.length + 8, crc32(out.subarray(4, body.length + 8)));
+    return out;
+}
 
-            const kb = utf8(key);
-            const tb = utf8(value);
-            const chunk = new Uint8Array(1 + 12 + kb.length + tb.length);
-            const view = new DataView(chunk.buffer);
+/**
+ * Encodes 8-bit RGBA pixels into a PNG with the smallest lossless color type:
+ * a palette for up to 256 colors, otherwise greyscale or RGB, with alpha only if a pixel isn't opaque
+ */
+export function encodeRGBA(rgba: Uint8Array, width: number, height: number, level: number, text?: EncodeOptions['text']): Uint8Array {
+    const count = width * height;
+    if (rgba.byteOffset % 4) rgba = rgba.slice(0, count * 4);
+    const pixels = new Uint32Array(rgba.buffer, rgba.byteOffset, count);
+    let opaque = true, grey = true;
 
-            chunk[4] = 0x74;
-            chunk[5] = 0x45;
-            chunk[6] = 0x58;
-            chunk[7] = 0x74;
-            chunk.set(kb, 8);
-            chunk.set(tb, 9 + kb.length);
-            view.setUint32(0, chunk.length - 12);
-            view.setUint32(chunk.length - 4, crc32(chunk.subarray(4, chunk.length - 4)));
-            chunks.push(chunk);
+    // collect up to 257 distinct colors, runs of equal pixels are skipped cheaply
+    let colors: Map<number, number> | null = new Map();
+    let previous = -1;
+    for (let i = 0; i < count; i++) {
+        const value = pixels[i];
+        if (value === previous) continue;
+        previous = value;
+
+        const o = i * 4;
+        if (rgba[o + 3] !== 255) opaque = false;
+        if (rgba[o] !== rgba[o + 1] || rgba[o] !== rgba[o + 2]) grey = false;
+        if (colors && !colors.has(value)) {
+            if (colors.size === 256) colors = null;
+            else colors.set(value, colors.size);
+        }
+    }
+
+    const options = { width, height, level, text };
+
+    if (colors) {
+        // opaque entries are moved to the end, so tRNS can be cut short
+        const entries = [...colors.keys()].map(value => new Uint8Array(new Uint32Array([value]).buffer));
+        entries.sort((a, b) => a[3] - b[3]);
+        const index = new Map<number, number>();
+        entries.forEach((bytes, i) => index.set(new Uint32Array(bytes.buffer)[0], i));
+
+        const palette = new Uint8Array(entries.length * 3);
+        entries.forEach((bytes, i) => palette.set(bytes.subarray(0, 3), i * 3));
+        const translucent = entries.filter(bytes => bytes[3] !== 255).length;
+        const transparency = translucent ? Uint8Array.from(entries.slice(0, translucent), bytes => bytes[3]) : undefined;
+
+        const depth = entries.length <= 2 ? 1 : entries.length <= 4 ? 2 : entries.length <= 16 ? 4 : 8;
+        const rowBytes = Math.ceil(width * depth / 8);
+        const perByte = 8 / depth;
+        const data = new Uint8Array(rowBytes * height);
+
+        let last = -1, lastIndex = 0;
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const value = pixels[y * width + x];
+                if (value !== last) {
+                    last = value;
+                    lastIndex = index.get(value) as number;
+                }
+                data[y * rowBytes + (x / perByte | 0)] |= lastIndex << (8 - depth - (x % perByte) * depth);
+            }
         }
 
-        textChunks = concat(chunks);
+        return encode(data, { ...options, channels: 1, depth, palette, transparency });
     }
 
-    offset = textChunks ? textChunks.length : 0;
-    const compressed = compress(tmp, level);
-    const array = new Uint8Array(49 + offset + HEAD.length + compressed.length);
-    const view = new DataView(array.buffer);
+    const channels = (grey ? 1 : 3) + (opaque ? 0 : 1);
+    if (channels === 4) return encode(rgba, { ...options, channels });
 
-    array.set(HEAD, 0);
-    view.setUint32(8, 13);
-    view.setUint32(12, IHDR);
-    view.setUint32(16, width);
-    view.setUint32(20, height);
-    array[24] = depth;
-    array[25] = CHANNELS_TO_COLOR_TYPE[channels];
-    view.setUint32(29, crc32(new Uint8Array(array.buffer, 12, 17)));
-    view.setUint32(33, compressed.length);
-    view.setUint32(37, IDAT);
-    array.set(compressed, 41);
-    view.setUint32(41 + compressed.length, crc32(new Uint8Array(array.buffer, 37, 4 + compressed.length)));
-    if (textChunks) array.set(textChunks, 45 + compressed.length);
-    view.setUint32(45 + offset + compressed.length, 0);
-    view.setUint32(49 + offset + compressed.length, IEND);
-    view.setUint32(53 + offset + compressed.length, IEND_CRC);
+    const data = new Uint8Array(count * channels);
+    for (let i = 0, o = 0; i < count; i++) {
+        const s = i * 4;
+        if (grey) data[o++] = rgba[s];
+        else {
+            data[o++] = rgba[s];
+            data[o++] = rgba[s + 1];
+            data[o++] = rgba[s + 2];
+        }
+        if (!opaque) data[o++] = rgba[s + 3];
+    }
 
-    return array;
+    return encode(data, { ...options, channels });
 }
 
 /**

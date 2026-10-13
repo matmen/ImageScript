@@ -21,8 +21,12 @@ export interface GlyphBitmap {
 
 interface Glyph {
     index: number;
+    /** advance width in pixels */
     advance: number;
-    bitmap: GlyphBitmap | null;
+    /** horizontal ink extent relative to the pen position in pixels, null for glyphs without outline */
+    ink: { left: number, right: number } | null;
+    /** bitmaps per subpixel offset */
+    bitmaps: Array<GlyphBitmap | null>;
 }
 
 interface Line {
@@ -30,6 +34,9 @@ interface Line {
     extent: number;
     soft: boolean;
 }
+
+// glyphs are rasterized at quarter pixel offsets
+const SUBPIXELS = 4;
 
 // parsed fonts are cached per memory region, so new views of the same font data (e.g. from node Buffers) hit the cache
 const fonts = new WeakMap<ArrayBufferLike, Map<string, Font>>();
@@ -46,8 +53,9 @@ function loadFont(data: Uint8Array): Font {
 
 /**
  * Lays out and rasterizes text
- * Lines start at ceil(ascender) and advance by ceil(ascender - descender + lineGap), glyphs advance by
- * their ceiled advance width; the canvas spans from the origin to the furthest glyph edge
+ * Lines start at ceil(ascender) and advance by ceil(ascender - descender + lineGap); glyphs are placed with
+ * subpixel precision using their advance widths and the font's kerning; the canvas spans from the origin to the
+ * furthest glyph edge
  * @param {Uint8Array} data TrueType/OpenType font
  * @param {number} size font size in pixels per em
  * @param {string} text
@@ -65,13 +73,16 @@ export function render(data: Uint8Array, size: number, text: string, layout: Lay
         let g = glyphs.get(codepoint);
         if (!g) {
             const index = font.glyphIndex(codepoint);
-            g = { index, advance: Math.ceil(font.advance(index) * scale), bitmap: rasterizeGlyph(font.outline(index), scale) };
+            const path = font.outline(index);
+            g = { index, advance: font.advance(index) * scale, ink: inkExtent(path, scale), bitmaps: [] };
             glyphs.set(codepoint, g);
         }
         return g;
     };
 
-    const lines = wrap(text, layout, glyph);
+    const kerning = font.kerning;
+    const kern = kerning ? (left: Glyph, right: Glyph): number => kerning(left.index, right.index) * scale : () => 0;
+    const lines = wrap(text, layout, glyph, kern);
 
     // lines that fit into maxHeight, chosen by the vertical alignment
     let visible = lines;
@@ -84,32 +95,50 @@ export function render(data: Uint8Array, size: number, text: string, layout: Lay
         }
     }
 
-    const width = Math.max(0, ...visible.map(line => line.extent));
+    const width = Math.ceil(Math.max(0, ...visible.map(line => line.extent)));
     const height = visible.length * lineHeight;
     const coverage = new Uint8Array(width * height);
 
     visible.forEach((line, n) => {
         const offset = layout.horizontalAlign === 'right' ? width - line.extent
-            : layout.horizontalAlign === 'center' ? width - line.extent >> 1 : 0;
+            : layout.horizontalAlign === 'center' ? (width - line.extent) / 2 : 0;
         const baseline = ascent + n * lineHeight;
 
         for (const { x, glyph: g } of line.glyphs) {
-            const { bitmap } = g;
-            if (!bitmap) continue;
-            blit(coverage, width, height, bitmap, offset + x + bitmap.left, baseline - bitmap.top);
+            if (!g.ink) continue;
+
+            // whole pixels plus the closest subpixel offset
+            const position = Math.round((offset + x) * SUBPIXELS) / SUBPIXELS;
+            const pixel = Math.floor(position);
+            const subpixel = Math.round((position - pixel) * SUBPIXELS);
+
+            if (g.bitmaps[subpixel] === undefined) g.bitmaps[subpixel] = rasterizeGlyph(font.outline(g.index), scale, subpixel / SUBPIXELS);
+            const bitmap = g.bitmaps[subpixel];
+            if (bitmap) blit(coverage, width, height, bitmap, pixel + bitmap.left, baseline - bitmap.top);
         }
     });
 
     return { width, height, coverage };
 }
 
+// horizontal ink extent of an outline in pixels
+function inkExtent(path: PathCommand[], scale: number): Glyph['ink'] {
+    let left = Infinity, right = -Infinity;
+    for (const command of path)
+        for (let i = 1; i < command.length; i += 2) {
+            left = Math.min(left, (command[i] as number) * scale);
+            right = Math.max(right, (command[i] as number) * scale);
+        }
+    return right > left ? { left, right } : null;
+}
+
 // breaks text into lines of positioned glyphs
-function wrap(text: string, layout: Layout, glyph: (codepoint: number) => Glyph): Line[] {
+function wrap(text: string, layout: Layout, glyph: (codepoint: number) => Glyph, kern: (left: Glyph, right: Glyph) => number): Line[] {
     const lines: Line[] = [];
     const paragraphs = layout.wrapHardBreaks ? text.split(/\r\n|\r|\n/) : [text.replace(/\r\n|\r|\n/g, '')];
 
     // right edge of a glyph placed at x (glyphs without ink don't extend the line)
-    const edge = (x: number, g: Glyph): number => g.bitmap ? x + g.bitmap.left + g.bitmap.width : 0;
+    const edge = (x: number, g: Glyph): number => g.ink ? x + g.ink.right : 0;
 
     for (const paragraph of paragraphs) {
         let line: Line = { glyphs: [], extent: 0, soft: false };
@@ -117,10 +146,14 @@ function wrap(text: string, layout: Layout, glyph: (codepoint: number) => Glyph)
         // index into line.glyphs right after the last space, for word wrapping
         let breakAt = -1;
 
+        // pen position for the next glyph, including the kerning with the previous one
+        const next = (g: Glyph): number => line.glyphs.length ? x + kern(line.glyphs[line.glyphs.length - 1].glyph, g) : x;
+
         const add = (g: Glyph): void => {
-            line.glyphs.push({ x, glyph: g });
-            line.extent = Math.max(line.extent, edge(x, g));
-            x += g.advance;
+            const position = next(g);
+            line.glyphs.push({ x: position, glyph: g });
+            line.extent = Math.max(line.extent, edge(position, g));
+            x = position + g.advance;
         };
 
         const newLine = (): void => {
@@ -135,7 +168,7 @@ function wrap(text: string, layout: Layout, glyph: (codepoint: number) => Glyph)
             const g = glyph(codepoint);
             const space = codepoint === 0x20 || codepoint === 0x09;
 
-            if (!space && line.glyphs.length && edge(x, g) > layout.maxWidth) {
+            if (!space && line.glyphs.length && edge(next(g), g) > layout.maxWidth) {
                 if (layout.wrapStyle === 'word' && breakAt > 0) {
                     // move the current word to the next line
                     const word = line.glyphs.splice(breakAt);
@@ -160,7 +193,7 @@ function wrap(text: string, layout: Layout, glyph: (codepoint: number) => Glyph)
 
 function measure(glyphs: Line['glyphs'], edge: (x: number, g: Glyph) => number): number {
     let extent = 0;
-    for (const { x, glyph } of glyphs) if (glyph.bitmap) extent = Math.max(extent, edge(x, glyph));
+    for (const { x, glyph } of glyphs) extent = Math.max(extent, edge(x, glyph));
     return extent;
 }
 
@@ -186,16 +219,17 @@ function blit(target: Uint8Array, width: number, height: number, bitmap: GlyphBi
  * Rasterizes a glyph outline into an 8-bit coverage bitmap
  * @param {Array} path outline in font units (y up)
  * @param {number} scale pixels per font unit
+ * @param {number} [offset=0] horizontal subpixel offset
  * @return {{data: Uint8Array, width: number, height: number, left: number, top: number}|null}
  *     left/top position the bitmap relative to the pen position on the baseline (top is measured upwards)
  */
-export function rasterizeGlyph(path: PathCommand[], scale: number): GlyphBitmap | null {
+export function rasterizeGlyph(path: PathCommand[], scale: number, offset = 0): GlyphBitmap | null {
     if (!path.length) return null;
 
     let xmin = Infinity, ymin = Infinity, xmax = -Infinity, ymax = -Infinity;
     for (const command of path)
         for (let i = 1; i < command.length; i += 2) {
-            const x = (command[i] as number) * scale, y = (command[i + 1] as number) * scale;
+            const x = (command[i] as number) * scale + offset, y = (command[i + 1] as number) * scale;
             if (x < xmin) xmin = x;
             if (x > xmax) xmax = x;
             if (y < ymin) ymin = y;
@@ -209,7 +243,7 @@ export function rasterizeGlyph(path: PathCommand[], scale: number): GlyphBitmap 
 
     const raster = new Rasterizer(width, height);
     // flip y and move the bitmap origin to (left, top)
-    const tx = (x: number): number => x * scale - left;
+    const tx = (x: number): number => x * scale + offset - left;
     const ty = (y: number): number => top - y * scale;
 
     let sx = 0, sy = 0, cx = 0, cy = 0;

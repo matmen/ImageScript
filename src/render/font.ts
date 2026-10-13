@@ -31,6 +31,8 @@ export class Font {
     cff: CFF | null = null;
     cmap: (codepoint: number) => number;
     outlineCache: Map<number, PathCommand[]>;
+    /** kerning between two glyphs in font units, null if the font has none */
+    kerning: ((left: number, right: number) => number) | null;
 
     constructor(data: Uint8Array) {
         this.data = data;
@@ -76,6 +78,7 @@ export class Font {
 
         this.cmap = parseCmap(this, this.tables.cmap.offset);
         this.outlineCache = new Map();
+        this.kerning = (this.tables.GPOS && parseGPOSKerning(this, this.tables.GPOS.offset)) || (this.tables.kern && parseKern(this, this.tables.kern.offset)) || null;
     }
 
     u8(o: number): number { return this.data[o]; }
@@ -369,6 +372,203 @@ function parseCmap(font: Font, offset: number): (codepoint: number) => number {
 
     // symbol fonts map their characters to U+F000-U+F0FF
     return symbol ? (c: number): number => lookup(c) || (c < 256 ? lookup(0xf000 + c) : 0) : lookup;
+}
+
+// ---------------------------------------------------------------------------
+// kerning
+// ---------------------------------------------------------------------------
+
+type PairLookup = (left: number, right: number) => number | undefined;
+
+// horizontal pair adjustments of the GPOS 'kern' feature (pair positioning lookups, also behind extension lookups)
+function parseGPOSKerning(font: Font, gpos: number): ((left: number, right: number) => number) | null {
+    const featureList = gpos + font.u16(gpos + 6);
+    const lookupList = gpos + font.u16(gpos + 8);
+
+    const lookups = new Set<number>();
+    for (let i = 0, count = font.u16(featureList); i < count; i++) {
+        const record = featureList + 2 + i * 6;
+        if (font.u32(record) !== 0x6b65726e) continue; // 'kern'
+        const feature = featureList + font.u16(record + 4);
+        for (let j = 0, n = font.u16(feature + 2); j < n; j++) lookups.add(font.u16(feature + 4 + j * 2));
+    }
+
+    // per lookup the subtables are tried in order, the first one covering the pair applies
+    const pairLookups: PairLookup[][] = [];
+    for (const index of [...lookups].sort((a, b) => a - b)) {
+        if (index >= font.u16(lookupList)) continue;
+        const lookup = lookupList + font.u16(lookupList + 2 + index * 2);
+        const type = font.u16(lookup);
+        const subtables: PairLookup[] = [];
+
+        for (let i = 0, count = font.u16(lookup + 4); i < count; i++) {
+            let subtable = lookup + font.u16(lookup + 6 + i * 2);
+            if (type === 9) {
+                if (font.u16(subtable + 2) !== 2) continue;
+                subtable += font.u32(subtable + 4);
+            } else if (type !== 2) continue;
+
+            const pair = parsePairPos(font, subtable);
+            if (pair) subtables.push(pair);
+        }
+
+        if (subtables.length) pairLookups.push(subtables);
+    }
+
+    if (!pairLookups.length) return null;
+    return (left, right) => {
+        let total = 0;
+        for (const subtables of pairLookups) {
+            for (const subtable of subtables) {
+                const value = subtable(left, right);
+                if (value === undefined) continue;
+                total += value;
+                break;
+            }
+        }
+        return total;
+    };
+}
+
+// size of a value record and the offset of its XAdvance field (-1 if absent)
+function valueRecord(format: number): { size: number, xAdvance: number } {
+    let size = 0, xAdvance = -1;
+    for (let bit = 0; bit < 8; bit++) {
+        if (!(format & 1 << bit)) continue;
+        if (bit === 2) xAdvance = size;
+        size += 2;
+    }
+    return { size, xAdvance };
+}
+
+function parsePairPos(font: Font, table: number): PairLookup | null {
+    const format = font.u16(table);
+    const coverage = parseCoverage(font, table + font.u16(table + 2));
+    const first = valueRecord(font.u16(table + 4));
+    const second = valueRecord(font.u16(table + 6));
+    if (first.xAdvance === -1) return null;
+
+    if (format === 1) {
+        const sets = font.u16(table + 8);
+        const recordSize = 2 + first.size + second.size;
+
+        return (left, right) => {
+            const index = coverage(left);
+            if (index === -1 || index >= sets) return undefined;
+            const set = table + font.u16(table + 10 + index * 2);
+
+            // pair value records are sorted by the second glyph
+            let lo = 0, hi = font.u16(set) - 1;
+            while (lo <= hi) {
+                const mid = lo + hi >> 1;
+                const record = set + 2 + mid * recordSize;
+                const glyph = font.u16(record);
+                if (glyph < right) lo = mid + 1;
+                else if (glyph > right) hi = mid - 1;
+                else return font.i16(record + 2 + first.xAdvance);
+            }
+            return undefined;
+        };
+    }
+
+    if (format === 2) {
+        const classes1 = parseClassDef(font, table + font.u16(table + 8));
+        const classes2 = parseClassDef(font, table + font.u16(table + 10));
+        const class1Count = font.u16(table + 12), class2Count = font.u16(table + 14);
+        const recordSize = first.size + second.size;
+
+        return (left, right) => {
+            if (coverage(left) === -1) return undefined;
+            const c1 = classes1(left), c2 = classes2(right);
+            if (c1 >= class1Count || c2 >= class2Count) return undefined;
+            return font.i16(table + 16 + (c1 * class2Count + c2) * recordSize + first.xAdvance);
+        };
+    }
+
+    return null;
+}
+
+// returns the coverage index of a glyph, -1 if it isn't covered
+function parseCoverage(font: Font, table: number): (glyph: number) => number {
+    const format = font.u16(table), count = font.u16(table + 2);
+
+    return glyph => {
+        let lo = 0, hi = count - 1;
+        while (lo <= hi) {
+            const mid = lo + hi >> 1;
+            if (format === 1) {
+                const value = font.u16(table + 4 + mid * 2);
+                if (value < glyph) lo = mid + 1;
+                else if (value > glyph) hi = mid - 1;
+                else return mid;
+            } else {
+                const range = table + 4 + mid * 6;
+                if (font.u16(range + 2) < glyph) lo = mid + 1;
+                else if (font.u16(range) > glyph) hi = mid - 1;
+                else return font.u16(range + 4) + glyph - font.u16(range);
+            }
+        }
+        return -1;
+    };
+}
+
+function parseClassDef(font: Font, table: number): (glyph: number) => number {
+    const format = font.u16(table);
+
+    if (format === 1) {
+        const start = font.u16(table + 2), count = font.u16(table + 4);
+        return glyph => glyph >= start && glyph < start + count ? font.u16(table + 6 + (glyph - start) * 2) : 0;
+    }
+
+    const count = font.u16(table + 2);
+    return glyph => {
+        let lo = 0, hi = count - 1;
+        while (lo <= hi) {
+            const mid = lo + hi >> 1;
+            const range = table + 4 + mid * 6;
+            if (font.u16(range + 2) < glyph) lo = mid + 1;
+            else if (font.u16(range) > glyph) hi = mid - 1;
+            else return font.u16(range + 4);
+        }
+        return 0;
+    };
+}
+
+// the (Microsoft) kern table, format 0 subtables with horizontal kerning
+function parseKern(font: Font, kern: number): ((left: number, right: number) => number) | null {
+    if (font.u16(kern) !== 0) return null;
+
+    const tables: Array<{ pairs: number, start: number }> = [];
+    let offset = kern + 4;
+    for (let i = 0, count = font.u16(kern + 2); i < count; i++) {
+        const coverage = font.u16(offset + 4);
+        // big format 0 subtables overflow their 16-bit length field, so it is computed from the pair count
+        const length = coverage >> 8 === 0 ? 14 + font.u16(offset + 6) * 6 : font.u16(offset + 2);
+        // horizontal, no minimum values, not cross stream, format 0
+        if ((coverage & 0xff0f) === 1) tables.push({ pairs: font.u16(offset + 6), start: offset + 14 });
+        offset += length;
+    }
+
+    if (!tables.length) return null;
+    return (left, right) => {
+        const key = (left << 16 | right) >>> 0;
+        let total = 0;
+        for (const { pairs, start } of tables) {
+            let lo = 0, hi = pairs - 1;
+            while (lo <= hi) {
+                const mid = lo + hi >> 1;
+                const pair = start + mid * 6;
+                const value = font.u32(pair);
+                if (value < key) lo = mid + 1;
+                else if (value > key) hi = mid - 1;
+                else {
+                    total += font.i16(pair + 4);
+                    break;
+                }
+            }
+        }
+        return total;
+    };
 }
 
 // ---------------------------------------------------------------------------

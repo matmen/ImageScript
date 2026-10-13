@@ -22,7 +22,8 @@ or newer and works with both `import` and `require()`; type definitions are incl
 - [Decoding GIFs](https://imagescript.matmen.dev/GIF.html#.decode)
 - [Rendering SVGs](https://imagescript.matmen.dev/Image.html#.renderSVG) (shapes, paths, gradients, strokes, clip paths,
   masks, CSS; no text, images or filters)
-- [Rendering vector fonts](https://imagescript.matmen.dev/Image.html#.renderText) (TrueType and OpenType)
+- [Rendering vector fonts](https://imagescript.matmen.dev/Image.html#.renderText) (TrueType and OpenType, with kerning)
+- [Resizing](https://imagescript.matmen.dev/Image.html#resize) (bilinear, bicubic, area averaging and nearest neighbor)
 - Image manipulation functions ([crop](https://imagescript.matmen.dev/Image.html#crop)
   , [rotate](https://imagescript.matmen.dev/Image.html#rotate)
   , [composite](https://imagescript.matmen.dev/Image.html#composite), ...)
