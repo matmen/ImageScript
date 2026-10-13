@@ -339,7 +339,8 @@ export class Image {
    * Encodes the image into a JPEG.
    *
    * @param quality `1`-`100`, where `1` is lowest quality (highest compression)
-   *     and `100` is highest quality (lowest compression). Default: `90`
+   *     and `100` is highest quality (lowest compression). Chroma subsampling
+   *     is disabled above `90`. Default: `90`
    */
   async encodeJPEG(quality?: JPEGQuality): Promise<Uint8Array>;
 

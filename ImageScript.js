@@ -1,5 +1,6 @@
 const png = require('./formats/png.js');
 const gif = require('./formats/gif.js');
+const jpeg = require('./formats/jpeg.js');
 const mem = require('./utils/mem.js');
 const {version} = require('./package.json');
 const codecs = require('./codecs/node/index.js');
@@ -8,7 +9,6 @@ const { default: v2 } = require('./v2/framebuffer.js');
 // old
 const svglib = require('./wasm/node/svg.js');
 const fontlib = require('./wasm/node/font.js');
-const jpeglib = require('./wasm/node/jpeg.js');
 const tifflib = require('./wasm/node/tiff.js');
 
 const MAGIC_NUMBERS = {
@@ -1057,15 +1057,11 @@ class Image {
 
     /**
      * Encodes the image into a JPEG
-     * @param {number} [quality=90] The JPEG quality to use (1-100)
+     * @param {number} [quality=90] The JPEG quality to use (1-100), chroma subsampling is disabled above 90
      * @return {Promise<Uint8Array>}
      */
     async encodeJPEG(quality = 90) {
-        return codecs.jpeg.encode_async(this.bitmap, {
-            quality,
-            width: this.width,
-            height: this.height,
-        });
+        return jpeg.encode(this.bitmap, this.width, this.height, quality);
     }
 
     /**
@@ -1097,34 +1093,9 @@ class Image {
             image = new Image(width, height);
             image.bitmap.set(pixels);
         } else if (ImageType.isJPEG(view)) { // JPEG
-            const framebuffer = (await jpeglib.init()).decode(data);
-
-            const width = framebuffer.width;
-            const height = framebuffer.height;
-            const pixelType = framebuffer.format;
-
+            const {width, height, pixels} = jpeg.decode(data);
             image = new Image(width, height);
-            const buffer = framebuffer.buffer;
-
-            if (pixelType === 0) {
-                const view = new DataView(image.bitmap.buffer);
-
-                for (let i = 0; i < buffer.length; i++) {
-                    const pixel = buffer[i];
-                    view.setUint32(i * 4, pixel << 24 | pixel << 16 | pixel << 8 | 0xff, false);
-                }
-            } else if (pixelType === 1) {
-                image.bitmap.fill(0xff);
-                for (let i = 0; i < width * height; i++)
-                    image.bitmap.set(buffer.subarray(i * 3, i * 3 + 3), i * 4);
-            } else if (pixelType === 2) {
-                for (let i = 0; i < buffer.length; i += 4) {
-                    image.bitmap[i] = 0xff * (1 - buffer[i] / 0xff) * (1 - buffer[i + 3] / 0xff);
-                    image.bitmap[i + 1] = 0xff * (1 - buffer[i + 1] / 0xff) * (1 - buffer[i + 3] / 0xff);
-                    image.bitmap[i + 2] = 0xff * (1 - buffer[i + 2] / 0xff) * (1 - buffer[i + 3] / 0xff);
-                    image.bitmap[i + 3] = 0xff;
-                }
-            }
+            image.bitmap.set(pixels);
         } else if (ImageType.isTIFF(view)) { // TIFF
             const framebuffer = (await tifflib.init()).decode(data);
             image = new Image(framebuffer.width, framebuffer.height);
