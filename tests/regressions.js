@@ -298,5 +298,11 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
             assert(Buffer.from(decoded.bitmap).equals(Buffer.from(image.bitmap)), `PNG ${name}: roundtrip failed`);
             assert(encoded[25] === type, `PNG ${name}: expected color type ${type}, got ${encoded[25]}`);
         }
+
+        // truecolor rows are filtered, which makes smooth gradients tiny
+        const gradient = new Image(512, 512).fill((x, y) => Image.rgbToColor(x / 2, y / 2, (x + y) / 4));
+        const size = (await gradient.encode()).length;
+        assert(size < 20000, `PNG: gradient should compress well with row filters, got ${size} bytes`);
+        assert(Buffer.from((await Image.decode(await gradient.encode(9))).bitmap).equals(Buffer.from(gradient.bitmap)), 'PNG: filtered roundtrip failed');
     }
 })();

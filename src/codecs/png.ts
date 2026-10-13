@@ -26,6 +26,8 @@ export interface EncodeOptions {
     palette?: Uint8Array;
     /** alpha per palette entry */
     transparency?: Uint8Array;
+    /** whether to pick a filter per row (pays off for truecolor and greyscale images) */
+    filter?: boolean;
 }
 
 export interface Decoded {
@@ -45,11 +47,15 @@ const ADAM7 = [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2,
  * Encodes raw pixel data into a PNG
  * @param data Raw pixel data, rows packed MSB first for depths below 8
  */
-export function encode(data: Uint8Array, { text, width, height, channels, depth = 8, level = 0, palette, transparency }: EncodeOptions): Uint8Array {
-    // prefix every row with filter type 0 (none)
+export function encode(data: Uint8Array, { text, width, height, channels, depth = 8, level = 0, palette, transparency, filter: adaptive = false }: EncodeOptions): Uint8Array {
     const rowBytes = Math.ceil(width * channels * depth / 8);
-    const filtered = new Uint8Array(height * (rowBytes + 1));
-    for (let y = 0; y < height; y++) filtered.set(data.subarray(y * rowBytes, (y + 1) * rowBytes), y * (rowBytes + 1) + 1);
+    let filtered: Uint8Array;
+    if (adaptive) filtered = filter(data, rowBytes, height, Math.max(1, channels * depth / 8));
+    else {
+        // prefix every row with filter type 0 (none)
+        filtered = new Uint8Array(height * (rowBytes + 1));
+        for (let y = 0; y < height; y++) filtered.set(data.subarray(y * rowBytes, (y + 1) * rowBytes), y * (rowBytes + 1) + 1);
+    }
 
     const header = new Uint8Array(13);
     const view = new DataView(header.buffer);
@@ -73,6 +79,59 @@ export function encode(data: Uint8Array, { text, width, height, channels, depth 
     return concat([HEAD, ...chunks]);
 }
 
+/**
+ * Filters every row with the filter type that minimizes the sum of absolute differences (libpng's heuristic)
+ */
+function filter(data: Uint8Array, rowBytes: number, height: number, bpp: number): Uint8Array {
+    const out = new Uint8Array(height * (rowBytes + 1));
+    // the row above the first one and the pixel left of the first one are zero
+    const zero = new Uint8Array(rowBytes);
+    const candidates = [new Uint8Array(rowBytes), new Uint8Array(rowBytes), new Uint8Array(rowBytes), new Uint8Array(rowBytes)];
+    const [sub, up, average, paethed] = candidates;
+
+    for (let y = 0; y < height; y++) {
+        const row = data.subarray(y * rowBytes, (y + 1) * rowBytes);
+        const prev = y > 0 ? data.subarray((y - 1) * rowBytes, y * rowBytes) : zero;
+
+        // filtered bytes are compared as signed values, so small negative differences count as small
+        let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0;
+        for (let i = 0; i < rowBytes; i++) {
+            const x = row[i], b = prev[i];
+            const a = i >= bpp ? row[i - bpp] : 0, c = i >= bpp ? prev[i - bpp] : 0;
+
+            const v1 = sub[i] = x - a, v2 = up[i] = x - b;
+            const v3 = average[i] = x - (a + b >> 1), v4 = paethed[i] = x - paeth(a, b, c);
+            s0 += x < 128 ? x : 256 - x;
+            s1 += abs8(v1);
+            s2 += abs8(v2);
+            s3 += abs8(v3);
+            s4 += abs8(v4);
+        }
+
+        const sums = [s0, s1, s2, s3, s4];
+        let type = 0;
+        for (let t = 1; t < 5; t++) if (sums[t] < sums[type]) type = t;
+
+        const o = y * (rowBytes + 1);
+        out[o] = type;
+        out.set(type === 0 ? row : candidates[type - 1], o + 1);
+    }
+
+    return out;
+}
+
+// magnitude of a filtered byte (an unwrapped difference) taken as a signed 8-bit value
+function abs8(v: number): number {
+    v &= 255;
+    return v < 128 ? v : 256 - v;
+}
+
+function paeth(a: number, b: number, c: number): number {
+    const p = a + b - c;
+    const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+    return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+}
+
 function chunk(type: number, body: Uint8Array): Uint8Array {
     const out = new Uint8Array(body.length + 12);
     const view = new DataView(out.buffer);
@@ -85,7 +144,9 @@ function chunk(type: number, body: Uint8Array): Uint8Array {
 
 /**
  * Encodes 8-bit RGBA pixels into a PNG with the smallest lossless color type:
- * a palette for up to 256 colors, otherwise greyscale or RGB, with alpha only if a pixel isn't opaque
+ * a palette for up to 256 colors, otherwise greyscale or RGB, with alpha only if a pixel isn't opaque.
+ * Rows of non-palette images are filtered adaptively (unless the data isn't compressed), palette indices aren't
+ * filtered (like libpng recommends)
  */
 export function encodeRGBA(rgba: Uint8Array, width: number, height: number, level: number, text?: EncodeOptions['text']): Uint8Array {
     const count = width * height;
@@ -110,7 +171,7 @@ export function encodeRGBA(rgba: Uint8Array, width: number, height: number, leve
         }
     }
 
-    const options = { width, height, level, text };
+    const options = { width, height, level, text, filter: level > 0 };
 
     if (colors) {
         // opaque entries are moved to the end, so tRNS can be cut short
@@ -141,7 +202,7 @@ export function encodeRGBA(rgba: Uint8Array, width: number, height: number, leve
             }
         }
 
-        return encode(data, { ...options, channels: 1, depth, palette, transparency });
+        return encode(data, { ...options, channels: 1, depth, palette, transparency, filter: false });
     }
 
     const channels = (grey ? 1 : 3) + (opaque ? 0 : 1);
@@ -286,11 +347,7 @@ function unfilter(data: Uint8Array, offset: number, height: number, rowBytes: nu
                 const a = i >= bpp ? out[row + i - bpp] : 0;
                 const b = y > 0 ? out[prev + i] : 0;
                 const c = i >= bpp && y > 0 ? out[prev + i - bpp] : 0;
-                const p = a + b - c;
-                const pa = Math.abs(p - a);
-                const pb = Math.abs(p - b);
-                const pc = Math.abs(p - c);
-                out[row + i] = data[offset + i] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
+                out[row + i] = data[offset + i] + paeth(a, b, c);
             }
         } else throw new Error(`PNG: invalid filter type ${filter}`);
 
