@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const {Image} = require('..');
+const samePixels = require('./util/pixels');
 
 (async () => {
 	const input = await fs.readFile('./tests/targets/external.png');
@@ -14,6 +15,6 @@ const {Image} = require('..');
 
 	const target = await fs.readFile('./tests/targets/fisheye.png');
 
-	if (!Buffer.from(target).equals(Buffer.from(output)))
+	if (!await samePixels(target, output))
 		process.exit(1);
 })();

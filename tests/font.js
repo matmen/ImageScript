@@ -7,6 +7,7 @@
 
 const fs = require('fs').promises;
 const {Image, TextLayout} = require('..');
+const samePixels = require('./util/pixels');
 
 const panic = message => {
     console.error(message);
@@ -22,7 +23,7 @@ const panic = message => {
             await fs.writeFile('./tests/targets/font-1.png', encoded);
 
         const desired = await fs.readFile('./tests/targets/font-1.png');
-        if (!desired.equals(Buffer.from(encoded))) panic('font 1 doesn\'t match');
+        if (!await samePixels(desired, encoded)) panic('font 1 doesn\'t match');
     }
 
     {
@@ -33,7 +34,7 @@ const panic = message => {
             await fs.writeFile('./tests/targets/font-2.png', encoded);
 
         const desired = await fs.readFile('./tests/targets/font-2.png');
-        if (!desired.equals(Buffer.from(encoded))) panic('font 2 doesn\'t match');
+        if (!await samePixels(desired, encoded)) panic('font 2 doesn\'t match');
     }
 
     {
@@ -44,7 +45,7 @@ const panic = message => {
             await fs.writeFile('./tests/targets/font-3.png', encoded);
 
         const desired = await fs.readFile('./tests/targets/font-3.png');
-        if (!desired.equals(Buffer.from(encoded))) panic('font 3 doesn\'t match');
+        if (!await samePixels(desired, encoded)) panic('font 3 doesn\'t match');
     }
 
     {
@@ -56,7 +57,7 @@ const panic = message => {
             await fs.writeFile('./tests/targets/font-4.png', encoded);
 
         const desired = await fs.readFile('./tests/targets/font-4.png');
-        if (!desired.equals(Buffer.from(encoded))) panic('font 4 doesn\'t match');
+        if (!await samePixels(desired, encoded)) panic('font 4 doesn\'t match');
     }
 
     {

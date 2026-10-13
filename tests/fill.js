@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const {Image} = require('..');
+const samePixels = require('./util/pixels');
 
 const panic = message => {
     console.error(message);
@@ -17,7 +18,7 @@ const panic = message => {
             await fs.writeFile('./tests/targets/fill-static.png', encoded);
 
         const target = await fs.readFile('./tests/targets/fill-static.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('fill static doesn\'t equal');
+        if (!await samePixels(target, encoded)) panic('fill static doesn\'t equal');
     }
 
     {
@@ -30,6 +31,6 @@ const panic = message => {
             await fs.writeFile('./tests/targets/fill-func.png', encoded);
 
         const target = await fs.readFile('./tests/targets/fill-func.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) panic('fill func doesn\'t equal');
+        if (!await samePixels(target, encoded)) panic('fill func doesn\'t equal');
     }
 })();

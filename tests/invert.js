@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const {Image} = require('..');
+const samePixels = require('./util/pixels');
 
 (async () => {
     {
@@ -13,13 +14,13 @@ const {Image} = require('..');
             await fs.writeFile('./tests/targets/invert.png', encoded);
 
         const target = await fs.readFile('./tests/targets/invert.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        if (!await samePixels(target, encoded)) process.exit(1);
     }
 
     {
         const image = new Image(512, 512);
         image.fill(0xff8000ff);
-        image.invertValue();
+        image.invertLightness();
 
         const encoded = await image.encode(1, {creationTime: 0, software: ''});
 
@@ -27,7 +28,7 @@ const {Image} = require('..');
             await fs.writeFile('./tests/targets/invert-value.png', encoded);
 
         const target = await fs.readFile('./tests/targets/invert-value.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        if (!await samePixels(target, encoded)) process.exit(1);
     }
 
     {
@@ -41,7 +42,7 @@ const {Image} = require('..');
             await fs.writeFile('./tests/targets/invert-saturation.png', encoded);
 
         const target = await fs.readFile('./tests/targets/invert-saturation.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        if (!await samePixels(target, encoded)) process.exit(1);
     }
 
     {
@@ -55,7 +56,7 @@ const {Image} = require('..');
             await fs.writeFile('./tests/targets/invert-hue.png', encoded);
 
         const target = await fs.readFile('./tests/targets/invert-hue.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        if (!await samePixels(target, encoded)) process.exit(1);
     }
 
     {
@@ -69,6 +70,6 @@ const {Image} = require('..');
             await fs.writeFile('./tests/targets/invert-hueshift.png', encoded);
 
         const target = await fs.readFile('./tests/targets/invert-hueshift.png');
-        if (!Buffer.from(target).equals(Buffer.from(encoded))) process.exit(1);
+        if (!await samePixels(target, encoded)) process.exit(1);
     }
 })();

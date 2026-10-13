@@ -147,8 +147,7 @@ export class Image {
      * @returns color
      */
     static hslaToColor(h: number, s: number, l: number, a: number): Color {
-        // wrap into 0..1, negative hues included
-        h = (h % 1 + 1) % 1;
+        h = wrapHue(h);
         s = Math.min(1, Math.max(0, s));
         l = Math.min(1, Math.max(0, l));
         a = Math.min(1, Math.max(0, a));
@@ -158,15 +157,6 @@ export class Image {
         if (s === 0) {
             r = g = b = l;
         } else {
-            const hue2rgb = (p: number, q: number, t: number): number => {
-                if (t < 0) t += 1;
-                if (t > 1) t -= 1;
-                if (t < 1 / 6) return p + (q - p) * 6 * t;
-                if (t < 1 / 2) return q;
-                if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-                return p;
-            };
-
             const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
             const p = 2 * l - q;
 
@@ -704,43 +694,43 @@ export class Image {
     }
 
     /**
-     * Sets the red channels saturation
-     * @param saturation The saturation to apply (0..1)
-     * @param absolute Whether to scale the current saturation (false) or just set the new saturation (true)
+     * Scales or sets the red channel
+     * @param factor The factor to multiply the channel with (>= 0, results are clamped), or the value (0..1) to set it to
+     * @param absolute Whether to scale the current value (false) or set every pixel's red channel to `factor` * 255 (true)
      */
-    red(saturation: number, absolute = false): this {
-        if (isNaN(saturation) || saturation < 0)
-            throw new RangeError('Invalid saturation value');
+    red(factor: number, absolute = false): this {
+        if (isNaN(factor) || factor < 0)
+            throw new RangeError('Invalid red factor');
 
-        this.__set_channel_value__(saturation, absolute, 0);
+        this.__set_channel_value__(factor, absolute, 0);
 
         return this;
     }
 
     /**
-     * Sets the green channels saturation
-     * @param saturation The saturation to apply (0..1)
-     * @param absolute Whether to scale the current saturation (false) or just set the new saturation (true)
+     * Scales or sets the green channel
+     * @param factor The factor to multiply the channel with (>= 0, results are clamped), or the value (0..1) to set it to
+     * @param absolute Whether to scale the current value (false) or set every pixel's green channel to `factor` * 255 (true)
      */
-    green(saturation: number, absolute = false): this {
-        if (isNaN(saturation) || saturation < 0)
-            throw new RangeError('Invalid saturation value');
+    green(factor: number, absolute = false): this {
+        if (isNaN(factor) || factor < 0)
+            throw new RangeError('Invalid green factor');
 
-        this.__set_channel_value__(saturation, absolute, 1);
+        this.__set_channel_value__(factor, absolute, 1);
 
         return this;
     }
 
     /**
-     * Sets the blue channels saturation
-     * @param saturation The saturation to apply (0..1)
-     * @param absolute Whether to scale the current saturation (false) or just set the new saturation (true)
+     * Scales or sets the blue channel
+     * @param factor The factor to multiply the channel with (>= 0, results are clamped), or the value (0..1) to set it to
+     * @param absolute Whether to scale the current value (false) or set every pixel's blue channel to `factor` * 255 (true)
      */
-    blue(saturation: number, absolute = false): this {
-        if (isNaN(saturation) || saturation < 0)
-            throw new RangeError('Invalid saturation value');
+    blue(factor: number, absolute = false): this {
+        if (isNaN(factor) || factor < 0)
+            throw new RangeError('Invalid blue factor');
 
-        this.__set_channel_value__(saturation, absolute, 2);
+        this.__set_channel_value__(factor, absolute, 2);
 
         return this;
     }
@@ -766,7 +756,7 @@ export class Image {
         if (isNaN(value) || value < 0)
             throw new RangeError('Invalid lightness value');
 
-        return this.__map_hsla__((h, s, l, a) => Image.hslaToColor(h, s, value * (absolute ? 1 : l), a));
+        return this.__map_hsla__(c => { c.l = value * (absolute ? 1 : c.l); });
     }
 
     /**
@@ -778,7 +768,7 @@ export class Image {
         if (isNaN(value) || value < 0)
             throw new RangeError('Invalid saturation value');
 
-        return this.__map_hsla__((h, s, l, a) => Image.hslaToColor(h, value * (absolute ? 1 : s), l, a));
+        return this.__map_hsla__(c => { c.s = value * (absolute ? 1 : c.s); });
     }
 
     /**
@@ -794,20 +784,20 @@ export class Image {
         const left = Math.max(0, x), top = Math.max(0, y);
         const right = Math.min(this.width, x + source.width), bottom = Math.min(this.height, y + source.height);
         const dst = this.bitmap, src = source.bitmap;
+        // whole pixels are copied through 32-bit views
+        const dst32 = new Uint32Array(dst.buffer, dst.byteOffset, dst.length >> 2);
+        const src32 = new Uint32Array(src.buffer, src.byteOffset, src.length >> 2);
 
         for (let row = top; row < bottom; row++) {
             for (let column = left; column < right; column++) {
-                const s = 4 * ((row - y) * source.width + column - x);
+                const sp = (row - y) * source.width + column - x, s = 4 * sp;
                 const sa = src[s + 3];
                 if (sa === 0) continue;
 
-                const d = 4 * (row * this.width + column);
+                const dp = row * this.width + column, d = 4 * dp;
                 const da = dst[d + 3];
                 if (sa === 255 || da === 0) {
-                    dst[d] = src[s];
-                    dst[d + 1] = src[s + 1];
-                    dst[d + 2] = src[s + 2];
-                    dst[d + 3] = sa;
+                    dst32[dp] = src32[sp];
                     continue;
                 }
 
@@ -839,24 +829,32 @@ export class Image {
     }
 
     /**
-     * Inverts the images value (lightness)
+     * Inverts the images lightness (HSL), keeping hue and saturation: dark colors become light and vice versa
+     */
+    invertLightness(): this {
+        return this.__map_hsla__(c => { c.l = 1 - c.l; });
+    }
+
+    /**
+     * Inverts the images lightness (HSL)
+     * @deprecated Renamed to {@link Image.invertLightness}, it inverts HSL lightness rather than HSV value
      */
     invertValue(): this {
-        return this.__map_hsla__((h, s, l, a) => Image.hslaToColor(h, s, 1 - l, a));
+        return this.invertLightness();
     }
 
     /**
      * Inverts the images saturation
      */
     invertSaturation(): this {
-        return this.__map_hsla__((h, s, l, a) => Image.hslaToColor(h, 1 - s, l, a));
+        return this.__map_hsla__(c => { c.s = 1 - c.s; });
     }
 
     /**
-     * Inverts the images hue
+     * Replaces every color's hue with its complementary hue (a 180 degree hue shift)
      */
     invertHue(): this {
-        return this.__map_hsla__((h, s, l, a) => Image.hslaToColor(1 - h, s, l, a));
+        return this.__map_hsla__(c => { c.h += 0.5; });
     }
 
     /**
@@ -864,20 +862,69 @@ export class Image {
      * @param degrees How many degrees to shift the hue by
      */
     hueShift(degrees: number): this {
-        return this.__map_hsla__((h, s, l, a) => Image.hslaToColor(h + degrees / 360, s, l, a));
+        return this.__map_hsla__(c => { c.h += degrees / 360; });
     }
 
     /**
-     * Replaces every pixel with the color returned for its HSLA components
+     * Converts every pixel to HSLA, lets `map` adjust the components in place and converts back
+     * (the same math as {@link Image.rgbaToHSLA} and {@link Image.hslaToColor}, without allocating per pixel)
      * @internal
      */
-    protected __map_hsla__(map: (h: number, s: number, l: number, a: number) => Color): this {
+    protected __map_hsla__(map: (hsla: HSLA) => void): this {
         const bitmap = this.bitmap;
-        const view = new DataView(bitmap.buffer, bitmap.byteOffset, bitmap.byteLength);
+        const hsla: HSLA = { h: 0, s: 0, l: 0, a: 0 };
+        const pixels = new Uint32Array(bitmap.buffer, bitmap.byteOffset, bitmap.length >> 2);
+
+        // results of recently seen colors (direct mapped by a hash of the color), images often repeat colors
+        const keys = new Uint32Array(4096), values = new Uint32Array(4096);
+        keys[0] = 1; // so the empty slot 0 can't match the color 0
 
         for (let i = 0; i < bitmap.length; i += 4) {
-            const [h, s, l, a] = Image.rgbaToHSLA(bitmap[i], bitmap[i + 1], bitmap[i + 2], bitmap[i + 3]);
-            view.setUint32(i, map(h, s, l, a), false);
+            const color = pixels[i >> 2];
+            const slot = Math.imul(color, 0x9e3779b1) >>> 20;
+            if (keys[slot] === color) {
+                pixels[i >> 2] = values[slot];
+                continue;
+            }
+
+            const r = bitmap[i] / 255, g = bitmap[i + 1] / 255, b = bitmap[i + 2] / 255;
+            const max = Math.max(r, g, b), min = Math.min(r, g, b);
+            const l = (max + min) / 2;
+            let h = 0, s = 0;
+
+            if (max !== min) {
+                const d = max - min;
+                s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+                else if (max === g) h = (b - r) / d + 2;
+                else h = (r - g) / d + 4;
+                h /= 6;
+            }
+
+            hsla.h = h;
+            hsla.s = s;
+            hsla.l = l;
+            hsla.a = bitmap[i + 3] / 255;
+            map(hsla);
+
+            // see hslaToColor
+            const nh = wrapHue(hsla.h);
+            const ns = Math.min(1, Math.max(0, hsla.s));
+            const nl = Math.min(1, Math.max(0, hsla.l));
+            const na = Math.min(1, Math.max(0, hsla.a));
+
+            if (ns === 0) bitmap[i] = bitmap[i + 1] = bitmap[i + 2] = Math.round(nl * 255);
+            else {
+                const q = nl < 0.5 ? nl * (1 + ns) : nl + ns - nl * ns;
+                const p = 2 * nl - q;
+                bitmap[i] = Math.round(hue2rgb(p, q, nh + 1 / 3) * 255);
+                bitmap[i + 1] = Math.round(hue2rgb(p, q, nh) * 255);
+                bitmap[i + 2] = Math.round(hue2rgb(p, q, nh - 1 / 3) * 255);
+            }
+            bitmap[i + 3] = Math.round(na * 255);
+
+            keys[slot] = color;
+            values[slot] = pixels[i >> 2];
         }
 
         return this;
@@ -957,30 +1004,50 @@ export class Image {
         const s8 = this.bitmap, d8 = out.bitmap;
 
         // bilinear sampling of the counterclockwise rotated source, with premultiplied alpha
-        let r = 0, g = 0, b = 0, a = 0;
-        const sample = (px: number, py: number, weight: number): void => {
-            if (px < 0 || py < 0 || px >= width || py >= height || weight === 0) return;
-            const i = 4 * (py * width + px);
-            const wa = weight * s8[i + 3];
-            r += wa * s8[i];
-            g += wa * s8[i + 1];
-            b += wa * s8[i + 2];
-            a += wa;
-        };
-
         for (let oy = 0; oy < outHeight; oy++) {
             for (let ox = 0; ox < outWidth; ox++) {
                 const dx = ox + 0.5 - outWidth / 2, dy = oy + 0.5 - outHeight / 2;
                 const sx = dx * cos - dy * sin + width / 2 - 0.5;
                 const sy = dx * sin + dy * cos + height / 2 - 0.5;
                 const x0 = Math.floor(sx), y0 = Math.floor(sy);
-                const fx = sx - x0, fy = sy - y0;
+                if (x0 < -1 || y0 < -1 || x0 >= width || y0 >= height) continue;
 
-                r = g = b = a = 0;
-                sample(x0, y0, (1 - fx) * (1 - fy));
-                sample(x0 + 1, y0, fx * (1 - fy));
-                sample(x0, y0 + 1, (1 - fx) * fy);
-                sample(x0 + 1, y0 + 1, fx * fy);
+                const fx = sx - x0, fy = sy - y0;
+                const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
+                let r = 0, g = 0, b = 0, a = 0;
+
+                // taps outside the source are skipped (zero weight taps add nothing either way)
+                const left = x0 >= 0, right = x0 + 1 < width, top = y0 >= 0, bottom = y0 + 1 < height;
+                let i = 4 * (y0 * width + x0);
+                if (top && left) {
+                    const wa = w00 * s8[i + 3];
+                    r += wa * s8[i];
+                    g += wa * s8[i + 1];
+                    b += wa * s8[i + 2];
+                    a += wa;
+                }
+                if (top && right) {
+                    const wa = w10 * s8[i + 7];
+                    r += wa * s8[i + 4];
+                    g += wa * s8[i + 5];
+                    b += wa * s8[i + 6];
+                    a += wa;
+                }
+                i += 4 * width;
+                if (bottom && left) {
+                    const wa = w01 * s8[i + 3];
+                    r += wa * s8[i];
+                    g += wa * s8[i + 1];
+                    b += wa * s8[i + 2];
+                    a += wa;
+                }
+                if (bottom && right) {
+                    const wa = w11 * s8[i + 7];
+                    r += wa * s8[i + 4];
+                    g += wa * s8[i + 5];
+                    b += wa * s8[i + 6];
+                    a += wa;
+                }
 
                 if (a <= 0) continue;
                 // the clamped bitmap rounds on assignment
@@ -1137,9 +1204,9 @@ export class Image {
 
     /**
      * Applies a fisheye (barrel distortion) effect
-     * @param [radius=2] The distortion strength, higher values bulge the center more
+     * @param [strength=2] The distortion strength (exponent of the radial mapping), higher values bulge the center more
      */
-    fisheye(radius = 2): this {
+    fisheye(strength = 2): this {
         const r = new Image(this.width, this.height);
 
         const w = this.width;
@@ -1158,7 +1225,7 @@ export class Image {
                     continue;
                 }
 
-                const dis = 2 * dfc ** radius;
+                const dis = 2 * dfc ** strength;
                 const nx = Math.floor((dis * xco / dfc + 0.5) * w);
                 const ny = Math.floor((dis * yco / dfc + 0.5) * h);
                 if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
@@ -1186,7 +1253,7 @@ export class Image {
 
     /**
      * Encodes the image into a PNG
-     * @param [compression=1] The compression level to use (0-9), or the metadata
+     * @param [compression=1] The compression level (0-9), or the metadata. Uses the runtime's native zlib when available
      * @param [meta={}] Image metadata
      * @return The encoded data
      */
@@ -1224,6 +1291,15 @@ export class Image {
             Source: source,
             Comment: comment
         });
+    }
+
+    /**
+     * Encodes the image into a PNG, an alias of {@link Image.encode}
+     */
+    encodePNG(compression?: number, metadata?: PNGMetadata): Promise<Uint8Array>;
+    encodePNG(metadata?: PNGMetadata): Promise<Uint8Array>;
+    encodePNG(compression?: number | PNGMetadata, metadata?: PNGMetadata): Promise<Uint8Array> {
+        return this.encode(compression as number, metadata);
     }
 
     /**
@@ -1319,14 +1395,14 @@ export class Image {
     /**
      * Creates a new image containing the rendered text.
      * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use
-     * @param scale Font size to use
+     * @param size Font size in pixels (per em)
      * @param text Text to render
      * @param [color=0xffffffff] Text color to use
      * @param [layout] The text layout to use
      * @return The rendered text
      */
-    static async renderText(font: BinaryData, scale: number, text: string, color: Color = 0xffffffff, layout: TextLayout = new TextLayout()): Promise<Image> {
-        const {width, height, coverage} = textRenderer.render(view(font), scale, text, layout);
+    static async renderText(font: BinaryData, size: number, text: string, color: Color = 0xffffffff, layout: TextLayout = new TextLayout()): Promise<Image> {
+        const {width, height, coverage} = textRenderer.render(view(font), size, text, layout);
         const [r, g, b, a] = Image.colorToRGBA(color);
 
         const image = new Image(width, height);
@@ -1361,4 +1437,26 @@ function circleCoverage(px: number, py: number, cx: number, cy: number, radius: 
     if (d <= radius - Math.SQRT1_2) return 1;
     if (d >= radius + Math.SQRT1_2) return 0;
     return pixelCoverage(px, py, (x, y) => (x - cx) ** 2 + (y - cy) ** 2 <= radius * radius);
+}
+
+interface HSLA {
+    h: number;
+    s: number;
+    l: number;
+    a: number;
+}
+
+// wraps a hue into 0..1 (negative hues included), exactly like (h % 1 + 1) % 1 but without the slow float modulo
+function wrapHue(h: number): number {
+    const t = h - Math.trunc(h) + 1;
+    return t < 1 ? t : t < 2 ? t - 1 : 0;
+}
+
+function hue2rgb(p: number, q: number, t: number): number {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
 }

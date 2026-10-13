@@ -644,24 +644,63 @@ export function decompress(data: Uint8Array, limit: number): Uint8Array {
     return inflate(data.subarray(2), new u8(limit));
 }
 
-// DecompressionStream is part of the web platform (Node, Deno, Bun, browsers), but not of every JS engine,
-// so it is accessed through minimal local types instead of depending on DOM or Node type definitions
+// native zlib, accessed through feature detection with minimal local types instead of depending on DOM or Node type
+// definitions: node:zlib (Node, Bun and Deno expose it through process.getBuiltinModule, without an import) is the
+// fastest and honors compression levels; DecompressionStream is part of the web platform
+
+interface NodeZlib {
+    deflateSync(data: Uint8Array, options: { level: number }): Uint8Array;
+    inflateSync(data: Uint8Array, options: { maxOutputLength: number, finishFlush: number }): Uint8Array;
+    constants: { Z_SYNC_FLUSH: number };
+}
+
 interface StreamReader {
     read(): Promise<{ done: boolean, value?: Uint8Array }>;
     cancel(): Promise<void>;
 }
 
-interface WebStreams {
+interface Globals {
+    process?: { getBuiltinModule?: (id: string) => unknown };
     DecompressionStream?: new (format: 'deflate') => unknown;
     Blob?: new (parts: Uint8Array[]) => { stream(): { pipeThrough(transform: unknown): { getReader(): StreamReader } } };
 }
 
-const { DecompressionStream: NativeDecompression, Blob: NativeBlob } = globalThis as unknown as WebStreams;
+const { process: runtime, DecompressionStream: NativeDecompression, Blob: NativeBlob } = globalThis as unknown as Globals;
+
+const nodeZlib = ((): NodeZlib | null => {
+    try {
+        return (runtime && runtime.getBuiltinModule && runtime.getBuiltinModule('node:zlib') as NodeZlib) || null;
+    } catch {
+        return null;
+    }
+})();
+
+// plain Uint8Array view of a node Buffer
+const plain = (buffer: Uint8Array): Uint8Array => new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+
+/**
+ * Compresses data into a zlib stream, with the runtime's native zlib when available
+ * @param level compression level 0-9
+ */
+export async function compressAsync(data: Uint8Array, level: number): Promise<Uint8Array> {
+    level = Math.min(9, Math.max(0, level | 0));
+    if (nodeZlib) return plain(nodeZlib.deflateSync(data, { level }));
+    return compress(data, level);
+}
 
 /**
  * Decompresses a zlib stream into at most limit bytes, using the runtime's native zlib when available
  */
 export async function decompressAsync(data: Uint8Array, limit: number): Promise<Uint8Array> {
+    if (nodeZlib) {
+        try {
+            // a sync flush tolerates truncated streams, the output limit protects against zip bombs
+            return plain(nodeZlib.inflateSync(data, { maxOutputLength: limit, finishFlush: nodeZlib.constants.Z_SYNC_FLUSH }));
+        } catch {
+            // e.g. more data than expected, handled below
+        }
+    }
+
     if (!NativeDecompression || !NativeBlob) return decompress(data, limit);
 
     const out = new Uint8Array(limit);

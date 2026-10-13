@@ -1,5 +1,6 @@
 const {Image} = require('..');
 const fs = require('fs').promises;
+const samePixels = require('./util/pixels');
 
 (async () => {
     const [backgroundSVG, avatarBinary, badges, font] = await Promise.all([
@@ -106,6 +107,6 @@ const fs = require('fs').promises;
     if (process.env.OVERWRITE_TEST)
         await fs.writeFile('./tests/targets/readme.png', encoded);
 
-    if (!(await fs.readFile('./tests/targets/readme.png')).equals(Buffer.from(encoded)))
+    if (!await samePixels(await fs.readFile('./tests/targets/readme.png'), encoded))
         process.exit(1);
 })();

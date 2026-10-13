@@ -305,4 +305,27 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         assert(size < 20000, `PNG: gradient should compress well with row filters, got ${size} bytes`);
         assert(Buffer.from((await Image.decode(await gradient.encode(9))).bitmap).equals(Buffer.from(gradient.bitmap)), 'PNG: filtered roundtrip failed');
     }
+
+    // invertHue shifts to the complementary hue, invertValue is the deprecated name of invertLightness
+    {
+        const orange = new Image(1, 1).fill(Image.rgbToColor(255, 128, 0));
+        assert(rgba(orange.clone().invertHue(), 0, 0).join() === '0,127,255,255', 'invertHue should give the complementary color, got ' + rgba(orange.clone().invertHue(), 0, 0));
+        assert(orange.clone().invertHue().invertHue().getPixelAt(0, 0) === orange.getPixelAt(0, 0), 'invertHue twice should restore the color');
+        assert(orange.clone().invertValue().getPixelAt(0, 0) === orange.clone().invertLightness().getPixelAt(0, 0), 'invertValue should equal invertLightness');
+    }
+
+    // encodePNG is an alias of encode
+    {
+        const image = new Image(3, 3).fill((x, y) => Image.rgbaToColor(x * 80, y * 80, 7, 200));
+        const meta = {creationTime: 0, software: 'test'};
+        assert(Buffer.from(await image.encodePNG(meta)).equals(Buffer.from(await image.encode(meta))), 'encodePNG(meta) should equal encode(meta)');
+        assert(Buffer.from(await image.encodePNG(0, meta)).equals(Buffer.from(await image.encode(0, meta))), 'encodePNG(level, meta) should equal encode(level, meta)');
+    }
+
+    // gif frame durations are rounded to centiseconds
+    {
+        const gif = new GIF([new Frame(2, 2, 16), new Frame(2, 2, 14)]);
+        const decoded = await GIF.decode(await gif.encode());
+        assert(decoded[0].duration === 20 && decoded[1].duration === 10, `gif durations should round, got ${decoded[0].duration}, ${decoded[1].duration}`);
+    }
 })();

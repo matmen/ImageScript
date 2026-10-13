@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const {Image} = require('..');
+const samePixels = require('./util/pixels');
 
 (async () => {
     const input = await fs.readFile('./tests/targets/external.png');
@@ -15,7 +16,7 @@ const {Image} = require('..');
 
         const target = await fs.readFile('./tests/targets/flip-horizontal.png');
 
-        if (!Buffer.from(target).equals(Buffer.from(output)))
+        if (!await samePixels(target, output))
             process.exit(1);
     }
 
@@ -30,7 +31,7 @@ const {Image} = require('..');
 
         const target = await fs.readFile('./tests/targets/flip-vertical.png');
 
-        if (!Buffer.from(target).equals(Buffer.from(output)))
+        if (!await samePixels(target, output))
             process.exit(1);
     }
 })();

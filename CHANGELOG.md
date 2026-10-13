@@ -33,8 +33,11 @@ supports (including Alpine/musl and bundled serverless functions).
 - **Text is laid out with subpixel precision and kerning** (GPOS and kern tables). Glyph advances used to be rounded
   up to whole pixels, so text gets narrower and more evenly spaced.
 - **`encode()`** writes the smallest lossless PNG color type: a palette for images with up to 256 colors, otherwise
-  greyscale or RGB, with an alpha channel only if needed. Rows of non-palette images are filtered adaptively, which
-  makes photos about 25% and gradients up to 97% smaller, at the cost of slightly slower encoding.
+  greyscale or RGB, with an alpha channel only if needed. Rows of non-palette images are paeth filtered, which makes
+  photos about 25% and gradients up to 95% smaller. Compression uses the runtime's native zlib when available
+  (node:zlib), which is several times faster than the JS fallback.
+- **`invertHue()`** shifts every hue to its complementary hue (180 degrees). It used to mirror the hue (`h -> 1 - h`),
+  which kept reds red and swapped greens and blues.
 - **`rotate()`** is documented as counterclockwise, which it always was.
 - **`averageColor()`** weights pixels by their opacity.
 
@@ -56,10 +59,15 @@ supports (including Alpine/musl and bundled serverless functions).
 - `cover()` could return an image a pixel smaller than requested, `contain()` one a pixel smaller than the box
 - Big endian TIFFs weren't recognized, and most TIFFs failed to decode
 - Text alignment was ignored (#37)
-- `invert()`, `dominantColor()` and `rotate()` are several times faster
+- GIF frame durations were truncated to centiseconds (16 ms became 10 ms), they are rounded now
+- `invert()`, `dominantColor()`, `rotate()`, `hueShift()`, `lightness()`, `saturation()` and the other HSL based
+  functions are several times faster; PNG decoding uses native zlib when available
 
 ### New
 
+- `invertLightness()`, the new name of `invertValue()` (deprecated, it inverts HSL lightness rather than HSV value)
+- `encodePNG()`, an alias of `encode()`
+- Parameter names describe what they are: `red/green/blue(factor)`, `renderText(font, size, ...)`, `fisheye(strength)`
 - Resize modes `Image.RESIZE_BILINEAR` (default), `Image.RESIZE_BICUBIC` and `Image.RESIZE_AREA`, all usable with
   `resize`, `scale`, `contain`, `fit`, `cover` and `GIF.resize`
 
