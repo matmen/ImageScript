@@ -473,18 +473,26 @@ class Image {
     }
 
     /**
-     * Crops an image to the specified dimensions
-     * @param {number} x The x offset
-     * @param {number} y The y offset
+     * Crops an image to the specified dimensions.
+     * The region is clipped to the image, so the result can be smaller than the requested size
+     * @param {number} x The x offset (0-based)
+     * @param {number} y The y offset (0-based)
      * @param {number} width The new images width
      * @param {number} height The new images height
      * @returns {Image}
      */
     crop(x, y, width, height) {
-        if (width > this.width) width = this.width;
-        if (height > this.height) height = this.height;
+        x = ~~x;
+        y = ~~y;
+        width = ~~width;
+        height = ~~height;
 
-        return this.__apply__(this.__crop__(~~x, ~~y, ~~width, ~~height));
+        const left = Math.max(0, x), top = Math.max(0, y);
+        const right = Math.min(this.width, x + width), bottom = Math.min(this.height, y + height);
+        if (right <= left || bottom <= top)
+            throw new RangeError('Crop region does not overlap the image');
+
+        return this.__apply__(this.__crop__(left, top, right - left, bottom - top));
     }
 
     /**
@@ -550,26 +558,18 @@ class Image {
      * @param {number} color
      */
     __fast_box__(x, y, width, height, color) {
-        if (x < 0) {
-            width += x;
-            x = 0;
-        }
+        const left = Math.max(0, x), top = Math.max(0, y);
+        const right = Math.min(this.width, x + width), bottom = Math.min(this.height, y + height);
+        if (right <= left || bottom <= top) return this;
 
-        if (y < 0) {
-            height += y;
-            y = 0;
-        }
+        // fill the first row, then copy it to the others
+        for (let xPos = left; xPos < right; xPos++)
+            this.__view__.setUint32(4 * (xPos + top * this.width), color);
 
-        const right = Math.max(Math.min(x + width, this.width), 1);
-        let xPos = right;
-        while (x <= --xPos)
-            this.__view__.setUint32(4 * (xPos + y * this.width), color);
-        const end = 4 * (right + y * this.width);
-        const start = 4 * (x + y * this.width);
-
-        let bottom = Math.max(Math.min(y + height, this.height), 1);
-        while (y < --bottom)
-            this.bitmap.copyWithin(4 * (x + bottom * this.width), start, end);
+        const start = 4 * (left + top * this.width);
+        const end = 4 * (right + top * this.width);
+        for (let row = top + 1; row < bottom; row++)
+            this.bitmap.copyWithin(4 * (left + row * this.width), start, end);
 
         return this;
     }
@@ -830,20 +830,21 @@ class Image {
     }
 
     /**
-     * Gets the average color of the image
-     * @returns {number}
+     * Gets the average color of the image, weighting each pixel by its opacity
+     * @returns {number} The average color (fully opaque), black for fully transparent images
      */
     averageColor() {
-        let colorAvg = [0, 0, 0];
-        let divisor = 0;
-        for (let idx = 0; idx < this.bitmap.length; idx += 4) {
-            const rgba = this.bitmap.subarray(idx, idx + 4);
-            for (let i = 0; i < 3; i++)
-                colorAvg[i] += rgba[i];
-            divisor += rgba[3] / 255;
+        let r = 0, g = 0, b = 0, weight = 0;
+        for (let i = 0; i < this.bitmap.length; i += 4) {
+            const a = this.bitmap[i + 3];
+            r += this.bitmap[i] * a;
+            g += this.bitmap[i + 1] * a;
+            b += this.bitmap[i + 2] * a;
+            weight += a;
         }
 
-        return Image.rgbaToColor(...colorAvg.map(v => v / divisor), 0xff);
+        if (!weight) return Image.rgbaToColor(0, 0, 0, 0xff);
+        return Image.rgbaToColor(Math.round(r / weight), Math.round(g / weight), Math.round(b / weight), 0xff);
     }
 
     /**
@@ -851,11 +852,12 @@ class Image {
      * @param {boolean} [ignoreBlack=true] Whether to ignore dark colors below the threshold
      * @param {boolean} [ignoreWhite=true] Whether to ignore light colors above the threshold
      * @param {number} [bwThreshold=0xf] The black/white threshold (0-64)
-     * @return {number} The images dominant color
+     * @return {number} The images dominant color (fully transparent pixels are ignored)
      */
     dominantColor(ignoreBlack = true, ignoreWhite = true, bwThreshold = 0xf) {
-        const colorCounts = new Array(0x3ffff);
+        const colorCounts = new Array(0x40000);
         for (let i = 0; i < this.bitmap.length; i += 4) {
+            if (this.bitmap[i + 3] === 0) continue;
             const color = this.__view__.getUint32(i, false);
             const [h, s, l] = Image.rgbaToHSLA(...Image.colorToRGBA(color)).map(v => (~~(v * 0x3f)));
             if (ignoreBlack && l < bwThreshold) continue;
@@ -872,8 +874,12 @@ class Image {
             mostProminentValue = i;
         });
 
-        if (mostProminentValue === -1)
-            return this.dominantColor(ignoreBlack, ignoreWhite, bwThreshold - 1);
+        // nothing left after ignoring dark/light colors: relax the threshold
+        if (maxColorCount === -1) {
+            if (bwThreshold > 0 && (ignoreBlack || ignoreWhite))
+                return this.dominantColor(ignoreBlack, ignoreWhite, bwThreshold - 1);
+            return Image.rgbaToColor(0, 0, 0, 0xff);
+        }
 
         const h = (mostProminentValue >>> 12) & 0x3f;
         const s = (mostProminentValue >>> 6) & 0x3f;
@@ -978,12 +984,10 @@ class Image {
     __apply__(image) {
         this.__width__ = image.__width__;
         this.__height__ = image.__height__;
+        this.__buffer__ = image.__buffer__;
         this.__view__ = image.__view__;
         this.__u32__ = image.__u32__;
         this.bitmap = image.bitmap;
-
-        if (image instanceof Frame)
-            return Frame.from(this, image.duration, image.xOffset, image.yOffset, image.disposalMode);
 
         return this;
     }
@@ -1100,10 +1104,15 @@ class Image {
             const g = sg + position * eg;
             const b = sb + position * eb;
             const a = sa + position * ea;
-            return (((r & 0xff) << 24) | ((g & 0xff) << 16) | ((b & 0xff) << 8) | (a & 0xff));
+            return (((r & 0xff) << 24) | ((g & 0xff) << 16) | ((b & 0xff) << 8) | (a & 0xff)) >>> 0;
         };
     }
 
+    /**
+     * Applies a fisheye (barrel distortion) effect
+     * @param {number} [radius=2] The distortion strength, higher values bulge the center more
+     * @returns {Image}
+     */
     fisheye(radius = 2) {
         const r = new Image(this.width, this.height);
 
@@ -1111,25 +1120,26 @@ class Image {
         const h = this.height;
         const tu32 = this.__u32__;
         const ru32 = r.__u32__;
-        const iw = 1 / w;
-        const ih = 1 / h;
 
-        for (const [x, y] of this) {
-            const xco = x * iw - .5;
-            const yco = y * ih - .5;
-            const dfc = Math.sqrt(xco ** 2 + yco ** 2);
-            const dis = 2 * dfc ** radius;
-            const nx = ((dis * xco / dfc + 0.5) * w) | 0;
-            const ny = ((dis * yco / dfc + 0.5) * h) | 0;
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const xco = (x + 0.5) / w - 0.5;
+                const yco = (y + 0.5) / h - 0.5;
+                const dfc = Math.sqrt(xco ** 2 + yco ** 2);
 
-            if (nx < 1 || nx > w || ny < 1 || ny > h || isNaN(nx) || isNaN(ny))
-                continue;
+                if (dfc === 0) {
+                    ru32[y * w + x] = tu32[y * w + x];
+                    continue;
+                }
 
-            ru32[y * w + x] = tu32[w * ny + nx];
+                const dis = 2 * dfc ** radius;
+                const nx = Math.floor((dis * xco / dfc + 0.5) * w);
+                const ny = Math.floor((dis * yco / dfc + 0.5) * h);
+                if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+
+                ru32[y * w + x] = tu32[ny * w + nx];
+            }
         }
-
-        const cO = tu32.length * .5 + w / 2;
-        ru32[cO] = tu32[cO];
 
         return this.__apply__(r);
     }
@@ -1150,11 +1160,18 @@ class Image {
 
     /**
      * Encodes the image into a PNG
-     * @param {number} compression The compression level to use (0-9)
+     * @param {number|PNGMetadata} [compression=1] The compression level to use (0-9), or the metadata
      * @param {PNGMetadata} [meta={}] Image metadata
      * @return {Promise<Uint8Array>} The encoded data
      */
-    async encode(compression = 1, {
+    async encode(compression = 1, meta = {}) {
+        if (typeof compression === 'object' && compression !== null) {
+            meta = compression;
+            compression = 1;
+        }
+
+        compression = Math.min(9, Math.max(0, ~~compression));
+        const {
         title,
         author,
         description,
@@ -1165,7 +1182,8 @@ class Image {
         warning,
         source,
         comment
-    } = {}) {
+    } = meta || {};
+
         return png.encode(this.bitmap, {
             width: this.width,
             height: this.height,
@@ -1406,16 +1424,31 @@ class Frame extends Image {
         return frame;
     }
 
+    /**
+     * Clones the frame, including its duration, offsets and disposal mode
+     * @returns {Frame}
+     */
+    clone() {
+        return Frame.from(this, this.duration, this.xOffset, this.yOffset, this.disposalMode);
+    }
+
+    /**
+     * Resizes the frame, scaling its offsets along with it
+     * @param {number} width The new width
+     * @param {number} height The new height
+     * @param {string} [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @returns {Frame}
+     */
     resize(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
         const originalWidth = this.width;
         const originalHeight = this.height;
 
-        const result = super.resize(width, height, mode);
+        super.resize(width, height, mode);
 
-        this.xOffset *= result.width / originalWidth;
-        this.yOffset *= result.height / originalHeight;
+        this.xOffset = Math.round(this.xOffset * this.width / originalWidth);
+        this.yOffset = Math.round(this.yOffset * this.height / originalHeight);
 
-        return result;
+        return this;
     }
 }
 
@@ -1478,6 +1511,14 @@ class GIF extends Array {
     }
 
     /**
+     * Array methods like map and filter return plain arrays
+     * @private
+     */
+    static get [Symbol.species]() {
+        return Array;
+    }
+
+    /**
      * @returns {Generator<Frame, void, *>}
      */
     * [Symbol.iterator]() {
@@ -1485,13 +1526,14 @@ class GIF extends Array {
             yield this[i];
     }
 
+    /**
+     * Returns a new GIF containing a range of this GIFs frames (same semantics as Array.prototype.slice)
+     * @param {number} [start=0]
+     * @param {number} [end=this.length]
+     * @returns {GIF}
+     */
     slice(start, end) {
-        if (end === Infinity)
-            end = this.length;
-        const frames = new Array(end - start);
-        for (let i = 0; i < frames.length; i++)
-            frames[i] = this[i + start];
-        return new GIF(frames, this.loopCount);
+        return new GIF(Array.prototype.slice.call(this, start, end), this.loopCount);
     }
 
     /**
@@ -1548,9 +1590,31 @@ class GIF extends Array {
         return new GIF(frames, decoded.loopCount);
     }
 
+    /**
+     * Resizes the GIF to the given dimensions, scaling every frame and its offsets proportionally.
+     * Use {@link Image.RESIZE_AUTO} as either width or height to automatically preserve the aspect ratio.
+     * @param {number} width The new width
+     * @param {number} height The new height
+     * @param {string} [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @returns {GIF}
+     */
     resize(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
-        for (const frame of this)
-            frame.resize(width, height, mode);
+        const originalWidth = this.width, originalHeight = this.height;
+        if (width === Image.RESIZE_AUTO && height === Image.RESIZE_AUTO) throw new Error('RESIZE_AUTO can only be used for either width or height, not for both');
+        if (width === Image.RESIZE_AUTO) width = originalWidth / originalHeight * height;
+        if (height === Image.RESIZE_AUTO) height = originalHeight / originalWidth * width;
+
+        const sx = width / originalWidth, sy = height / originalHeight;
+        for (const frame of this) {
+            // scale both edges so adjacent frames stay aligned
+            const left = Math.round(frame.xOffset * sx), top = Math.round(frame.yOffset * sy);
+            const right = Math.round((frame.xOffset + frame.width) * sx), bottom = Math.round((frame.yOffset + frame.height) * sy);
+            Image.prototype.resize.call(frame, Math.max(1, right - left), Math.max(1, bottom - top), mode);
+            frame.xOffset = left;
+            frame.yOffset = top;
+        }
+
+        return this;
     }
 }
 
@@ -1558,11 +1622,11 @@ class TextLayout {
     /**
      * Layout options for {@link Image.renderText}
      * @param {object} [options]
-     * @param {number} [options.maxWidth=Infinity] The texts max width
-     * @param {number} [options.maxHeight=Infinity] The texts max height
+     * @param {number} [options.maxWidth=Infinity] The texts max width, longer lines are wrapped
+     * @param {number} [options.maxHeight=Infinity] The texts max height, lines that don't fit are cut off
      * @param {string} [options.wrapStyle='word'] The texts wrap style when reaching the max width (word, char)
-     * @param {string} [options.verticalAlign='left'] The vertical align mode (left, center, right)
-     * @param {string} [options.horizontalAlign='top'] The horizontal align mode (top, middle, bottom)
+     * @param {string} [options.horizontalAlign='left'] The horizontal alignment of the lines (left, center, right), relative to the widest line
+     * @param {string} [options.verticalAlign='top'] Which lines to keep when cutting off at the max height (top, middle, bottom)
      * @param {boolean} [options.wrapHardBreaks=true] Whether to force wrap at new line characters
      */
     constructor(options) {
@@ -1580,13 +1644,18 @@ class TextLayout {
         if (!['word', 'char'].includes(this.wrapStyle))
             throw new RangeError('Invalid wrapStyle');
 
-        this.verticalAlign = verticalAlign || 'left';
-        if (!['left', 'center', 'right'].includes(this.verticalAlign))
-            throw new RangeError('Invalid verticalAlign');
+        // before 3.0 the two alignment options had each other's names, accept those values too
+        const horizontal = ['left', 'center', 'right'];
+        const vertical = ['top', 'middle', 'bottom'];
+        this.horizontalAlign = 'left';
+        this.verticalAlign = 'top';
 
-        this.horizontalAlign = horizontalAlign || 'top';
-        if (!['top', 'middle', 'bottom'].includes(this.horizontalAlign))
-            throw new RangeError('Invalid horizontalAlign');
+        for (const value of [horizontalAlign, verticalAlign]) {
+            if (value === undefined) continue;
+            if (horizontal.includes(value)) this.horizontalAlign = value;
+            else if (vertical.includes(value)) this.verticalAlign = value;
+            else throw new RangeError(`Invalid alignment: ${value}`);
+        }
 
         this.wrapHardBreaks = typeof wrapHardBreaks === 'undefined' ? true : wrapHardBreaks;
         if (typeof this.wrapHardBreaks !== 'boolean')

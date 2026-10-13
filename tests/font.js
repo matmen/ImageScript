@@ -75,8 +75,8 @@ const panic = message => {
 
         // alignment is relative to the widest line
         const left = await render('Hi\nHello there');
-        const center = await render('Hi\nHello there', {verticalAlign: 'center'});
-        const right = await render('Hi\nHello there', {verticalAlign: 'right'});
+        const center = await render('Hi\nHello there', {horizontalAlign: 'center'});
+        const right = await render('Hi\nHello there', {verticalAlign: 'right'}); // pre 3.0 option name
         const row = 30;
         if (!(inkStart(left, row) < inkStart(center, row) && inkStart(center, row) < inkStart(right, row)))
             panic('layout: horizontal alignment has no effect');
@@ -89,7 +89,7 @@ const panic = message => {
 
         // maxHeight keeps whole lines, chosen by the vertical alignment
         const top = await render('one\ntwo\nthree\nfour\nfive', {maxHeight: 120});
-        const bottom = await render('one\ntwo\nthree\nfour\nfive', {maxHeight: 120, horizontalAlign: 'bottom'});
+        const bottom = await render('one\ntwo\nthree\nfour\nfive', {maxHeight: 120, verticalAlign: 'bottom'});
         if (top.height !== 110 || bottom.height !== 110) panic('layout: maxHeight failed');
         if (Buffer.from(top.bitmap).equals(Buffer.from(bottom.bitmap))) panic('layout: vertical alignment has no effect');
     }

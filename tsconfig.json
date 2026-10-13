@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "es6",
+    "target": "es2020",
     "module": "commonjs",
     "strict": true,
     "noImplicitAny": true,
@@ -14,8 +14,8 @@
     "moduleResolution": "node",
     "allowJs": true,
     "allowSyntheticDefaultImports": true,
-    "skipLibCheck": true,
-    "lib": ["es6"]
+    "skipLibCheck": false,
+    "lib": ["es2020"]
   },
   "files": ["ImageScript.d.ts"]
 }

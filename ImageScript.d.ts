@@ -1,93 +1,89 @@
+/**
+ * Colors are 32-bit RGBA integers (`0xRRGGBBAA`), e.g. `0xff0000ff` for opaque red.
+ *
+ * Coordinates: pixel access ({@link Image.getPixelAt}, {@link Image.setPixelAt}, {@link Image.getRGBAAt}),
+ * {@link Image.drawBox}, {@link Image.drawCircle}, iteration and {@link ColorFunction}s use 1-based coordinates,
+ * {@link Image.crop} and {@link Image.composite} use 0-based offsets.
+ */
 export class Image {
-  private __width__: number;
-  private __height__: number;
-  private __buffer__: ArrayBuffer;
-  private __view__: DataView;
-  private __u32__: Uint32Array;
+  /** The image's RGBA pixel data */
   bitmap: Uint8ClampedArray;
 
+  /**
+   * Creates a new, fully transparent image.
+   */
   constructor(width: number, height: number);
-
-  private toString(): `Image<${number}x${number}>`;
 
   get width(): number;
 
   get height(): number;
 
-  *[Symbol.iterator](): void;
+  /** Yields the 1-based `[x, y]` coordinates of every pixel. */
+  [Symbol.iterator](): Generator<[x: number, y: number], void, unknown>;
 
-  *iterateWithColors(): Generator<
-    [x: number, y: number, color: number],
-    void,
-    unknown
->;
+  /** Yields `[x, y, color]` for every pixel (1-based coordinates). */
+  iterateWithColors(): Generator<[x: number, y: number, color: number], void, unknown>;
+
+  /** Converts RGBA components (`0`-`255`) to a color. */
   static rgbaToColor(r: number, g: number, b: number, a: number): number;
 
+  /** Converts RGB components (`0`-`255`) to an opaque color. */
   static rgbToColor(r: number, g: number, b: number): number;
 
+  /** Converts HSLA components (`0`-`1`) to a color. */
   static hslaToColor(h: number, s: number, l: number, a: number): number;
 
+  /** Converts HSL components (`0`-`1`) to an opaque color. */
   static hslToColor(h: number, s: number, l: number): number;
 
-  static rgbaToHSLA(r: number, g: number, b: number, a: number): number[];
+  /** Converts RGBA components (`0`-`255`) to HSLA components (`0`-`1`). */
+  static rgbaToHSLA(r: number, g: number, b: number, a: number): [h: number, s: number, l: number, a: number];
 
-  static colorToRGBA(color: number): number[];
+  static colorToRGBA(color: number): [r: number, g: number, b: number, a: number];
 
-  static colorToRGB(color: number): number[];
+  static colorToRGB(color: number): [r: number, g: number, b: number];
 
+  /** Gets the color of a pixel (1-based coordinates). */
   getPixelAt(x: number, y: number): number;
 
+  /** Gets a view of a pixel's RGBA components (1-based coordinates). */
   getRGBAAt(x: number, y: number): Uint8ClampedArray;
 
+  /** Sets the color of a pixel (1-based coordinates). */
   setPixelAt(x: number, y: number, pixelColor: number): this;
-
-  private __set_pixel__(x: number, y: number, pixelColor: number): void;
-
-  private __check_boundaries__(x: number, y: number): void;
-
-  private static get __out_of_bounds__(): string;
 
   /**
    * Fills the entire image with the supplied color.
-   *
-   * @param color
    */
   fill(color: number | ColorFunction): this;
 
   clone(): Image;
 
   /**
-   * Use
-   * {@link https://en.wikipedia.org/wiki/Image_scaling#Nearest-neighbor_interpolation Nearest-neighbor}
+   * Use [Nearest-neighbor](https://en.wikipedia.org/wiki/Image_scaling#Nearest-neighbor_interpolation)
    * resizing.
    */
   static get RESIZE_NEAREST_NEIGHBOR(): "RESIZE_NEAREST_NEIGHBOR";
 
   /**
-   * Used for automatically preserving an image's aspect ratio when resizing.
+   * Used for automatically preserving an image's aspect ratio when resizing,
+   * pass it as either the width or the height.
    */
   static get RESIZE_AUTO(): -1;
 
   /**
    * Resizes the image by the given factor.
    *
-   * @param factor Fraction, where:
-   *     - `0.5` is "50%" (half)
-   *     - `1.0` is "100%" (same size)
-   *     - `2.0` is "200%" (double)
+   * @param factor The factor to resize the image with
    * @param mode Default: {@link Image.RESIZE_NEAREST_NEIGHBOR}
    */
   scale(factor: number, mode?: ResizeMode): this;
-
-  private __scale__(factor: number, mode?: ResizeMode);
 
   /**
    * Resizes the image to the given dimensions.
    * Use {@link Image.RESIZE_AUTO} as either width or height to automatically
    * preserve the aspect ratio.
    *
-   * @param width The new width.
-   * @param height The new height.
    * @param mode Default: {@link Image.RESIZE_NEAREST_NEIGHBOR}
    */
   resize(width: number, height: number, mode?: ResizeMode): this;
@@ -96,68 +92,43 @@ export class Image {
    * Resizes the image so it is contained in the given bounding box.
    * Can return an image with one axis smaller than the given bounding box.
    *
-   * @param width The width of the bounding box
-   * @param height The height of the bounding box
    * @param mode Default: {@link Image.RESIZE_NEAREST_NEIGHBOR}
    */
   contain(width: number, height: number, mode?: ResizeMode): this;
 
   /**
-   * Resizes the image so it is contained in the given bounding box, placing it in the center of the given bounding box.
+   * Resizes the image so it is contained in the given bounding box, placing
+   * it in the center of the given bounding box.
    * Always returns the exact dimensions of the bounding box.
    *
-   * @param width The width of the bounding box
-   * @param height The height of the bounding box
    * @param mode Default: {@link Image.RESIZE_NEAREST_NEIGHBOR}
    */
   fit(width: number, height: number, mode?: ResizeMode): this;
 
   /**
-   * Resizes the image so it covers the given bounding box, cropping the overflowing edges.
+   * Resizes the image so it covers the given bounding box, cropping the
+   * overflowing edges.
    * Always returns the exact dimensions of the bounding box.
    *
-   * @param width The width of the bounding box
-   * @param height The height of the bounding box
    * @param mode Default: {@link Image.RESIZE_NEAREST_NEIGHBOR}
    */
   cover(width: number, height: number, mode?: ResizeMode): this;
 
-  private __resize__(width: number, height: number, mode?: ResizeMode): this;
-
-  private __resize_nearest_neighbor__(width: number, height: number): this;
-
+  /**
+   * Crops the image to the given region (0-based offsets).
+   * The region is clipped to the image, throws if it doesn't overlap it.
+   */
   crop(x: number, y: number, width: number, height: number): this;
 
-  private __crop__(x: number, y: number, width: number, height: number): this;
+  /**
+   * Draws a box at the specified coordinates (1-based), clipped to the image.
+   */
+  drawBox(x: number, y: number, width: number, height: number, color: number | ColorFunction): this;
 
   /**
-   * Draws a box at the specified coordinates.
+   * Draws a circle around the specified center (1-based) with the specified radius.
    */
-  drawBox(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    color: number | ColorFunction
-  ): this;
-
-  private __fast_box__(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    color: number
-  ): this;
-
-  /**
-   * Draws a circle at the specified coordinates with the specified radius.
-   */
-  drawCircle(
-    x: number,
-    y: number,
-    radius: number,
-    color: number | ColorFunction
-  ): this;
+  drawCircle(x: number, y: number, radius: number, color: number | ColorFunction): this;
 
   /**
    * Crops the image into a circle.
@@ -178,7 +149,7 @@ export class Image {
   opacity(opacity: number, absolute?: boolean): this;
 
   /**
-   * Set the red channel's saturation value.
+   * Sets the red channel's saturation value.
    *
    * @param saturation `0`-`1`
    * @param absolute Whether to scale the current saturation (`false`) or
@@ -187,7 +158,7 @@ export class Image {
   red(saturation: number, absolute?: boolean): this;
 
   /**
-   * Set the green channel's saturation value.
+   * Sets the green channel's saturation value.
    *
    * @param saturation `0`-`1`
    * @param absolute Whether to scale the current saturation (`false`) or
@@ -196,19 +167,13 @@ export class Image {
   green(saturation: number, absolute?: boolean): this;
 
   /**
-   * Set the blue channel's saturation value.
+   * Sets the blue channel's saturation value.
    *
    * @param saturation `0`-`1`
    * @param absolute Whether to scale the current saturation (`false`) or
    *     just set the new saturation (`true`). Default: `false`
    */
   blue(saturation: number, absolute?: boolean): this;
-
-  private __set_channel_value__(
-    value: number,
-    absolute: boolean,
-    offset: number
-  ): void;
 
   /**
    * Sets the brightness of the image.
@@ -229,43 +194,34 @@ export class Image {
   saturation(value: number, absolute?: boolean): this;
 
   /**
-   * Composites (overlays) the {@link source} onto this image at the
-   * specified coordinates.
+   * Composites (overlays) the source onto this image at the specified
+   * 0-based offset, using source-over alpha blending.
    */
-  composite(source: this, x?: number, y?: number): this;
+  composite(source: Image, x?: number, y?: number): this;
 
-  /**
-   * Inverts the image's colors.
-   */
+  /** Inverts the image's colors. */
   invert(): this;
 
-  /**
-   * Inverts the image's value (lightness).
-   */
+  /** Inverts the image's value (lightness). */
   invertValue(): this;
 
-  /**
-   * Inverts the image's saturation.
-   */
+  /** Inverts the image's saturation. */
   invertSaturation(): this;
 
-  /**
-   * Inverts the image's hue.
-   */
+  /** Inverts the image's hue. */
   invertHue(): this;
 
-  /**
-   * Shifts the image's hue.
-   */
+  /** Shifts the image's hue by the given amount of degrees. */
   hueShift(degrees: number): this;
 
   /**
-   * Gets the average color of the image.
+   * Gets the average color of the image, weighting each pixel by its
+   * opacity. The result is opaque, black for fully transparent images.
    */
   averageColor(): number;
 
   /**
-   * Gets the image's dominant color.
+   * Gets the image's dominant color, fully transparent pixels are ignored.
    *
    * @param ignoreBlack Whether to ignore dark colors below the threshold.
    *     Default: `true`
@@ -274,14 +230,10 @@ export class Image {
    * @param bwThreshold The black/white threshold (`0`-`64`).
    *     Default: `0xf` (`15`)
    */
-  dominantColor(
-    ignoreBlack?: boolean,
-    ignoreWhite?: boolean,
-    bwThreshold?: number
-  ): number;
+  dominantColor(ignoreBlack?: boolean, ignoreWhite?: boolean, bwThreshold?: number): number;
 
   /**
-   * Rotates the image the given amount of degrees.
+   * Rotates the image counterclockwise by the given amount of degrees.
    *
    * @param angle The angle to rotate the image for (in degrees)
    * @param resize Whether to resize the image so it fits all pixels (`true`) or
@@ -294,8 +246,6 @@ export class Image {
    */
   flip(direction: "horizontal" | "vertical"): this;
 
-  private __apply__(image: this | Frame): this | Frame;
-
   /**
    * Creates a multi-point gradient generator.
    *
@@ -304,9 +254,7 @@ export class Image {
    * @returns The gradient generator. The function argument is the position
    *     in the gradient (`0`-`1`).
    */
-  static gradient(colors: {
-    [position: number]: number;
-  }): (position: number) => number;
+  static gradient(colors: { [position: number]: number }): (position: number) => number;
 
   /**
    * Rounds the image's corners.
@@ -315,10 +263,10 @@ export class Image {
    */
   roundCorners(radius?: number): this;
 
-  private static __gradient__(startColor: number, endColor: number): number;
-
   /**
-   * @param radius Default: `2`
+   * Applies a fisheye (barrel distortion) effect.
+   *
+   * @param radius The distortion strength. Default: `2`
    */
   fisheye(radius?: number): this;
 
@@ -326,87 +274,65 @@ export class Image {
    * Encodes the image into a PNG.
    *
    * @param compression `0`-`9`, where `0` is no compression and `9` is highest
-   *     compression (default: `1`)
-   * @param metadata
+   *     compression. Default: `1`
    */
-  async encode(
-    compression?: PNGCompressionLevel,
-    metadata?: PNGMetadata
-  ): Promise<Uint8Array>;
-  async encode(metadata?: PNGMetadata): Promise<Uint8Array>;
+  encode(compression?: PNGCompressionLevel, metadata?: PNGMetadata): Promise<Uint8Array>;
+  encode(metadata?: PNGMetadata): Promise<Uint8Array>;
 
   /**
-   * Encodes the image into a JPEG.
+   * Encodes the image into a baseline JPEG, alpha is ignored.
    *
    * @param quality `1`-`100`, where `1` is lowest quality (highest compression)
    *     and `100` is highest quality (lowest compression). Chroma subsampling
    *     is disabled above `90`. Default: `90`
    */
-  async encodeJPEG(quality?: JPEGQuality): Promise<Uint8Array>;
+  encodeJPEG(quality?: number): Promise<Uint8Array>;
 
   /**
    * WebP encoding is no longer supported, this always rejects.
-   * @deprecated Use {@link encode} (PNG) or {@link encodeJPEG} instead.
+   * @deprecated Use {@link Image.encode} (PNG) or {@link Image.encodeJPEG} instead.
    */
-  async encodeWEBP(quality?: null | WEBPQuality): Promise<never>;
+  encodeWEBP(quality?: number | null): Promise<never>;
 
   /**
-   * Decodes an image (PNG, JPEG or TIFF).
+   * Decodes a PNG, JPEG or TIFF image. Use {@link GIF.decode} or the
+   * top-level {@link decode} for GIFs.
    *
    * @param data The binary data to decode
-   * @returns The decoded image
    */
-  static async decode(data: Buffer | Uint8Array): Promise<Image>;
+  static decode(data: ArrayBuffer | ArrayBufferView): Promise<Image>;
 
-  /**
-   * Scale the SVG by the given amount. For use with {@link Image.renderSVG}.
-   */
+  /** Scale the SVG by the given factor. For use with {@link Image.renderSVG}. */
   static get SVG_MODE_SCALE(): 1;
 
-  /**
-   * Scale the SVG to fit the given width. For use with {@link Image.renderSVG}.
-   */
+  /** Scale the SVG to the given width. For use with {@link Image.renderSVG}. */
   static get SVG_MODE_WIDTH(): 2;
 
-  /**
-   * Scale the SVG to fit the given height. For use with {@link Image.renderSVG}.
-   */
+  /** Scale the SVG to the given height. For use with {@link Image.renderSVG}. */
   static get SVG_MODE_HEIGHT(): 3;
 
   /**
-   * Creates a new image from the given SVG.
+   * Renders an SVG. Shapes, paths, transforms, use/symbol, CSS styles,
+   * gradients, strokes, clip paths, masks and opacity are supported; text,
+   * images, filters and patterns are not rendered.
    *
-   * @param svg
-   * @param size
-   * @param mode {@link Image.SVG_MODE_SCALE}, {@link Image.SVG_MODE_WIDTH}, or
-   *     {@link Image.SVG_MODE_HEIGHT}.
-   *
-   * @returns New bitmap image with the rendered {@link svg}.
+   * @param svg The SVG source
+   * @param size The scale factor, width or height depending on the mode. Default: `1`
+   * @param mode Default: {@link Image.SVG_MODE_SCALE}
    */
-  static async renderSVG(
-    svg: string,
-    size?: number,
-    mode?: SVGScaleMode
-  ): Promise<Image>;
+  static renderSVG(svg: string | ArrayBuffer | ArrayBufferView, size?: number, mode?: SVGScaleMode): Promise<Image>;
 
   /**
-   * Creates a new image containing the rendered text.
+   * Renders text. The image spans from the pen origin to the furthest glyph
+   * edge, with one line height per line.
    *
-   * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use.
-   * @param scale
-   * @param text
-   * @param color
-   * @param layout
-   *
-   * @returns New image with the rendered {@link text}.
+   * @param font TrueType (ttf/ttc) or OpenType (otf) font data
+   * @param scale Font size in pixels
+   * @param text The text to render
+   * @param color Default: `0xffffffff` (white)
+   * @param layout Wrapping and alignment options
    */
-  static async renderText(
-    font: Uint8Array,
-    scale: number,
-    text: string,
-    color?: number,
-    layout?: TextLayout
-  ): Promise<Image>;
+  static renderText(font: ArrayBuffer | ArrayBufferView, scale: number, text: string, color?: number, layout?: TextLayout): Promise<Image>;
 }
 
 export type FrameDisposalModeName = "any" | "keep" | "previous" | "background";
@@ -423,32 +349,24 @@ export class Frame extends Image {
 
   static get DISPOSAL_BACKGROUND(): "background";
 
-  private static __convert_disposal_mode__(
-    mode: FrameDisposalModeName | FrameDisposalModeId
-  ): FrameDisposalModeId;
-
   /**
    * Creates a new, blank frame.
    *
-   * @param width
-   * @param height
-   * @param duration Milliseconds (default: `100`)
-   * @param xOffset Offset on the X-axis (default: `0`)
-   * @param yOffset Offset on the y-axis (default: `0`)
-   * @param disposalMode The frame's disposal mode (default: `'keep'`)
+   * @param duration Milliseconds. Default: `100`
+   * @param xOffset Offset on the x-axis. Default: `0`
+   * @param yOffset Offset on the y-axis. Default: `0`
+   * @param disposalMode The frame's disposal mode. Default: `'keep'`
    */
   constructor(
     width: number,
     height: number,
-    duration: number,
+    duration?: number,
     xOffset?: number,
     yOffset?: number,
     disposalMode?: FrameDisposalModeName | FrameDisposalModeId
   );
 
-  /**
-   * Milliseconds.
-   */
+  /** Milliseconds */
   duration: number;
 
   xOffset: number;
@@ -459,15 +377,13 @@ export class Frame extends Image {
 
   set disposalMode(disposalMode: FrameDisposalModeName | FrameDisposalModeId);
 
-  toString(): `Frame<${number}x${number}x${number}ms>`;
-
   /**
-   * Converts an Image instance to a Frame, cloning it in the process
-   * @param image The image to create the frame from
-   * @param duration Milliseconds (default: `100`)
-   * @param xOffset Offset on the X-axis (default: `0`)
-   * @param yOffset Offset on the y-axis (default: `0`)
-   * @param disposalMode The frame's disposal mode (default: `'keep'`)
+   * Converts an Image instance to a Frame, cloning it in the process.
+   *
+   * @param duration Milliseconds. Default: `100`
+   * @param xOffset Offset on the x-axis. Default: `0`
+   * @param yOffset Offset on the y-axis. Default: `0`
+   * @param disposalMode The frame's disposal mode. Default: `'keep'`
    */
   static from(
     image: Image,
@@ -477,112 +393,104 @@ export class Frame extends Image {
     disposalMode?: FrameDisposalModeName | FrameDisposalModeId
   ): Frame;
 
-  /**
-   * @param width
-   * @param height
-   * @param mode Default: {@link Frame.DISPOSAL_KEEP}
-   */
-  resize(
-    width: number,
-    height: number,
-    mode?: typeof Image.RESIZE_NEAREST_NEIGHBOR | string
-  ): Image;
+  /** Clones the frame, including its duration, offsets and disposal mode. */
+  clone(): Frame;
+
+  /** Resizes the frame, scaling its offsets along with it. */
+  resize(width: number, height: number, mode?: ResizeMode): this;
 }
 
 /**
  * Represents a GIF image as an array of frames.
+ * Array methods like `map` and `filter` return plain arrays.
  */
 export class GIF extends Array<Frame> {
   /**
-   * @param frames
-   * @param loopCount How many times to loop the GIF for (`-1` = unlimited).
+   * @param loopCount How many times to repeat the GIF (`-1` = forever,
+   *     `0` = play once). Default: `-1`
    */
   constructor(frames: Frame[], loopCount?: number);
+
+  loopCount: number;
 
   get width(): number;
 
   get height(): number;
 
-  toString(): `GIF<${number}x${number}x${number}ms>`;
-
-  *[Symbol.iterator](): Generator<Frame, void, *>;
-
-  slice(start: number, end: number): GIF;
-
-  /**
-   * Milliseconds.
-   */
+  /** The GIF's duration in milliseconds */
   get duration(): number;
 
-  /**
-   * @param quality GIF quality `1`-`100`, scales the palette size from 8 colors
-   *     (`1`) to 256 colors (`90` and above). Default: `95`
-   */
-  async encode(quality?: GIFQuality): Promise<Uint8Array>;
+  /** Returns a new GIF containing a range of frames (like `Array.prototype.slice`). */
+  slice(start?: number, end?: number): GIF;
 
   /**
-   * @param data
+   * Encodes the GIF.
+   *
+   * @param quality `1`-`100`, scales the palette size from 8 colors (`1`) to
+   *     256 colors (`90` and above). Default: `95`
+   */
+  encode(quality?: number): Promise<Uint8Array>;
+
+  /**
+   * Decodes a GIF into fully composited frames.
+   *
    * @param onlyExtractFirstFrame Whether to end GIF decoding after the first
-   *     frame (default: `false`)
+   *     frame. Default: `false`
    */
-  static async decode(
-    data: Buffer | Uint8Array,
-    onlyExtractFirstFrame?: boolean
-  ): Promise<GIF>;
+  static decode(data: ArrayBuffer | ArrayBufferView, onlyExtractFirstFrame?: boolean): Promise<GIF>;
 
   /**
-   * @param width
-   * @param height
-   * @param mode Default: {@link Image.RESIZE_NEAREST_NEIGHBOR}
+   * Resizes the GIF, scaling every frame and its offsets proportionally.
+   * Use {@link Image.RESIZE_AUTO} as either width or height to preserve the
+   * aspect ratio.
    */
-  resize(width: number, height: number, mode?: ResizeMode): void;
+  resize(width: number, height: number, mode?: ResizeMode): this;
 }
 
 export type WrapStyle = "word" | "char";
 
-export type VerticalAlign = "left" | "center" | "right";
+export type HorizontalAlign = "left" | "center" | "right";
 
-export type HorizontalAlign = "top" | "middle" | "bottom";
+export type VerticalAlign = "top" | "middle" | "bottom";
 
 export class TextLayout {
   /**
-   * @param options Defaults:
-   * ```js
-   * {
-   *   maxWidth: Infinity,
-   *   maxHeight: Infinity,
-   *   wrapStyle: 'word',
-   *   verticalAlign: 'left',
-   *   horizontalAlign: 'top',
-   *   wrapHardBreaks: true,
-   * }
-   * ```
+   * Layout options for {@link Image.renderText}.
+   * Before 3.0 the alignment options had each other's names; values are
+   * still accepted under either name.
    */
   constructor(options?: {
-    /** @default Infinity */
+    /** Longer lines are wrapped. Default: `Infinity` */
     maxWidth?: number;
 
-    /** @default Infinity */
+    /** Lines that don't fit are cut off. Default: `Infinity` */
     maxHeight?: number;
 
-    /** @default 'word' */
+    /** Default: `'word'` */
     wrapStyle?: WrapStyle;
 
-    /** @default 'left' */
-    verticalAlign?: VerticalAlign;
+    /** Alignment of the lines relative to the widest line. Default: `'left'` */
+    horizontalAlign?: HorizontalAlign | VerticalAlign;
 
-    /** @default 'top' */
-    horizontalAlign?: HorizontalAlign;
+    /** Which lines to keep when cutting off at `maxHeight`. Default: `'top'` */
+    verticalAlign?: VerticalAlign | HorizontalAlign;
 
-    /** @default true */
+    /** Whether to break lines at newline characters. Default: `true` */
     wrapHardBreaks?: boolean;
   });
+
+  maxWidth: number;
+  maxHeight: number;
+  wrapStyle: WrapStyle;
+  horizontalAlign: HorizontalAlign;
+  verticalAlign: VerticalAlign;
+  wrapHardBreaks: boolean;
 }
 
 export type ImageTypeName = "png" | "jpeg" | "tiff" | "gif";
 
 export class ImageType {
-  static getType(data: Buffer | Uint8Array): ImageTypeName | null;
+  static getType(data: ArrayBuffer | ArrayBufferView): ImageTypeName | null;
 
   static isPNG(view: DataView): boolean;
 
@@ -594,14 +502,12 @@ export class ImageType {
 }
 
 /**
- * @param data
+ * Decodes any supported image, GIFs are returned as {@link GIF}.
+ *
  * @param onlyExtractFirstFrame Whether to end GIF decoding after the first
- *     frame (default: `false`)
+ *     frame. Default: `false`
  */
-export function decode(
-  data: Uint8Array | Buffer,
-  onlyExtractFirstFrame?: boolean
-): Promise<GIF | Image>;
+export function decode(data: ArrayBuffer | ArrayBufferView, onlyExtractFirstFrame?: boolean): Promise<GIF | Image>;
 
 export type PNGMetadata = {
   title?: string;
@@ -616,9 +522,10 @@ export type PNGMetadata = {
   comment?: string;
 };
 
+/** Called with 1-based coordinates, returns a color. */
 export type ColorFunction = (x: number, y: number) => number;
 
-export type ResizeMode = "RESIZE_NEAREST_NEIGHBOR" | -1;
+export type ResizeMode = "RESIZE_NEAREST_NEIGHBOR";
 
 /**
  * - `0` = no compression
@@ -631,323 +538,3 @@ export type PNGCompressionLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
  * {@link Image.SVG_MODE_HEIGHT}.
  */
 export type SVGScaleMode = 1 | 2 | 3;
-
-/**
- * - `0` = **lowest** quality (smallest file size)
- * - `100` = **highest** quality (largest file size)
- */
-export type WEBPQuality =
-  | 0
-  | 1
-  | 2
-  | 3
-  | 4
-  | 5
-  | 6
-  | 7
-  | 8
-  | 9
-  | 10
-  | 11
-  | 12
-  | 13
-  | 14
-  | 15
-  | 16
-  | 17
-  | 18
-  | 19
-  | 20
-  | 21
-  | 22
-  | 23
-  | 24
-  | 25
-  | 26
-  | 27
-  | 28
-  | 29
-  | 30
-  | 31
-  | 32
-  | 33
-  | 34
-  | 35
-  | 36
-  | 37
-  | 38
-  | 39
-  | 40
-  | 41
-  | 42
-  | 43
-  | 44
-  | 45
-  | 46
-  | 47
-  | 48
-  | 49
-  | 50
-  | 51
-  | 52
-  | 53
-  | 54
-  | 55
-  | 56
-  | 57
-  | 58
-  | 59
-  | 60
-  | 61
-  | 62
-  | 63
-  | 64
-  | 65
-  | 66
-  | 67
-  | 68
-  | 69
-  | 70
-  | 71
-  | 72
-  | 73
-  | 74
-  | 75
-  | 76
-  | 77
-  | 78
-  | 79
-  | 80
-  | 81
-  | 82
-  | 83
-  | 84
-  | 85
-  | 86
-  | 87
-  | 88
-  | 89
-  | 90
-  | 91
-  | 92
-  | 93
-  | 94
-  | 95
-  | 96
-  | 97
-  | 98
-  | 99
-  | 100;
-
-/**
- * - `0` = **lowest** quality (smallest file size)
- * - `100` = **highest** quality (largest file size)
- */
-export type JPEGQuality =
-  | 1
-  | 2
-  | 3
-  | 4
-  | 5
-  | 6
-  | 7
-  | 8
-  | 9
-  | 10
-  | 11
-  | 12
-  | 13
-  | 14
-  | 15
-  | 16
-  | 17
-  | 18
-  | 19
-  | 20
-  | 21
-  | 22
-  | 23
-  | 24
-  | 25
-  | 26
-  | 27
-  | 28
-  | 29
-  | 30
-  | 31
-  | 32
-  | 33
-  | 34
-  | 35
-  | 36
-  | 37
-  | 38
-  | 39
-  | 40
-  | 41
-  | 42
-  | 43
-  | 44
-  | 45
-  | 46
-  | 47
-  | 48
-  | 49
-  | 50
-  | 51
-  | 52
-  | 53
-  | 54
-  | 55
-  | 56
-  | 57
-  | 58
-  | 59
-  | 60
-  | 61
-  | 62
-  | 63
-  | 64
-  | 65
-  | 66
-  | 67
-  | 68
-  | 69
-  | 70
-  | 71
-  | 72
-  | 73
-  | 74
-  | 75
-  | 76
-  | 77
-  | 78
-  | 79
-  | 80
-  | 81
-  | 82
-  | 83
-  | 84
-  | 85
-  | 86
-  | 87
-  | 88
-  | 89
-  | 90
-  | 91
-  | 92
-  | 93
-  | 94
-  | 95
-  | 96
-  | 97
-  | 98
-  | 99
-  | 100;
-
-/**
- * - `0` = **lowest** quality (smallest file size)
- * - `100` = **highest** quality (largest file size)
- */
-export type GIFQuality =
-  | 0
-  | 1
-  | 2
-  | 3
-  | 4
-  | 5
-  | 6
-  | 7
-  | 8
-  | 9
-  | 10
-  | 11
-  | 12
-  | 13
-  | 14
-  | 15
-  | 16
-  | 17
-  | 18
-  | 19
-  | 20
-  | 21
-  | 22
-  | 23
-  | 24
-  | 25
-  | 26
-  | 27
-  | 28
-  | 29
-  | 30
-  | 31
-  | 32
-  | 33
-  | 34
-  | 35
-  | 36
-  | 37
-  | 38
-  | 39
-  | 40
-  | 41
-  | 42
-  | 43
-  | 44
-  | 45
-  | 46
-  | 47
-  | 48
-  | 49
-  | 50
-  | 51
-  | 52
-  | 53
-  | 54
-  | 55
-  | 56
-  | 57
-  | 58
-  | 59
-  | 60
-  | 61
-  | 62
-  | 63
-  | 64
-  | 65
-  | 66
-  | 67
-  | 68
-  | 69
-  | 70
-  | 71
-  | 72
-  | 73
-  | 74
-  | 75
-  | 76
-  | 77
-  | 78
-  | 79
-  | 80
-  | 81
-  | 82
-  | 83
-  | 84
-  | 85
-  | 86
-  | 87
-  | 88
-  | 89
-  | 90
-  | 91
-  | 92
-  | 93
-  | 94
-  | 95
-  | 96
-  | 97
-  | 98
-  | 99
-  | 100;

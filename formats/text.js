@@ -20,8 +20,8 @@ function loadFont(data) {
  * @param {Uint8Array} data TrueType/OpenType font
  * @param {number} size font size in pixels per em
  * @param {string} text
- * @param {{maxWidth: number, maxHeight: number, wrapStyle: string, verticalAlign: string, horizontalAlign: string, wrapHardBreaks: boolean}} layout
- *     verticalAlign takes left/center/right and horizontalAlign top/middle/bottom
+ * @param {{maxWidth: number, maxHeight: number, wrapStyle: string, horizontalAlign: string, verticalAlign: string, wrapHardBreaks: boolean}} layout
+ *     horizontalAlign takes left/center/right and verticalAlign top/middle/bottom
  * @return {{width: number, height: number, coverage: Uint8Array}}
  */
 function render(data, size, text, layout) {
@@ -48,8 +48,8 @@ function render(data, size, text, layout) {
     if (isFinite(layout.maxHeight)) {
         const count = Math.max(1, Math.floor(layout.maxHeight / lineHeight));
         if (count < lines.length) {
-            const start = layout.horizontalAlign === 'bottom' ? lines.length - count
-                : layout.horizontalAlign === 'middle' ? lines.length - count >> 1 : 0;
+            const start = layout.verticalAlign === 'bottom' ? lines.length - count
+                : layout.verticalAlign === 'middle' ? lines.length - count >> 1 : 0;
             visible = lines.slice(start, start + count);
         }
     }
@@ -59,8 +59,8 @@ function render(data, size, text, layout) {
     const coverage = new Uint8Array(width * height);
 
     visible.forEach((line, n) => {
-        const offset = layout.verticalAlign === 'right' ? width - line.extent
-            : layout.verticalAlign === 'center' ? width - line.extent >> 1 : 0;
+        const offset = layout.horizontalAlign === 'right' ? width - line.extent
+            : layout.horizontalAlign === 'center' ? width - line.extent >> 1 : 0;
         const baseline = ascent + n * lineHeight;
 
         for (const { x, glyph: g } of line.glyphs) {
