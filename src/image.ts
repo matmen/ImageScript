@@ -9,6 +9,7 @@ import { ImageType } from './image-type.ts';
 import { TextLayout } from './text-layout.ts';
 import { VERSION } from './version.ts';
 import { resample, BOX, TRIANGLE, CUBIC } from './util/resample.ts';
+import { gaussianBlur, premultiply, unpremultiply } from './util/blur.ts';
 
 /**
  * Represents an image; provides utility functions
@@ -23,9 +24,27 @@ export type ResizeMode = 'RESIZE_NEAREST_NEIGHBOR' | 'RESIZE_BILINEAR' | 'RESIZE
 
 export type SVGScaleMode = 1 | 2 | 3;
 
+/** Blend modes of {@link Image.composite}, named like CSS' mix-blend-mode values */
+export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'color-dodge' | 'color-burn'
+    | 'hard-light' | 'soft-light' | 'difference' | 'exclusion' | 'add';
+
+export interface CompositeOptions {
+    /** Opacity of the source (0..1). Default: `1` */
+    opacity?: number;
+    /** How the colors are mixed. Default: `'normal'` */
+    mode?: BlendMode;
+}
+
 export interface DecodeOptions {
     /** Whether to rotate/mirror JPEGs and TIFFs as their orientation tag (Exif) says. Default: `true` */
     applyOrientation?: boolean;
+}
+
+export interface TextStyle {
+    /** Width of an outline around the glyphs in pixels. Default: `0` */
+    strokeWidth?: number;
+    /** Color of the outline. Default: `0x000000ff` */
+    strokeColor?: Color;
 }
 
 export interface CropCircleOptions {
@@ -830,10 +849,19 @@ export class Image {
      * @param source The image to place
      * @param [x=0] The x position to place the image at
      * @param [y=0] The y position to place the image at
+     * @param [options.opacity=1] Opacity of the source (0..1)
+     * @param [options.mode='normal'] How the colors are mixed, like CSS' mix-blend-mode
      */
-    composite(source: Image, x = 0, y = 0): this {
+    composite(source: Image, x = 0, y = 0, { opacity = 1, mode = 'normal' }: CompositeOptions = {}): this {
         x |= 0;
         y |= 0;
+
+        if (isNaN(opacity) || opacity < 0 || opacity > 1)
+            throw new RangeError('Invalid composite opacity');
+        const blend = BLEND_MODES[mode];
+        if (!blend || !Object.prototype.hasOwnProperty.call(BLEND_MODES, mode))
+            throw new RangeError(`Invalid blend mode: ${mode}`);
+        if (opacity !== 1 || mode !== 'normal') return this.__blend__(source, x, y, opacity, blend);
 
         const left = Math.max(0, x), top = Math.max(0, y);
         const right = Math.min(this.width, x + source.width), bottom = Math.min(this.height, y + source.height);
@@ -862,6 +890,39 @@ export class Image {
                 dst[d + 1] = (src[s + 1] * fa + dst[d + 1] * ba) / a;
                 dst[d + 2] = (src[s + 2] * fa + dst[d + 2] * ba) / a;
                 dst[d + 3] = a * 255;
+            }
+        }
+
+        return this;
+    }
+
+    /**
+     * Composites with opacity and a blend mode (the W3C compositing model: the blended color is drawn source-over)
+     * @internal
+     */
+    protected __blend__(source: Image, x: number, y: number, opacity: number, blend: (backdrop: number, source: number) => number): this {
+        const left = Math.max(0, x), top = Math.max(0, y);
+        const right = Math.min(this.width, x + source.width), bottom = Math.min(this.height, y + source.height);
+        const dst = this.bitmap, src = source.bitmap;
+
+        for (let row = top; row < bottom; row++) {
+            for (let column = left; column < right; column++) {
+                const s = 4 * ((row - y) * source.width + column - x);
+                const as = src[s + 3] / 255 * opacity;
+                if (as <= 0) continue;
+
+                const d = 4 * (row * this.width + column);
+                const ab = dst[d + 3] / 255;
+                const ao = as + ab * (1 - as);
+
+                for (let c = 0; c < 3; c++) {
+                    const cs = src[s + c] / 255, cb = dst[d + c] / 255;
+                    // where the backdrop is transparent the source color is used unblended
+                    const cr = (1 - ab) * cs + ab * blend(cb, cs);
+                    // the clamped bitmap rounds on assignment
+                    dst[d + c] = (as * cr + ab * (1 - as) * cb) / ao * 255;
+                }
+                dst[d + 3] = ao * 255;
             }
         }
 
@@ -910,20 +971,6 @@ export class Image {
         }
 
         return this;
-    }
-
-    /**
-     * Inverts the images saturation
-     */
-    invertSaturation(): this {
-        return this.__map_hsla__(c => { c.s = 1 - c.s; });
-    }
-
-    /**
-     * Replaces every color's hue with its complementary hue (a 180 degree hue shift)
-     */
-    invertHue(): this {
-        return this.__map_hsla__(c => { c.h += 0.5; });
     }
 
     /**
@@ -994,6 +1041,121 @@ export class Image {
 
             keys[slot] = color;
             values[slot] = pixels[i >> 2];
+        }
+
+        return this;
+    }
+
+    /**
+     * Blurs the image with a gaussian blur (transparent pixels don't bleed their color)
+     * @param radius The blur radius: the gaussian's standard deviation in pixels, like CSS' blur()
+     */
+    blur(radius: number): this {
+        if (isNaN(radius) || radius < 0)
+            throw new RangeError('Invalid blur radius');
+
+        const pixels = premultiply(this.bitmap);
+        gaussianBlur(pixels, this.width, this.height, radius);
+        unpremultiply(pixels, this.bitmap);
+        return this;
+    }
+
+    /**
+     * Sharpens the image with an unsharp mask: the difference to a blurred copy is amplified
+     * @param [amount=1] How strongly to sharpen (0 does nothing)
+     * @param [radius=1] The radius of the blur the image is compared with (larger values sharpen coarser details)
+     */
+    sharpen(amount = 1, radius = 1): this {
+        if (isNaN(amount) || amount < 0)
+            throw new RangeError('Invalid sharpen amount');
+        if (isNaN(radius) || radius <= 0)
+            throw new RangeError('Invalid sharpen radius');
+
+        const blurred = premultiply(this.bitmap);
+        gaussianBlur(blurred, this.width, this.height, radius);
+
+        const bitmap = this.bitmap;
+        for (let i = 0; i < bitmap.length; i += 4) {
+            const a = blurred[i + 3];
+            if (a < 0.5 || bitmap[i + 3] === 0) continue;
+
+            // the clamped bitmap rounds and clamps
+            const f = 255 / a;
+            bitmap[i] += amount * (bitmap[i] - blurred[i] * f);
+            bitmap[i + 1] += amount * (bitmap[i + 1] - blurred[i + 1] * f);
+            bitmap[i + 2] += amount * (bitmap[i + 2] - blurred[i + 2] * f);
+        }
+
+        return this;
+    }
+
+    /**
+     * Multiplies the color channels, e.g. 1.2 makes the image 20% brighter
+     * @param factor The factor (>= 0, 1 keeps the image)
+     */
+    brightness(factor: number): this {
+        if (isNaN(factor) || factor < 0)
+            throw new RangeError('Invalid brightness factor');
+        return this.__map_channels__(v => v * factor);
+    }
+
+    /**
+     * Scales the color channels' distance from mid grey, e.g. 1.5 increases the contrast, 0.5 reduces it
+     * @param factor The factor (>= 0, 1 keeps the image, 0 makes it grey)
+     */
+    contrast(factor: number): this {
+        if (isNaN(factor) || factor < 0)
+            throw new RangeError('Invalid contrast factor');
+        return this.__map_channels__(v => (v - 127.5) * factor + 127.5);
+    }
+
+    /**
+     * Applies a gamma correction, values above 1 brighten the dark tones, values below 1 darken them
+     * @param gamma The gamma (> 0, 1 keeps the image)
+     */
+    gamma(gamma: number): this {
+        if (isNaN(gamma) || gamma <= 0)
+            throw new RangeError('Invalid gamma');
+        return this.__map_channels__(v => 255 * (v / 255) ** (1 / gamma));
+    }
+
+    /**
+     * Converts the image to greyscale by its luma (ITU-R 601, like Pillow), keeping the alpha
+     */
+    greyscale(): this {
+        const bitmap = this.bitmap;
+        for (let i = 0; i < bitmap.length; i += 4)
+            bitmap[i] = bitmap[i + 1] = bitmap[i + 2] = bitmap[i] * 19595 + bitmap[i + 1] * 38470 + bitmap[i + 2] * 7471 + 0x8000 >> 16;
+        return this;
+    }
+
+    /**
+     * Applies a sepia tone
+     */
+    sepia(): this {
+        const bitmap = this.bitmap;
+        for (let i = 0; i < bitmap.length; i += 4) {
+            const r = bitmap[i], g = bitmap[i + 1], b = bitmap[i + 2];
+            bitmap[i] = 0.393 * r + 0.769 * g + 0.189 * b;
+            bitmap[i + 1] = 0.349 * r + 0.686 * g + 0.168 * b;
+            bitmap[i + 2] = 0.272 * r + 0.534 * g + 0.131 * b;
+        }
+        return this;
+    }
+
+    /**
+     * Maps every color channel value through a function (evaluated once per value 0..255), alpha is kept
+     * @internal
+     */
+    protected __map_channels__(map: (value: number) => number): this {
+        const lut = new Uint8ClampedArray(256);
+        for (let v = 0; v < 256; v++) lut[v] = map(v);
+
+        const bitmap = this.bitmap;
+        for (let i = 0; i < bitmap.length; i += 4) {
+            bitmap[i] = lut[bitmap[i]];
+            bitmap[i + 1] = lut[bitmap[i + 1]];
+            bitmap[i + 2] = lut[bitmap[i + 2]];
         }
 
         return this;
@@ -1386,14 +1548,6 @@ export class Image {
     }
 
     /**
-     * WebP encoding was removed when ImageScript became dependency free, use PNG or JPEG instead
-     * @deprecated
-     */
-    async encodeWEBP(): Promise<never> {
-        throw new Error('WebP encoding is no longer supported, use encode() (PNG) or encodeJPEG() instead');
-    }
-
-    /**
      * Decodes an image (PNG, JPEG or TIFF)
      * @param data The binary data to decode
      * @param [options.applyOrientation=true] Whether to rotate/mirror JPEGs and TIFFs as their orientation tag (Exif) says,
@@ -1501,22 +1655,54 @@ export class Image {
      * @param text Text to render
      * @param [color=0xffffffff] Text color to use
      * @param [layout] The text layout to use
+     * @param [style.strokeWidth=0] Width of an outline around the glyphs in pixels; the image grows by it on every side
+     * @param [style.strokeColor=0x000000ff] Color of the outline
      * @return The rendered text
      */
-    static async renderText(font: BinaryData, size: number, text: string, color: Color = 0xffffffff, layout: TextLayout = new TextLayout()): Promise<Image> {
-        const {width, height, coverage} = textRenderer.render(view(font), size, text, layout);
+    static async renderText(font: BinaryData, size: number, text: string, color: Color = 0xffffffff, layout: TextLayout = new TextLayout(), { strokeWidth = 0, strokeColor = 0x000000ff }: TextStyle = {}): Promise<Image> {
+        if (isNaN(strokeWidth) || strokeWidth < 0)
+            throw new RangeError('Invalid stroke width');
+
+        const rendered = textRenderer.render(view(font), size, text, layout);
         const [r, g, b, a] = Image.colorToRGBA(color);
 
+        // the outline needs room around the glyphs
+        const pad = Math.ceil(strokeWidth);
+        const width = rendered.width + 2 * pad, height = rendered.height + 2 * pad;
+        const coverage = new Uint8Array(width * height);
+        for (let y = 0; y < rendered.height; y++)
+            coverage.set(rendered.coverage.subarray(y * rendered.width, (y + 1) * rendered.width), (y + pad) * width + pad);
+
         const image = new Image(width, height);
-        for (let i = 0; i < coverage.length; i++) {
-            if (!coverage[i]) continue;
-            image.bitmap[i * 4] = r;
-            image.bitmap[i * 4 + 1] = g;
-            image.bitmap[i * 4 + 2] = b;
-            image.bitmap[i * 4 + 3] = coverage[i];
+        const bitmap = image.bitmap;
+
+        if (!strokeWidth) {
+            for (let i = 0; i < coverage.length; i++) {
+                if (!coverage[i]) continue;
+                bitmap[i * 4] = r;
+                bitmap[i * 4 + 1] = g;
+                bitmap[i * 4 + 2] = b;
+                bitmap[i * 4 + 3] = coverage[i] * a / 255;
+            }
+            return image;
         }
 
-        return image.opacity(a / 0xff);
+        const stroke = outline(coverage, width, height, strokeWidth);
+        const [sr, sg, sb, sa] = Image.colorToRGBA(strokeColor);
+
+        // the glyphs drawn over their outline
+        for (let i = 0; i < coverage.length; i++) {
+            const af = coverage[i] / 255 * a / 255, as = stroke[i] * sa / 255;
+            const ao = af + as * (1 - af);
+            if (ao <= 0) continue;
+
+            bitmap[i * 4] = (r * af + sr * as * (1 - af)) / ao;
+            bitmap[i * 4 + 1] = (g * af + sg * as * (1 - af)) / ao;
+            bitmap[i * 4 + 2] = (b * af + sb * as * (1 - af)) / ao;
+            bitmap[i * 4 + 3] = ao * 255;
+        }
+
+        return image;
     }
 
 }
@@ -1566,4 +1752,93 @@ function hue2rgb(p: number, q: number, t: number): number {
     if (t < 1 / 2) return q;
     if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
     return p;
+}
+
+// separable blend functions of normalized channel values (W3C Compositing and Blending Level 1)
+const hardLight = (b: number, s: number): number => s <= 0.5 ? b * 2 * s : 1 - (1 - b) * (1 - (2 * s - 1));
+
+const BLEND_MODES: Record<BlendMode, (backdrop: number, source: number) => number> = {
+    'normal': (_b, s) => s,
+    'multiply': (b, s) => b * s,
+    'screen': (b, s) => b + s - b * s,
+    'overlay': (b, s) => hardLight(s, b),
+    'darken': (b, s) => Math.min(b, s),
+    'lighten': (b, s) => Math.max(b, s),
+    'color-dodge': (b, s) => b === 0 ? 0 : s === 1 ? 1 : Math.min(1, b / (1 - s)),
+    'color-burn': (b, s) => b === 1 ? 1 : s === 0 ? 0 : 1 - Math.min(1, (1 - b) / s),
+    'hard-light': hardLight,
+    'soft-light': (b, s) => {
+        if (s <= 0.5) return b - (1 - 2 * s) * b * (1 - b);
+        const d = b <= 0.25 ? ((16 * b - 12) * b + 4) * b : Math.sqrt(b);
+        return b + (2 * s - 1) * (d - b);
+    },
+    'difference': (b, s) => Math.abs(b - s),
+    'exclusion': (b, s) => b + s - 2 * b * s,
+    'add': (b, s) => Math.min(1, b + s)
+};
+
+/**
+ * Grows a coverage mask by a radius, using the distance of every pixel to the glyphs (an exact euclidean distance
+ * transform, so the cost doesn't depend on the radius)
+ * @return the outline's coverage (0..1) per pixel, including the area under the glyphs
+ */
+function outline(coverage: Uint8Array, width: number, height: number, radius: number): Float32Array {
+    const count = width * height;
+    // squared distance to the nearest pixel that is at least half covered
+    const distance = new Float64Array(count);
+    for (let i = 0; i < count; i++) distance[i] = coverage[i] >= 128 ? 0 : Infinity;
+
+    const size = Math.max(width, height);
+    const line = new Float64Array(size), result = new Float64Array(size);
+    const parabolas = new Int32Array(size), bounds = new Float64Array(size + 1);
+
+    for (let x = 0; x < width; x++) {
+        for (let y = 0; y < height; y++) line[y] = distance[y * width + x];
+        distanceTransform(line, height, result, parabolas, bounds);
+        for (let y = 0; y < height; y++) distance[y * width + x] = result[y];
+    }
+
+    for (let y = 0; y < height; y++) {
+        const row = y * width;
+        for (let x = 0; x < width; x++) line[x] = distance[row + x];
+        distanceTransform(line, width, result, parabolas, bounds);
+        for (let x = 0; x < width; x++) distance[row + x] = result[x];
+    }
+
+    const out = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+        // pixels next to the glyph edge are covered by the glyph's own antialiasing
+        const d = Math.sqrt(distance[i]);
+        out[i] = Math.max(coverage[i] / 255, Math.min(1, Math.max(0, radius + 0.5 - d)));
+    }
+
+    return out;
+}
+
+// 1D squared euclidean distance transform (Felzenszwalb & Huttenlocher): lower envelope of parabolas
+function distanceTransform(f: Float64Array, n: number, d: Float64Array, v: Int32Array, z: Float64Array): void {
+    let k = -1;
+    for (let q = 0; q < n; q++) {
+        if (f[q] === Infinity) continue;
+        let s = 0;
+        while (k >= 0) {
+            s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+            if (s > z[k]) break;
+            k--;
+        }
+        k++;
+        v[k] = q;
+        z[k] = k === 0 ? -Infinity : s;
+        z[k + 1] = Infinity;
+    }
+
+    if (k < 0) {
+        d.fill(Infinity, 0, n);
+        return;
+    }
+
+    for (let q = 0, j = 0; q < n; q++) {
+        while (z[j + 1] < q) j++;
+        d[q] = (q - v[j]) ** 2 + f[v[j]];
+    }
 }

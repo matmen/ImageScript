@@ -306,11 +306,8 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         assert(Buffer.from((await Image.decode(await gradient.encode(9))).bitmap).equals(Buffer.from(gradient.bitmap)), 'PNG: filtered roundtrip failed');
     }
 
-    // invertHue shifts to the complementary hue, invertValue inverts HSV value and invertLightness HSL lightness
+    // invertValue inverts HSV value and invertLightness HSL lightness
     {
-        const orange = new Image(1, 1).fill(Image.rgbToColor(255, 128, 0));
-        assert(rgba(orange.clone().invertHue(), 0, 0).join() === '0,127,255,255', 'invertHue should give the complementary color, got ' + rgba(orange.clone().invertHue(), 0, 0));
-        assert(orange.clone().invertHue().invertHue().getPixelAt(0, 0) === orange.getPixelAt(0, 0), 'invertHue twice should restore the color');
         const value = new Image(3, 1).fill(x => [Image.rgbaToColor(200, 100, 50, 128), Image.rgbToColor(0, 0, 0), Image.rgbToColor(255, 128, 0)][x]).invertValue();
         assert([0, 1, 2].map(x => rgba(value, x, 0).join(' ')).join() === '55 28 14 128,255 255 255 255,0 0 0 255', 'invertValue should invert HSV value, got ' + [0, 1, 2].map(x => rgba(value, x, 0)));
         const lightness = new Image(1, 1).fill(Image.rgbToColor(200, 100, 50)).invertLightness();
@@ -387,5 +384,77 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         const {ImageType} = require('..');
         const png = await new Image(1, 1).encode();
         assert(ImageType.isPNG(png) && ImageType.isPNG(Buffer.from(png)) && ImageType.isPNG(new DataView(png.buffer)) && !ImageType.isGIF(png), 'ImageType checks');
+    }
+
+    // blur and sharpen: uniform images stay as they are, transparent pixels don't bleed their color
+    {
+        const flat = new Image(16, 16).fill(0x336699ff);
+        for (const [name, op] of [['blur', i => i.blur(3)], ['blur small', i => i.blur(0.8)], ['sharpen', i => i.sharpen(2, 1.5)]])
+            assert(Buffer.from(op(flat.clone()).bitmap).equals(Buffer.from(flat.bitmap)), `${name} changed a uniform image`);
+        assert(Buffer.from(flat.clone().blur(0).bitmap).equals(Buffer.from(flat.bitmap)) && Buffer.from(flat.clone().sharpen(0).bitmap).equals(Buffer.from(flat.bitmap)), 'blur(0)/sharpen(0) should do nothing');
+
+        const half = new Image(16, 16).fill((x) => x < 8 ? 0xff000000 : 0x0000ffff).blur(2);
+        for (let x = 0; x < 16; x++) {
+            const [r, , b, a] = rgba(half, x, 8);
+            assert(a === 0 || (r === 0 && b === 255), `blur bled transparent color at ${x}: ${rgba(half, x, 8)}`);
+        }
+
+        const edge = new Image(16, 1).fill((x) => x < 8 ? 0x000000ff : 0xffffffff);
+        const sharpened = edge.clone().sharpen(1, 1);
+        assert(rgba(sharpened, 7, 0)[0] === 0 && rgba(sharpened, 8, 0)[0] === 255, 'sharpen should keep a hard edge hard');
+        const soft = new Image(16, 1).fill((x) => Image.rgbToColor(x * 16, x * 16, x * 16)).blur(1);
+        const sharp = soft.clone().sharpen(3, 2);
+        assert(rgba(sharp, 15, 0)[0] >= rgba(soft, 15, 0)[0] && rgba(sharp, 0, 0)[0] <= rgba(soft, 0, 0)[0], 'sharpen should increase contrast');
+    }
+
+    // rgb adjustments
+    {
+        const image = new Image(64, 4).fill((x, y) => Image.rgbaToColor(x * 4, 255 - x * 4, y * 60, 200));
+        for (const [name, op] of [['brightness(1)', i => i.brightness(1)], ['contrast(1)', i => i.contrast(1)], ['gamma(1)', i => i.gamma(1)]])
+            assert(Buffer.from(op(image.clone()).bitmap).equals(Buffer.from(image.bitmap)), `${name} should not change the image`);
+
+        const px = color => new Image(1, 1).fill(color);
+        assert(rgba(px(0x804020ff).brightness(2), 0, 0).join() === '255,128,64,255', 'brightness(2)');
+        assert(rgba(px(0x804020ff).contrast(0), 0, 0).join() === '128,128,128,255', 'contrast(0) should be grey');
+        assert(rgba(px(0x40404080).gamma(2), 0, 0).join() === '128,128,128,128', 'gamma(2) should brighten and keep alpha, got ' + rgba(px(0x40404080).gamma(2), 0, 0));
+        assert(rgba(px(0xff0000ff).greyscale(), 0, 0).join() === '76,76,76,255', 'greyscale should use the 601 luma');
+        assert(rgba(px(0xffffff80).sepia(), 0, 0).join() === '255,255,239,128', 'sepia, got ' + rgba(px(0xffffff80).sepia(), 0, 0));
+
+        let threw = 0;
+        for (const op of [i => i.brightness(-1), i => i.contrast(NaN), i => i.gamma(0), i => i.blur(-1), i => i.sharpen(1, 0)])
+            try { op(px(0)); } catch { threw++; }
+        assert(threw === 5, 'invalid adjustment arguments should throw');
+    }
+
+    // composite with opacity and blend modes
+    {
+        const base = new Image(2, 1).fill((x) => x ? 0x808080ff : 0x00000000);
+        const top = new Image(2, 1).fill(0x4080c0ff);
+        assert(Buffer.from(base.clone().composite(top, 0, 0, {opacity: 0}).bitmap).equals(Buffer.from(base.bitmap)), 'opacity 0 should change nothing');
+        assert(rgba(base.clone().composite(top, 0, 0, {opacity: 0.5}), 1, 0).join() === '96,128,160,255', 'opacity 0.5');
+        assert(rgba(base.clone().composite(top, 0, 0, {mode: 'multiply'}), 1, 0).join() === '32,64,96,255', 'multiply');
+        assert(rgba(base.clone().composite(top, 0, 0, {mode: 'screen'}), 1, 0).join() === '160,192,224,255', 'screen');
+        // over a transparent backdrop blend modes draw the plain source
+        assert(rgba(base.clone().composite(top, 0, 0, {mode: 'multiply'}), 0, 0).join() === '64,128,192,255', 'blend over transparency');
+        assert(Buffer.from(base.clone().composite(top, 0, 0, {mode: 'normal', opacity: 1}).bitmap).equals(Buffer.from(base.clone().composite(top).bitmap)), 'normal mode');
+
+        let threw = 0;
+        for (const options of [{mode: 'foo'}, {mode: 'toString'}, {opacity: 2}, {opacity: NaN}])
+            try { base.clone().composite(top, 0, 0, options); } catch { threw++; }
+        assert(threw === 4, 'invalid composite options should throw');
+    }
+
+    // outlined text grows by the stroke width and puts the stroke color around the glyphs
+    {
+        const font = require('fs').readFileSync('./tests/fonts/opensans bold.ttf');
+        const plain = await Image.renderText(font, 40, 'Hi');
+        const outlined = await Image.renderText(font, 40, 'Hi', 0xffffffff, undefined, {strokeWidth: 3, strokeColor: 0xff0000ff});
+        assert(outlined.width === plain.width + 6 && outlined.height === plain.height + 6, 'stroke should grow the image');
+        let red = 0, white = 0;
+        for (const [, , color] of outlined.iterateWithColors()) {
+            if (color === 0xff0000ff) red++;
+            if (color === 0xffffffff) white++;
+        }
+        assert(red > 100 && white > 100, `outlined text should contain both colors (${red} red, ${white} white)`);
     }
 })();
