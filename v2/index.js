@@ -1,15 +1,19 @@
 const mem = require('../utils/mem.js');
-const png = require('../png/node.js');
 const magic = require('./codecs/magic.js');
-const codecs = require('../codecs/node/index.js');
 const { Color, default: framebuffer } = require('./framebuffer.js');
 
-const wasm = {
-  svg: require('../wasm/node/svg.js'),
-  gif: require('../wasm/node/gif.js'),
-  jpeg: require('../wasm/node/jpeg.js'),
-  tiff: require('../wasm/node/tiff.js'),
-  // font: require('../wasm/node/font.js'),
+const codecs = {
+  png: require('../formats/png.js'),
+  gif: require('../formats/gif.js'),
+  svg: require('../formats/svg.js'),
+  jpeg: require('../formats/jpeg.js'),
+  tiff: require('../formats/tiff.js'),
+};
+
+// all decoders return 8-bit RGBA
+function decodeStill(format, u8) {
+  const { width, height, pixels } = codecs[format].decode(u8);
+  return { width, height, buffer: pixels };
 }
 
 // todo: verbose range errors
@@ -28,7 +32,7 @@ async function load(buffer) {
   if (!all_formats.includes(meta.format)) throw new RangeError('unsupported image format');
 
   if ('gif' === meta.format) return Animation.decode('gif', u8);
-  return Image.from('png' === meta.format ? png.decode(u8) : (await wasm[meta.format].init()).load(u8));
+  return Image.from(decodeStill(meta.format, u8));
 }
 
 class Frame {
@@ -67,12 +71,16 @@ class Image extends framebuffer {
   }
 
   encode(format, options = {}) {
-    const method = options.sync ? 'encode' : 'encode_async';
-    if ('png' === format) return codecs.png[method](this.u8, { ...options, width: this.width, height: this.height });
-    if ('jpeg' === format) return codecs.jpeg[method](this.u8, { ...options, width: this.width, height: this.height });
-    if ('webp' === format) return codecs.webp[method](this.u8, { ...options, width: this.width, height: this.height });
+    let encoded;
+    if ('png' === format) {
+      const level = ({ fast: 1, default: 6, best: 9 })[options.compression] ?? 6;
+      encoded = codecs.png.encode(this.u8, { channels: 4, width: this.width, height: this.height, level });
+    }
+    else if ('jpeg' === format) encoded = codecs.jpeg.encode(this.u8, this.width, this.height, options.quality ?? 90);
+    else if ('webp' === format) throw new RangeError('webp encoding is no longer supported');
+    else throw new RangeError('invalid image format');
 
-    throw new RangeError('invalid image format');
+    return options.sync ? encoded : Promise.resolve(encoded);
   }
 
   static async decode(format, buffer, options = {}) {
@@ -88,9 +96,14 @@ class Image extends framebuffer {
     }
 
     let frame;
-    if ('svg' === format) frame = (await wasm.svg.init()).load(buffer, options.fit ?? null);
+    if ('svg' === format) {
+      const fit = options.fit ?? {};
+      const [mode, size] = fit.width ? [2, fit.width] : fit.height ? [3, fit.height] : [1, fit.zoom ?? 1];
+      const { width, height, pixels } = codecs.svg.render(buffer, mode, size);
+      frame = { width, height, buffer: pixels };
+    }
 
-    else if (format in wasm) frame = (await wasm[format].init()).load(buffer);
+    else if (['png', 'jpeg', 'tiff'].includes(format)) frame = decodeStill(format, buffer);
 
     if (!frame) throw new RangeError('invalid image format');
     return new Image(frame.width, frame.height, frame.buffer);
@@ -126,28 +139,17 @@ class Animation {
 
   async encode(format, options = {}) {
     if ('gif' === format) {
-      const quality = options.quality ?? 95;
-      const encoder = new codecs.gif.encoder(this.width, this.height);
+      const dispose = { any: 0, keep: 1, previous: 2, background: 3 };
+      const repeat = options.repeat ?? this.repeat;
 
       let prev = { timestamp: 0 };
-      for (const frame of this.frames) {
-        encoder.add(frame.image.u8, {
-          x: 0,
-          y: 0,
-          quality,
-          width: frame.width,
-          speed: options.speed,
-          height: frame.height,
-          colors: options.colors,
-          dispose: frame.dispose,
-          delay: ((frame.timestamp - prev.timestamp) / 10) | 0,
-        });
-
+      const frames = this.frames.map(frame => {
+        const delay = ((frame.timestamp - prev.timestamp) / 10) | 0;
         prev = frame;
-      }
+        return { x: 0, y: 0, width: frame.width, height: frame.height, delay, dispose: dispose[frame.dispose] ?? 0, pixels: frame.image.u8 };
+      });
 
-      const repeat = options.repeat ?? this.repeat;
-      return encoder.finish({ ...options, repeat: Infinity === repeat ? null : repeat });
+      return codecs.gif.encode({ width: this.width, height: this.height, loopCount: Infinity === repeat ? -1 : repeat, frames }, options.quality ?? 95);
     }
 
     throw new RangeError('invalid animation format');
@@ -166,89 +168,16 @@ class Animation {
     }
 
     if ('gif' === format) {
-      const decoder = new (await wasm.gif.init()).Decoder(buffer);
+      const decoded = codecs.gif.decode(buffer);
+      const animation = new Animation(decoded.width, decoded.height);
+      animation.repeat = -1 === decoded.loopCount ? Infinity : decoded.loopCount;
 
-      const gwidth = decoder.width | 0;
-      const gheight = decoder.height | 0;
-      const animation = new Animation(gwidth, gheight);
-      const u32 = new Uint32Array(decoder.width * decoder.height);
-      const u8 = new Uint8Array(u32.buffer, u32.byteOffset, u32.byteLength);
-
-      let prev = { timestamp: 0 };
-      const frames = animation.frames;
-      for (const frame of decoder.frames()) {
-        let offset8 = 0 | 0;
-        let offset32 = 0 | 0;
-        const fx = frame.x | 0;
-        const fy = frame.y | 0;
-        const f8 = frame.buffer;
-        const mode = frame.dispose;
-        const width = frame.width | 0;
-        const height = frame.height | 0;
-        const f = frames[frames.push(new Frame(gwidth, gheight)) - 1];
-        const f32 = new Uint32Array(f8.buffer, f8.byteOffset, width * height);
-
-        const t8 = f.image.u8;
-        f.dispose = 'background';
-        const t32 = new Uint32Array(t8.buffer);
-        f.timestamp = prev.timestamp + 10 * frame.delay;
-
-        prev = f;
-        t8.set(u8);
-
-        if (2 === mode) {
-          for (let y = 0 | 0; y < height; y++) {
-            const y_offset = fx + gwidth * (y + fy) | 0;
-
-            for (let x = 0 | 0; x < width; x++) {
-              const x_offset = x + y_offset;
-
-              if (0 === f8[3 + offset8])
-                t32[x_offset] = u32[x_offset];
-              else t32[x_offset] = f32[offset32];
-
-              offset32++;
-              offset8 += 4;
-            }
-          }
-        }
-
-        else if (3 === mode) {
-          for (let y = 0 | 0; y < height; y++) {
-            const y_offset = fx + gwidth * (y + fy) | 0;
-
-            for (let x = 0 | 0; x < width; x++) {
-              const x_offset = x + y_offset;
-
-              if (0 === f8[3 + offset8])
-                t32[x_offset] = u32[x_offset];
-              else t32[x_offset] = f32[offset32];
-
-              offset32++;
-              offset8 += 4;
-              u32[x_offset] = 0;
-            }
-          }
-        }
-
-        else if (0 === mode || 1 === mode) {
-          t8.set(u8)
-          for (let y = 0 | 0; y < height; y++) {
-            const y_offset = fx + gwidth * (y + fy) | 0;
-
-            for (let x = 0 | 0; x < width; x++) {
-              const x_offset = x + y_offset;
-
-              if (0 === f8[3 + offset8])
-                t32[x_offset] = u32[x_offset];
-              else t32[x_offset] = f32[offset32];
-
-              offset32++;
-              offset8 += 4;
-              u32[x_offset] = t32[x_offset];
-            }
-          }
-        }
+      let timestamp = 0;
+      for (const { pixels, delay } of codecs.gif.composite(decoded)) {
+        const frame = new Frame(decoded.width, decoded.height, pixels);
+        frame.dispose = 'background';
+        frame.timestamp = timestamp += 10 * delay;
+        animation.frames.push(frame);
       }
 
       return animation;

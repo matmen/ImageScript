@@ -267,6 +267,43 @@ function decode(data, onlyFirstFrame = false) {
     }
 }
 
+/**
+ * Composites decoded frames onto the logical screen, applying their disposal modes
+ * @param {{width: number, height: number, frames: GIFFrame[]}} gif output of {@link decode}
+ * @return {Array<{pixels: Uint8Array, delay: number}>} full screen RGBA frames
+ */
+function composite({ width, height, frames }) {
+    const canvas = new Uint32Array(width * height);
+    const output = [];
+
+    for (const frame of frames) {
+        const previous = frame.dispose === 2 ? canvas.slice() : null;
+        const src = new Uint32Array(frame.pixels.buffer, frame.pixels.byteOffset, frame.width * frame.height);
+
+        // clip the frame to the logical screen
+        const x0 = Math.min(frame.x, width), x1 = Math.min(frame.x + frame.width, width);
+        const y0 = Math.min(frame.y, height), y1 = Math.min(frame.y + frame.height, height);
+
+        for (let y = y0; y < y1; y++) {
+            const srcRow = (y - frame.y) * frame.width - frame.x;
+            const dstRow = y * width;
+
+            for (let x = x0; x < x1; x++)
+                if (frame.pixels[(srcRow + x) * 4 + 3] !== 0) canvas[dstRow + x] = src[srcRow + x];
+        }
+
+        output.push({ pixels: new Uint8Array(canvas.slice().buffer), delay: frame.delay });
+
+        if (frame.dispose === 3) {
+            for (let y = y0; y < y1; y++) canvas.fill(0, y * width + x0, y * width + x1);
+        } else if (previous) canvas.set(previous);
+    }
+
+    // a GIF without image data still describes a (transparent) canvas
+    if (!output.length) output.push({ pixels: new Uint8Array(width * height * 4), delay: 0 });
+    return output;
+}
+
 // maps the n-th stored row of an interlaced image to its actual row
 function interlacedRows(height) {
     const rows = [];
@@ -454,4 +491,4 @@ class ByteWriter {
     }
 }
 
-module.exports = { encode, decode };
+module.exports = { encode, decode, composite };

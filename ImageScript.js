@@ -6,7 +6,6 @@ const textRenderer = require('./formats/text.js');
 const svgRenderer = require('./formats/svg.js');
 const mem = require('./utils/mem.js');
 const {version} = require('./package.json');
-const codecs = require('./codecs/node/index.js');
 const { default: v2 } = require('./v2/framebuffer.js');
 
 // old
@@ -1068,16 +1067,12 @@ class Image {
     }
 
     /**
-     * Encodes the image into a WEBP
-     * @param {null|number} [quality=null] The WEBP quality to use (0-100) (null is lossless)
-     * @return {Promise<Uint8Array>}
+     * WebP encoding was removed when ImageScript became dependency free, use PNG or JPEG instead
+     * @deprecated
+     * @return {Promise<never>}
      */
-    async encodeWEBP(quality = null) {
-        return codecs.webp.encode_async(this.bitmap, {
-            quality,
-            width: this.width,
-            height: this.height,
-        });
+    async encodeWEBP() {
+        throw new Error('WebP encoding is no longer supported, use encode() (PNG) or encodeJPEG() instead');
     }
 
     /**
@@ -1414,39 +1409,14 @@ class GIF extends Array {
         const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
         if (!ImageType.isGIF(view)) throw new Error('Unsupported image type');
 
-        const {width, height, loopCount, frames: raw} = gif.decode(data, onlyExtractFirstFrame);
-        const canvas = new Uint32Array(width * height);
-        const frames = [];
+        const decoded = gif.decode(data, onlyExtractFirstFrame);
+        const frames = gif.composite(decoded).map(({pixels, delay}) => {
+            const frame = new Frame(decoded.width, decoded.height, 10 * delay, 0, 0, Frame.DISPOSAL_BACKGROUND);
+            frame.bitmap.set(pixels);
+            return frame;
+        });
 
-        for (const frame of raw) {
-            const previous = frame.dispose === 2 ? canvas.slice() : null;
-            const src = new Uint32Array(frame.pixels.buffer, frame.pixels.byteOffset, frame.width * frame.height);
-
-            // clip the frame to the logical screen
-            const x0 = Math.min(frame.x, width), x1 = Math.min(frame.x + frame.width, width);
-            const y0 = Math.min(frame.y, height), y1 = Math.min(frame.y + frame.height, height);
-
-            for (let y = y0; y < y1; y++) {
-                const srcRow = (y - frame.y) * frame.width - frame.x;
-                const dstRow = y * width;
-
-                for (let x = x0; x < x1; x++)
-                    if (frame.pixels[(srcRow + x) * 4 + 3] !== 0) canvas[dstRow + x] = src[srcRow + x];
-            }
-
-            const output = new Frame(width, height, 10 * frame.delay, 0, 0, Frame.DISPOSAL_BACKGROUND);
-            new Uint32Array(output.bitmap.buffer, output.bitmap.byteOffset, width * height).set(canvas);
-            frames.push(output);
-
-            if (frame.dispose === 3) {
-                for (let y = y0; y < y1; y++) canvas.fill(0, y * width + x0, y * width + x1);
-            } else if (previous) canvas.set(previous);
-        }
-
-        // a GIF without image data still describes a (transparent) canvas
-        if (!frames.length) frames.push(new Frame(width, height, 0, 0, 0, Frame.DISPOSAL_BACKGROUND));
-
-        return new GIF(frames, loopCount);
+        return new GIF(frames, decoded.loopCount);
     }
 
     resize(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
