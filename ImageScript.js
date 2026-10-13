@@ -3,13 +3,13 @@ const gif = require('./formats/gif.js');
 const jpeg = require('./formats/jpeg.js');
 const tiff = require('./formats/tiff.js');
 const textRenderer = require('./formats/text.js');
+const svgRenderer = require('./formats/svg.js');
 const mem = require('./utils/mem.js');
 const {version} = require('./package.json');
 const codecs = require('./codecs/node/index.js');
 const { default: v2 } = require('./v2/framebuffer.js');
 
 // old
-const svglib = require('./wasm/node/svg.js');
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -1134,7 +1134,9 @@ class Image {
 
     /**
      * Creates a new image from the given SVG
-     * @param {string} svg The SVG content
+     * Supports shapes, paths, transforms, use/symbol, CSS styles, gradients, strokes, clip paths, masks and opacity;
+     * text, images, filters and patterns are not rendered
+     * @param {string|Uint8Array} svg The SVG content
      * @param {number} size The size to use
      * @param {number} mode The SVG resizing mode to use (one of {@link SVG_MODE_SCALE}, {@link SVG_MODE_WIDTH}, {@link SVG_MODE_HEIGHT})
      * @return {Promise<Image>} The rendered SVG graphic
@@ -1148,12 +1150,9 @@ class Image {
         if (mode !== this.SVG_MODE_SCALE && size < 1)
             throw new RangeError('SVG size must be >= 1')
 
-        if (typeof svg === 'string') svg = Buffer.from(svg);
-        const framebuffer = (await svglib.init()).rasterize(svg, mode, size);
-
-        const image = new Image(framebuffer.width, framebuffer.height);
-
-        image.bitmap.set(framebuffer.buffer);
+        const {width, height, pixels} = svgRenderer.render(typeof svg === 'string' ? svg : mem.view(svg), mode, size);
+        const image = new Image(width, height);
+        image.bitmap.set(pixels);
 
         return image;
     }

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="240" height="160" viewBox="0 0 240 160">
+    <style>
+        .outline { stroke: #222; stroke-width: 3; }
+        g.cards > rect:first-child { fill: #f4f4f4; }
+    </style>
+    <defs>
+        <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#4fa3ff"/>
+            <stop offset="100%" stop-color="#d9ecff"/>
+        </linearGradient>
+        <radialGradient id="sun" cx="0.4" cy="0.4" r="0.6" fx="0.3" fy="0.3">
+            <stop offset="0" stop-color="#fff6a0"/>
+            <stop offset="1" stop-color="#ff9a00"/>
+        </radialGradient>
+        <clipPath id="window"><circle cx="60" cy="60" r="40"/></clipPath>
+        <mask id="fade"><rect x="130" y="10" width="100" height="60" fill="white"/><rect x="180" y="10" width="50" height="60" fill="#444"/></mask>
+        <symbol id="star" viewBox="0 0 20 20"><path d="M10 1l2.6 5.8 6.4.6-4.8 4.3 1.4 6.3L10 14.8 4.4 18l1.4-6.3L1 7.4l6.4-.6z"/></symbol>
+    </defs>
+    <g class="cards"><rect width="240" height="160"/></g>
+    <g clip-path="url(#window)">
+        <rect x="20" y="20" width="80" height="80" fill="url(#sky)"/>
+        <circle cx="72" cy="48" r="16" fill="url(#sun)"/>
+    </g>
+    <circle cx="60" cy="60" r="40" fill="none" class="outline"/>
+    <rect x="130" y="10" width="100" height="60" rx="8" fill="#2a9d8f" mask="url(#fade)"/>
+    <path d="M20 130 h60" stroke="#e76f51" stroke-width="8" stroke-linecap="round" stroke-dasharray="12 10"/>
+    <polyline points="100,145 115,115 130,145 145,115" fill="none" stroke="#264653" stroke-width="6" stroke-linejoin="round"/>
+    <path fill-rule="evenodd" fill="#e9c46a" d="M160 90 h60 v60 h-60z M175 105 h30 v30 h-30z"/>
+    <path d="M100 85 a20 12 30 1 0 30 10" fill="none" stroke="#8338ec" stroke-width="2.5"/>
+    <g opacity="0.6" transform="rotate(-10 200 40)">
+        <use xlink:href="#star" x="185" y="25" width="30" height="30" fill="#ffbe0b"/>
+    </g>
+</svg>
