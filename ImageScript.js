@@ -1,4 +1,5 @@
 const png = require('./formats/png.js');
+const gif = require('./formats/gif.js');
 const mem = require('./utils/mem.js');
 const {version} = require('./package.json');
 const codecs = require('./codecs/node/index.js');
@@ -6,7 +7,6 @@ const { default: v2 } = require('./v2/framebuffer.js');
 
 // old
 const svglib = require('./wasm/node/svg.js');
-const giflib = require('./wasm/node/gif.js');
 const fontlib = require('./wasm/node/font.js');
 const jpeglib = require('./wasm/node/jpeg.js');
 const tifflib = require('./wasm/node/tiff.js');
@@ -1423,29 +1423,27 @@ class GIF extends Array {
 
     /**
      * Encodes the image into a GIF
-     * @param {number} [quality=95] GIF quality 0-100
+     * @param {number} [quality=95] GIF quality 1-100, scales the palette size (1 = 8 colors, 50 = 55, 90 and above = 256)
      * @return {Promise<Uint8Array>} The encoded data
      */
     async encode(quality = 95) {
-        const encoder = new codecs.gif.encoder(this.width, this.height);
+        const frames = [];
 
         for (const frame of this) {
             if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
 
-            encoder.add(frame.bitmap, {
-                quality,
+            frames.push({
                 x: frame.xOffset,
                 y: frame.yOffset,
                 width: frame.width,
-                speed: null, // 1-10
                 height: frame.height,
-                colors: null, // 2-256
                 delay: ~~(frame.duration / 10),
-                dispose: ['any', 'keep', 'previous', 'background'][frame.disposalMode],
+                dispose: frame.disposalMode,
+                pixels: frame.bitmap
             });
         }
 
-        return encoder.finish({ repeat: -1 === this.loopCount ? null : this.loopCount });
+        return gif.encode({width: this.width, height: this.height, loopCount: this.loopCount, frames}, quality);
     }
 
     /**
@@ -1455,98 +1453,43 @@ class GIF extends Array {
      * @return {Promise<GIF>} The decoded GIF
      */
     static async decode(data, onlyExtractFirstFrame = false) {
-        let image;
         data = mem.view(data);
         const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        if (!ImageType.isGIF(view)) throw new Error('Unsupported image type');
 
-        if (ImageType.isGIF(view)) { // GIF
-            const frames = [];
-            const decoder = new (await giflib.init()).Decoder(data);
+        const {width, height, loopCount, frames: raw} = gif.decode(data, onlyExtractFirstFrame);
+        const canvas = new Uint32Array(width * height);
+        const frames = [];
 
-            const gwidth = decoder.width | 0;
-            const gheight = decoder.height | 0;
-            const u32 = new Uint32Array(decoder.width * decoder.height);
-            const u8 = new Uint8Array(u32.buffer, u32.byteOffset, u32.byteLength);
+        for (const frame of raw) {
+            const previous = frame.dispose === 2 ? canvas.slice() : null;
+            const src = new Uint32Array(frame.pixels.buffer, frame.pixels.byteOffset, frame.width * frame.height);
 
-            for (const frame of decoder.frames()) {
-                let offset8 = 0 | 0;
-                let offset32 = 0 | 0;
-                const fx = frame.x | 0;
-                const fy = frame.y | 0;
-                const f8 = frame.buffer;
-                const mode = frame.dispose;
-                const width = frame.width | 0;
-                const height = frame.height | 0;
-                const f32 = new Uint32Array(f8.buffer, f8.byteOffset, width * height);
-                const f = frames[frames.push(new Frame(gwidth, gheight, 10 * frame.delay, 0, 0, 3)) - 1];
+            // clip the frame to the logical screen
+            const x0 = Math.min(frame.x, width), x1 = Math.min(frame.x + frame.width, width);
+            const y0 = Math.min(frame.y, height), y1 = Math.min(frame.y + frame.height, height);
 
-                const t8 = f.bitmap;
-                const t32 = new Uint32Array(t8.buffer);
+            for (let y = y0; y < y1; y++) {
+                const srcRow = (y - frame.y) * frame.width - frame.x;
+                const dstRow = y * width;
 
-                t8.set(u8);
-
-                if (2 === mode) {
-                    for (let y = 0 | 0; y < height; y++) {
-                        const y_offset = fx + gwidth * (y + fy) | 0;
-
-                        for (let x = 0 | 0; x < width; x++) {
-                            const x_offset = x + y_offset;
-
-                            if (0 === f8[3 + offset8])
-                            t32[x_offset] = u32[x_offset];
-                            else t32[x_offset] = f32[offset32];
-
-                            offset32++;
-                            offset8 += 4;
-                        }
-                    }
-                }
-
-                else if (3 === mode) {
-                    for (let y = 0 | 0; y < height; y++) {
-                        const y_offset = fx + gwidth * (y + fy) | 0;
-
-                        for (let x = 0 | 0; x < width; x++) {
-                            const x_offset = x + y_offset;
-
-                            if (0 === f8[3 + offset8])
-                            t32[x_offset] = u32[x_offset];
-                            else t32[x_offset] = f32[offset32];
-
-                            offset32++;
-                            offset8 += 4;
-                            u32[x_offset] = 0;
-                        }
-                    }
-                }
-
-                else if (0 === mode || 1 === mode) {
-                    t8.set(u8);
-                    for (let y = 0 | 0; y < height; y++) {
-                        const y_offset = fx + gwidth * (y + fy) | 0;
-
-                        for (let x = 0 | 0; x < width; x++) {
-                            const x_offset = x + y_offset;
-
-                            if (0 === f8[3 + offset8])
-                                t32[x_offset] = u32[x_offset];
-                            else t32[x_offset] = f32[offset32];
-
-                            offset32++;
-                            offset8 += 4;
-                            u32[x_offset] = t32[x_offset];
-                        }
-                    }
-                }
-
-                if (onlyExtractFirstFrame)
-                    break;
+                for (let x = x0; x < x1; x++)
+                    if (frame.pixels[(srcRow + x) * 4 + 3] !== 0) canvas[dstRow + x] = src[srcRow + x];
             }
 
-            image = new GIF(frames);
-        } else throw new Error('Unsupported image type');
+            const output = new Frame(width, height, 10 * frame.delay, 0, 0, Frame.DISPOSAL_BACKGROUND);
+            new Uint32Array(output.bitmap.buffer, output.bitmap.byteOffset, width * height).set(canvas);
+            frames.push(output);
 
-        return image;
+            if (frame.dispose === 3) {
+                for (let y = y0; y < y1; y++) canvas.fill(0, y * width + x0, y * width + x1);
+            } else if (previous) canvas.set(previous);
+        }
+
+        // a GIF without image data still describes a (transparent) canvas
+        if (!frames.length) frames.push(new Frame(width, height, 0, 0, 0, Frame.DISPOSAL_BACKGROUND));
+
+        return new GIF(frames, loopCount);
     }
 
     resize(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {

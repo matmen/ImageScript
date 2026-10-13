@@ -517,7 +517,8 @@ export class GIF extends Array<Frame> {
   get duration(): number;
 
   /**
-   * @param quality GIF quality `0`-`100` (default: `95`)
+   * @param quality GIF quality `1`-`100`, scales the palette size from 8 colors
+   *     (`1`) to 256 colors (`90` and above). Default: `95`
    */
   async encode(quality?: GIFQuality): Promise<Uint8Array>;
 
