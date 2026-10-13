@@ -22,9 +22,10 @@ function clamp8(v) {
  * sampling factors, restart intervals and greyscale, YCbCr, RGB, CMYK and YCCK color
  * The output matches libjpeg's defaults (islow IDCT, fancy upsampling)
  * @param {Uint8Array} data
+ * @param {{transform?: 'ycc'|'rgb'|'cmyk'}} [options] overrides the color transform detected from JFIF/Adobe markers (used by TIFF)
  * @return {{width: number, height: number, pixels: Uint8Array}}
  */
-function decode(data) {
+function decode(data, { transform } = {}) {
     if (data[0] !== 0xff || data[1] !== 0xd8) throw new Error('JPEG: invalid signature');
 
     const quantizationTables = [];
@@ -162,7 +163,7 @@ function decode(data) {
     }
 
     if (!frame) throw new Error('JPEG: missing frame header');
-    return { width: frame.width, height: frame.height, pixels: output(frame, adobe, jfif) };
+    return { width: frame.width, height: frame.height, pixels: output(frame, adobe, jfif, transform) };
 }
 
 function createFrame(progressive, height, width, componentData) {
@@ -671,7 +672,7 @@ for (let i = 0; i < 256; i++) {
     cbG[i] = -22554 * x + 32768;
 }
 
-function output(frame, adobe, jfif) {
+function output(frame, adobe, jfif, override) {
     const { width, height, components } = frame;
     const planes = components.map(component => upsample(component, frame));
     const pixels = new Uint8Array(width * height * 4);
@@ -679,6 +680,7 @@ function output(frame, adobe, jfif) {
 
     let transform;
     if (count === 1) transform = 'grey';
+    else if (override && (count === 4) === (override === 'cmyk')) transform = override;
     else if (count === 3) {
         if (adobe) transform = adobe.transform === 0 ? 'rgb' : 'ycc';
         else if (!jfif && components[0].id === 0x52 && components[1].id === 0x47 && components[2].id === 0x42) transform = 'rgb';

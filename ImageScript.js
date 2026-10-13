@@ -1,6 +1,7 @@
 const png = require('./formats/png.js');
 const gif = require('./formats/gif.js');
 const jpeg = require('./formats/jpeg.js');
+const tiff = require('./formats/tiff.js');
 const mem = require('./utils/mem.js');
 const {version} = require('./package.json');
 const codecs = require('./codecs/node/index.js');
@@ -9,12 +10,14 @@ const { default: v2 } = require('./v2/framebuffer.js');
 // old
 const svglib = require('./wasm/node/svg.js');
 const fontlib = require('./wasm/node/font.js');
-const tifflib = require('./wasm/node/tiff.js');
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
     JPEG: 0xffd8ff,
-    TIFF: 0x49492a00,
+    TIFF_LE: 0x49492a00,
+    TIFF_BE: 0x4d4d002a,
+    BIGTIFF_LE: 0x49492b00,
+    BIGTIFF_BE: 0x4d4d002b,
     GIF: 0x474946
 };
 
@@ -1097,10 +1100,9 @@ class Image {
             image = new Image(width, height);
             image.bitmap.set(pixels);
         } else if (ImageType.isTIFF(view)) { // TIFF
-            const framebuffer = (await tifflib.init()).decode(data);
-            image = new Image(framebuffer.width, framebuffer.height);
-
-            image.bitmap.set(framebuffer.buffer);
+            const {width, height, pixels} = tiff.decode(data);
+            image = new Image(width, height);
+            image.bitmap.set(pixels);
         } else throw new Error('Unsupported image type');
 
         return image;
@@ -1553,7 +1555,9 @@ class ImageType {
      * @returns {boolean}
      */
     static isTIFF(view) {
-        return view.byteLength >= 4 && view.getUint32(0, false) === MAGIC_NUMBERS.TIFF;
+        if (view.byteLength < 4) return false;
+        const magic = view.getUint32(0, false);
+        return magic === MAGIC_NUMBERS.TIFF_LE || magic === MAGIC_NUMBERS.TIFF_BE || magic === MAGIC_NUMBERS.BIGTIFF_LE || magic === MAGIC_NUMBERS.BIGTIFF_BE;
     }
 
     /**
