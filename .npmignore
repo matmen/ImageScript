@@ -3,4 +3,3 @@ tests/
 .github/
 coverage/
 .nyc_output/
-bench/
