@@ -8,7 +8,7 @@
 ---
 
 **ImageScript** is a zero-dependency alternative to common JavaScript bitmap image manipulation tools. All codecs and
-renderers are written in TypeScript, without WebAssembly, native binaries or npm dependencies. It requires Node.js 22.12
+renderers are written in TypeScript, without WebAssembly, native binaries or npm dependencies. It requires Node.js 22.13
 or newer and works with both `import` and `require()`; type definitions are included.
 
 ---

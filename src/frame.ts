@@ -19,6 +19,11 @@ export class Frame extends Image {
     /** @internal */
     private __disposalMode__: FrameDisposalModeId = 1;
 
+    /** GIF frame disposal mode ANY: the decoder decides (in practice like KEEP). For use with {@link Frame} */
+    static get DISPOSAL_ANY(): 'any' {
+        return 'any';
+    }
+
     /** GIF frame disposal mode KEEP. For use with {@link Frame} */
     static get DISPOSAL_KEEP(): 'keep' {
         return 'keep';
@@ -61,8 +66,16 @@ export class Frame extends Image {
         this.disposalMode = disposalMode;
     }
 
-    /** The frame's disposal mode */
-    get disposalMode(): FrameDisposalModeId {
+    /** The frame's disposal mode (`'any'`, `'keep'`, `'previous'` or `'background'`); also settable by id (0-3) */
+    get disposalMode(): FrameDisposalModeName {
+        return DISPOSAL_MODES[this.__disposalMode__];
+    }
+
+    /**
+     * The frame's disposal mode as id (0 any, 1 keep, 2 previous, 3 background)
+     * @internal
+     */
+    get __disposal_id__(): FrameDisposalModeId {
         return this.__disposalMode__;
     }
 

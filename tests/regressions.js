@@ -84,7 +84,7 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
     {
         const frame = new Frame(10, 10, 500, 2, 4, Frame.DISPOSAL_BACKGROUND);
         const clone = frame.clone();
-        assert(clone instanceof Frame && clone.duration === 500 && clone.xOffset === 2 && clone.disposalMode === 3, 'Frame.clone lost metadata');
+        assert(clone instanceof Frame && clone.duration === 500 && clone.xOffset === 2 && clone.disposalMode === 'background', 'Frame.clone lost metadata');
 
         const resized = frame.resize(5, 5);
         assert(resized === frame && frame.duration === 500 && frame.xOffset === 1 && frame.yOffset === 2, 'Frame.resize lost metadata');
@@ -330,5 +330,62 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         const gif = new GIF([new Frame(2, 2, 16), new Frame(2, 2, 14)]);
         const decoded = await GIF.decode(await gif.encode());
         assert(decoded[0].duration === 20 && decoded[1].duration === 10, `gif durations should round, got ${decoded[0].duration}, ${decoded[1].duration}`);
+    }
+
+    // jpegs are rotated as their exif orientation says (fixtures written by Pillow, checked against ImageOps.exif_transpose)
+    {
+        const fs = require('fs');
+        const read = n => fs.readFileSync(`./tests/jpegs/exif-orientation-${n}.jpg`);
+        const raw = await Image.decode(read(3), {applyOrientation: false});
+        assert(raw.width === 48 && raw.height === 32, 'decode: applyOrientation: false should keep the stored pixels');
+        for (const [n, angle] of [[3, 180], [6, 270], [8, 90]]) {
+            const oriented = await Image.decode(read(n));
+            const expected = (await Image.decode(read(n), {applyOrientation: false})).rotate(angle);
+            assert(oriented.width === expected.width && Buffer.from(oriented.bitmap).equals(Buffer.from(expected.bitmap)), `decode: orientation ${n} not applied`);
+        }
+    }
+
+    // replacing the bitmap keeps every accessor in sync
+    {
+        const image = new Image(2, 2);
+        image.bitmap = new Uint8ClampedArray(16).fill(255);
+        assert(image.getPixelAt(1, 1) === 0xffffffff && image.averageColor() === 0xffffffff, 'bitmap setter: views out of sync');
+        image.bitmap = new Uint8Array(16);
+        assert(image.getPixelAt(0, 0) === 0 && image.bitmap instanceof Uint8ClampedArray, 'bitmap setter: Uint8Array not wrapped');
+        let threw = false;
+        try { image.bitmap = new Uint8ClampedArray(12); } catch { threw = true; }
+        assert(threw, 'bitmap setter should reject a wrong size');
+    }
+
+    // color components are rounded and clamped instead of wrapping
+    {
+        assert(Image.rgbaToColor(256, -1, 127.6, 300) === 0xff0080ff, 'rgbaToColor should clamp and round, got ' + Image.rgbaToColor(256, -1, 127.6, 300).toString(16));
+        assert(Image.rgbToColor(NaN, 0, 0) === 0x000000ff, 'rgbToColor(NaN) should be 0');
+    }
+
+    // disposal modes read back as the names they are set with
+    {
+        const frame = new Frame(1, 1, 100, 0, 0, Frame.DISPOSAL_PREVIOUS);
+        assert(frame.disposalMode === 'previous', 'disposalMode should be a name, got ' + frame.disposalMode);
+        frame.disposalMode = 0;
+        assert(frame.disposalMode === Frame.DISPOSAL_ANY, 'disposalMode set by id should read back as name');
+        const decoded = await GIF.decode(await new GIF([new Frame(2, 2, 100, 0, 0, 'background'), new Frame(2, 2)]).encode());
+        assert(decoded.length === 2, 'gif with disposal modes should roundtrip');
+    }
+
+    // options objects as alternatives to positional arguments
+    {
+        const base = new Image(20, 20).fill(0xff0000ff);
+        assert(Buffer.from(base.clone().cropCircle({max: true, feathering: 0.3}).bitmap).equals(Buffer.from(base.clone().cropCircle(true, 0.3).bitmap)), 'cropCircle options');
+        assert(base.clone().rotate(45, {resize: false}).width === 20 && base.clone().rotate(45).width > 20, 'rotate options');
+        const navy = new Image(10, 10).fill(0x00002aff).drawBox(0, 0, 3, 3, 0xc8c800ff);
+        assert(navy.dominantColor({threshold: 0}) === 0x00002aff && navy.dominantColor({ignoreBlack: true}) === navy.dominantColor(true), 'dominantColor options');
+    }
+
+    // type checks take any binary data
+    {
+        const {ImageType} = require('..');
+        const png = await new Image(1, 1).encode();
+        assert(ImageType.isPNG(png) && ImageType.isPNG(Buffer.from(png)) && ImageType.isPNG(new DataView(png.buffer)) && !ImageType.isGIF(png), 'ImageType checks');
     }
 })();

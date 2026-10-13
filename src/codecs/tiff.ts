@@ -10,6 +10,7 @@ const TAGS = {
     Compression: 259,
     Photometric: 262,
     FillOrder: 266,
+    Orientation: 274,
     StripOffsets: 273,
     SamplesPerPixel: 277,
     RowsPerStrip: 278,
@@ -45,7 +46,7 @@ interface SampleReader {
     (rowOffset: number, n: number): { raw: number, value: number };
 }
 
-export async function decode(data: Uint8Array): Promise<{ width: number, height: number, pixels: Uint8Array }> {
+export async function decode(data: Uint8Array): Promise<{ width: number, height: number, pixels: Uint8Array, orientation: number }> {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
     let little: boolean;
@@ -128,6 +129,8 @@ export async function decode(data: Uint8Array): Promise<{ width: number, height:
         return v && v.length ? v[0] : fallback;
     }
 
+    const orientationTag = value(TAGS.Orientation, 1);
+    const orientation = orientationTag >= 1 && orientationTag <= 8 ? orientationTag : 1;
     const width = value(TAGS.ImageWidth);
     const height = value(TAGS.ImageLength);
     if (!width || !height) throw new Error('TIFF: invalid dimensions');
@@ -196,7 +199,7 @@ export async function decode(data: Uint8Array): Promise<{ width: number, height:
             blitRGBA(decoded.pixels, decoded.width, decoded.height, pixels, width, height, (s % segmentsAcross) * segmentWidth, (s / segmentsAcross | 0) * segmentHeight);
         }
 
-        return { width, height, pixels };
+        return { width, height, pixels, orientation };
     }
 
     // decompress every segment into a contiguous sample buffer (one plane per sample when planar)
@@ -221,7 +224,7 @@ export async function decode(data: Uint8Array): Promise<{ width: number, height:
         }
 
         ycbcrUnitsToRGBA(units, width, height, h, v, ycbcrConversion(values), pixels);
-        return { width, height, pixels };
+        return { width, height, pixels, orientation };
     }
 
     const rowBytes = Math.ceil(width * samplesPerRow * bps / 8);
@@ -302,7 +305,7 @@ export async function decode(data: Uint8Array): Promise<{ width: number, height:
         }
     }
 
-    return { width, height, pixels };
+    return { width, height, pixels, orientation };
 }
 
 // returns a function reading the n-th sample of a row as {raw, value} with value scaled to 8 bits

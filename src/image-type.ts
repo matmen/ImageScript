@@ -12,6 +12,13 @@ const MAGIC_NUMBERS = {
     GIF: 0x474946
 };
 
+// any binary data as a DataView (DataViews are used as is)
+function dataView(data: BinaryData): DataView {
+    if (data instanceof DataView) return data;
+    const u8 = bytes(data);
+    return new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+}
+
 export class ImageType {
     /**
      * Gets an image's type from its magic number
@@ -19,8 +26,7 @@ export class ImageType {
      * @returns The image type, or null if it isn't supported
      */
     static getType(data: BinaryData): ImageTypeName | null {
-        const u8 = bytes(data);
-        const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+        const view = dataView(data);
 
         if (this.isPNG(view)) return 'png';
         if (this.isJPEG(view)) return 'jpeg';
@@ -29,21 +35,25 @@ export class ImageType {
         return null;
     }
 
-    static isPNG(view: DataView): boolean {
+    static isPNG(data: BinaryData): boolean {
+        const view = dataView(data);
         return view.byteLength >= 4 && view.getUint32(0, false) === MAGIC_NUMBERS.PNG;
     }
 
-    static isJPEG(view: DataView): boolean {
+    static isJPEG(data: BinaryData): boolean {
+        const view = dataView(data);
         return view.byteLength >= 4 && (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.JPEG;
     }
 
-    static isTIFF(view: DataView): boolean {
+    static isTIFF(data: BinaryData): boolean {
+        const view = dataView(data);
         if (view.byteLength < 4) return false;
         const magic = view.getUint32(0, false);
         return magic === MAGIC_NUMBERS.TIFF_LE || magic === MAGIC_NUMBERS.TIFF_BE || magic === MAGIC_NUMBERS.BIGTIFF_LE || magic === MAGIC_NUMBERS.BIGTIFF_BE;
     }
 
-    static isGIF(view: DataView): boolean {
+    static isGIF(data: BinaryData): boolean {
+        const view = dataView(data);
         return view.byteLength >= 4 && (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.GIF;
     }
 }
