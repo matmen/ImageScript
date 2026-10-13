@@ -6,7 +6,6 @@ const textRenderer = require('./formats/text.js');
 const svgRenderer = require('./formats/svg.js');
 const mem = require('./utils/mem.js');
 const {version} = require('./package.json');
-const { default: v2 } = require('./v2/framebuffer.js');
 
 // old
 
@@ -86,7 +85,9 @@ class Image {
      * @returns {void}
      */
     *[Symbol.iterator]() {
-        for (const x of new v2(this.width, this.height, this.bitmap)[Symbol.iterator]()) yield (x[0]++, x[1]++, x)
+        for (let y = 1; y <= this.height; y++)
+            for (let x = 1; x <= this.width; x++)
+                yield [x, y];
     }
 
     /**
@@ -94,7 +95,11 @@ class Image {
      * @yields {number[]} The coordinates and color of the pixel ([x, y, color])
      */
     *iterateWithColors() {
-        for (const x of new v2(this.width, this.height, this.bitmap).pixels('int')) yield (x[0]++, x[1]++, x);
+        const view = new DataView(this.bitmap.buffer, this.bitmap.byteOffset, this.bitmap.byteLength);
+        let offset = 0;
+        for (let y = 1; y <= this.height; y++)
+            for (let x = 1; x <= this.width; x++, offset += 4)
+                yield [x, y, view.getUint32(offset, false)];
     }
 
     /**
@@ -312,7 +317,19 @@ class Image {
      * @returns {Image}
      */
     fill(color) {
-        new v2(this.width, this.height, this.bitmap).fill(color);
+        const view = new DataView(this.bitmap.buffer, this.bitmap.byteOffset, this.bitmap.byteLength);
+
+        if (typeof color === 'function') {
+            let offset = 0;
+            for (let y = 1; y <= this.height; y++)
+                for (let x = 1; x <= this.width; x++, offset += 4)
+                    view.setUint32(offset, color(x, y), false);
+        } else {
+            if (!this.bitmap.length) return this;
+            view.setUint32(0, color, false);
+            const u32 = new Uint32Array(this.bitmap.buffer, this.bitmap.byteOffset, this.bitmap.byteLength / 4);
+            u32.fill(u32[0]);
+        }
 
         return this;
     }
@@ -443,9 +460,14 @@ class Image {
      */
     __resize_nearest_neighbor__(width, height) {
         const image = new this.constructor(width, height);
-        const frame = new v2(this.width, this.height, this.bitmap).resize('nearest', width, height);
+        const src = this.__u32__;
+        const dst = image.__u32__;
 
-        image.bitmap.set(frame.u8);
+        for (let y = 0; y < height; y++) {
+            const row = this.width * (y * (this.height / height) | 0);
+            for (let x = 0; x < width; x++)
+                dst[y * width + x] = src[row + (x * (this.width / width) | 0)];
+        }
 
         return image;
     }
@@ -579,7 +601,20 @@ class Image {
      * @returns {Image}
      */
     cropCircle(max = false, feathering = 0) {
-        new v2(this.width, this.height, this.bitmap).crop('circle', feathering);
+        const radius = (max ? Math.max : Math.min)(this.width, this.height) / 2;
+        const radiusSquared = radius ** 2;
+        const centerX = this.width / 2;
+        const centerY = this.height / 2;
+        const featheringRoot = Math.sqrt(feathering);
+
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                const distance = (y - centerY) ** 2 + (x - centerX) ** 2;
+                const alpha = 4 * (y * this.width + x) + 3;
+                if (distance > radiusSquared) this.bitmap[alpha] = 0;
+                else if (feathering) this.bitmap[alpha] *= Math.max(0, Math.min(1, 1 - distance / radiusSquared * featheringRoot));
+            }
+        }
 
         return this;
     }
@@ -695,7 +730,38 @@ class Image {
      * @returns {Image}
      */
     composite(source, x = 0, y = 0) {
-        new v2(this.width, this.height, this.bitmap).overlay(new v2(source.width, source.height, source.bitmap), x, y);
+        x |= 0;
+        y |= 0;
+
+        const left = Math.max(0, x), top = Math.max(0, y);
+        const right = Math.min(this.width, x + source.width), bottom = Math.min(this.height, y + source.height);
+        const dst = this.bitmap, src = source.bitmap;
+
+        for (let row = top; row < bottom; row++) {
+            for (let column = left; column < right; column++) {
+                const s = 4 * ((row - y) * source.width + column - x);
+                const sa = src[s + 3];
+                if (sa === 0) continue;
+
+                const d = 4 * (row * this.width + column);
+                const da = dst[d + 3];
+                if (sa === 255 || da === 0) {
+                    dst[d] = src[s];
+                    dst[d + 1] = src[s + 1];
+                    dst[d + 2] = src[s + 2];
+                    dst[d + 3] = sa;
+                    continue;
+                }
+
+                // source over with straight alpha
+                const fa = sa / 255, ba = da / 255 * (1 - fa);
+                const a = fa + ba;
+                dst[d] = (src[s] * fa + dst[d] * ba) / a + 0.5;
+                dst[d + 1] = (src[s + 1] * fa + dst[d + 1] * ba) / a + 0.5;
+                dst[d + 2] = (src[s + 2] * fa + dst[d + 2] * ba) / a + 0.5;
+                dst[d + 3] = a * 255 + 0.5;
+            }
+        }
 
         return this;
     }
@@ -817,16 +883,69 @@ class Image {
     }
 
     /**
-     * Rotates the image the given amount of degrees
+     * Rotates the image counterclockwise by the given amount of degrees
      * @param {number} angle The angle to rotate the image for (in degrees)
      * @param {boolean} resize Whether to resize the image so it fits all pixels or just ignore outlying pixels
      */
     rotate(angle, resize = true) {
-        const frame = new v2(this.width, this.height, this.bitmap).rotate(360 - (angle % 360), resize);
+        angle = ((angle % 360) + 360) % 360;
+        if (angle === 0) return this;
 
-        const out = new Image(frame.width, frame.height);
+        const {width, height} = this;
+        const src = this.__u32__;
 
-        out.bitmap.set(frame.u8);
+        // right angles are exact pixel permutations
+        if (angle === 90 || angle === 180 || angle === 270) {
+            const out = new Image(angle === 180 ? width : height, angle === 180 ? height : width);
+            const dst = out.__u32__;
+
+            for (let y = 0; y < height; y++)
+                for (let x = 0; x < width; x++) {
+                    const i = src[y * width + x];
+                    if (angle === 90) dst[(width - 1 - x) * height + y] = i;
+                    else if (angle === 180) dst[(height - 1 - y) * width + width - 1 - x] = i;
+                    else dst[x * height + height - 1 - y] = i;
+                }
+
+            return this.__apply__(out);
+        }
+
+        const rad = angle * Math.PI / 180;
+        const sin = Math.sin(rad), cos = Math.cos(rad);
+        const outWidth = resize ? Math.round(Math.abs(width * cos) + Math.abs(height * sin)) : width;
+        const outHeight = resize ? Math.round(Math.abs(width * sin) + Math.abs(height * cos)) : height;
+        const out = new Image(outWidth, outHeight);
+        const s8 = this.bitmap, d8 = out.bitmap;
+
+        // bilinear sampling of the counterclockwise rotated source, with premultiplied alpha
+        for (let oy = 0; oy < outHeight; oy++) {
+            for (let ox = 0; ox < outWidth; ox++) {
+                const dx = ox + 0.5 - outWidth / 2, dy = oy + 0.5 - outHeight / 2;
+                const sx = dx * cos - dy * sin + width / 2 - 0.5;
+                const sy = dx * sin + dy * cos + height / 2 - 0.5;
+                const x0 = Math.floor(sx), y0 = Math.floor(sy);
+                const fx = sx - x0, fy = sy - y0;
+
+                let r = 0, g = 0, b = 0, a = 0;
+                for (const [px, py, weight] of [[x0, y0, (1 - fx) * (1 - fy)], [x0 + 1, y0, fx * (1 - fy)], [x0, y0 + 1, (1 - fx) * fy], [x0 + 1, y0 + 1, fx * fy]]) {
+                    if (px < 0 || py < 0 || px >= width || py >= height || weight === 0) continue;
+                    const i = 4 * (py * width + px);
+                    const wa = weight * s8[i + 3];
+                    r += wa * s8[i];
+                    g += wa * s8[i + 1];
+                    b += wa * s8[i + 2];
+                    a += wa;
+                }
+
+                if (a <= 0) continue;
+                const o = 4 * (oy * outWidth + ox);
+                d8[o] = r / a + 0.5;
+                d8[o + 1] = g / a + 0.5;
+                d8[o + 2] = b / a + 0.5;
+                d8[o + 3] = a + 0.5;
+            }
+        }
+
         return this.__apply__(out);
     }
 
@@ -835,9 +954,19 @@ class Image {
      * @param {'horizontal' | 'vertical'} direction The direction to flip
      */
     flip(direction) {
-        const frame = new v2(this.width, this.height, this.bitmap).flip(direction);
+        const u32 = this.__u32__;
+        const {width, height} = this;
 
-        this.bitmap.set(frame.u8);
+        if (direction === 'horizontal') {
+            for (let y = 0; y < height; y++) u32.subarray(y * width, (y + 1) * width).reverse();
+        } else if (direction === 'vertical') {
+            for (let y = 0; y < height >> 1; y++) {
+                const top = u32.slice(y * width, (y + 1) * width);
+                u32.copyWithin(y * width, (height - 1 - y) * width, (height - y) * width);
+                u32.set(top, (height - 1 - y) * width);
+            }
+        } else throw new RangeError('Invalid flip direction');
+
         return this;
     }
 
