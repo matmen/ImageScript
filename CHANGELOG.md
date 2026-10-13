@@ -36,6 +36,10 @@ supports (including Alpine/musl and bundled serverless functions).
 - `GIF.resize()` stretched partial frames to the full size
 - `encode({...metadata})` ignored the metadata
 - `fisheye()` shifted the image by a pixel
+- HSL conversions truncated instead of rounding, so `lightness(1)`, `saturation(1)` or `hueShift(360)` changed the
+  image and repeated adjustments drifted darker; negative hues (e.g. `hueShift(-300)`) produced wrong colors
+- `cover()` could return an image a pixel smaller than requested, `contain()` one a pixel smaller than the box
+- `invert()`, `dominantColor()` and `rotate()` are several times faster
 - Big endian TIFFs weren't recognized, and most TIFFs failed to decode
 - Text alignment was ignored (#37)
 

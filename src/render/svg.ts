@@ -173,9 +173,18 @@ function parseXML(text: string): XNode {
         for (const [, name, a, b] of doctype[1].matchAll(/<!ENTITY\s+([\w.-]+)\s+(?:"([^"]*)"|'([^']*)')\s*>/g))
             custom[name] = a !== undefined ? a : b;
 
+        // nested entities can grow exponentially ("billion laughs"), so the expansion is capped
+        const limit = Math.max(1 << 20, text.length * 16);
         let rest = text.slice(doctype.index + doctype[0].length);
-        for (let pass = 0; pass < 4; pass++)
-            rest = rest.replace(/&([\w.-]+);/g, (match: string, name: string): string => name in custom ? custom[name] : match);
+        for (let pass = 0; pass < 4; pass++) {
+            let size = rest.length;
+            rest = rest.replace(/&([\w.-]+);/g, (match: string, name: string): string => {
+                if (!(name in custom)) return match;
+                size += custom[name].length - match.length;
+                if (size > limit) throw new Error('SVG: entity expansion exceeds the size limit');
+                return custom[name];
+            });
+        }
         text = text.slice(0, doctype.index) + rest;
     }
 

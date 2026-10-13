@@ -31,15 +31,16 @@ interface Line {
     soft: boolean;
 }
 
-// parsed fonts are cached per font data object
-const fonts = new WeakMap<Uint8Array, Font>();
+// parsed fonts are cached per memory region, so new views of the same font data (e.g. from node Buffers) hit the cache
+const fonts = new WeakMap<ArrayBufferLike, Map<string, Font>>();
 
 function loadFont(data: Uint8Array): Font {
-    let font = fonts.get(data);
-    if (!font || font.data.length !== data.length) {
-        font = new Font(data);
-        fonts.set(data, font);
-    }
+    let regions = fonts.get(data.buffer);
+    if (!regions) fonts.set(data.buffer, regions = new Map());
+
+    const key = `${data.byteOffset}:${data.byteLength}`;
+    let font = regions.get(key);
+    if (!font) regions.set(key, font = new Font(data));
     return font;
 }
 

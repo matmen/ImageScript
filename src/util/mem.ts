@@ -5,7 +5,8 @@ export type BinaryData = ArrayBuffer | ArrayBufferView;
  * Returns a Uint8Array view of the given buffer without copying
  */
 export function view(buffer: BinaryData): Uint8Array {
-    if (buffer instanceof Uint8Array) return buffer;
+    // subclasses like node's Buffer are unwrapped, their slice() doesn't copy
+    if (buffer instanceof Uint8Array && buffer.constructor === Uint8Array) return buffer;
     if (buffer instanceof ArrayBuffer) return new Uint8Array(buffer);
     if (ArrayBuffer.isView(buffer)) return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
     if (typeof SharedArrayBuffer !== 'undefined' && (buffer as unknown) instanceof SharedArrayBuffer) return new Uint8Array(buffer);

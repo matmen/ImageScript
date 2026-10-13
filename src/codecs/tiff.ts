@@ -391,7 +391,8 @@ async function decompressSegment(bytes: Uint8Array, compression: number, expecte
     if (compression === 5) out = lzw(bytes, expected);
     else if (compression === 8 || compression === 32946) out = await decompressAsync(bytes, expected);
     else if (compression === 32773) out = packBits(bytes, expected);
-    else out = bytes;
+    // uncompressed segments are views into the input, copy them as predictors and fill order are undone in place
+    else out = bytes.slice(0, expected);
 
     if (out.length >= expected) return out.length === expected ? out : out.slice(0, expected);
 

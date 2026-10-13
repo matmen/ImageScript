@@ -145,7 +145,8 @@ export class Image {
      * @returns color
      */
     static hslaToColor(h: number, s: number, l: number, a: number): Color {
-        h %= 1;
+        // wrap into 0..1, negative hues included
+        h = (h % 1 + 1) % 1;
         s = Math.min(1, Math.max(0, s));
         l = Math.min(1, Math.max(0, l));
         a = Math.min(1, Math.max(0, a));
@@ -172,7 +173,7 @@ export class Image {
             b = hue2rgb(p, q, h - 1 / 3);
         }
 
-        return Image.rgbaToColor(r * 255, g * 255, b * 255, a * 255);
+        return Image.rgbaToColor(Math.round(r * 255), Math.round(g * 255), Math.round(b * 255), Math.round(a * 255));
     }
 
     /**
@@ -415,8 +416,11 @@ export class Image {
      * @returns The resized image
      */
     contain(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
-        const scaleFactor = width / height > this.width / this.height ? height / this.height : width / this.width;
-        return this.scale(scaleFactor, mode);
+        width = Math.floor(width);
+        height = Math.floor(height);
+        // round instead of flooring the scaled size, so the limiting axis matches the box exactly
+        const scale = Math.min(width / this.width, height / this.height);
+        return this.resize(Math.max(1, Math.min(width, Math.round(this.width * scale))), Math.max(1, Math.min(height, Math.round(this.height * scale))), mode);
     }
 
     /**
@@ -443,9 +447,11 @@ export class Image {
      * @returns The resized image
      */
     cover(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
-        const scaleFactor = width / height > this.width / this.height ? width / this.width : height / this.height;
-        const result = this.scale(scaleFactor, mode);
-        return result.crop((result.width - width) / 2, (result.height - height) / 2, width, height);
+        width = Math.floor(width);
+        height = Math.floor(height);
+        const scale = Math.max(width / this.width, height / this.height);
+        this.resize(Math.max(width, Math.round(this.width * scale)), Math.max(height, Math.round(this.height * scale)), mode);
+        return this.crop((this.width - width) / 2, (this.height - height) / 2, width, height);
     }
 
     /** @private */
@@ -705,10 +711,7 @@ export class Image {
         if (isNaN(value) || value < 0)
             throw new RangeError('Invalid lightness value');
 
-        return this.fill((x, y) => {
-            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(this.getPixelAt(x, y)));
-            return Image.hslaToColor(h, s, value * (absolute ? 1 : l), a);
-        });
+        return this.__map_hsla__((h, s, l, a) => Image.hslaToColor(h, s, value * (absolute ? 1 : l), a));
     }
 
     /**
@@ -720,10 +723,7 @@ export class Image {
         if (isNaN(value) || value < 0)
             throw new RangeError('Invalid saturation value');
 
-        return this.fill((x, y) => {
-            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(this.getPixelAt(x, y)));
-            return Image.hslaToColor(h, value * (absolute ? 1 : s), l, a);
-        });
+        return this.__map_hsla__((h, s, l, a) => Image.hslaToColor(h, value * (absolute ? 1 : s), l, a));
     }
 
     /**
@@ -756,13 +756,13 @@ export class Image {
                     continue;
                 }
 
-                // source over with straight alpha
+                // source over with straight alpha, the clamped bitmap rounds on assignment
                 const fa = sa / 255, ba = da / 255 * (1 - fa);
                 const a = fa + ba;
-                dst[d] = (src[s] * fa + dst[d] * ba) / a + 0.5;
-                dst[d + 1] = (src[s + 1] * fa + dst[d + 1] * ba) / a + 0.5;
-                dst[d + 2] = (src[s + 2] * fa + dst[d + 2] * ba) / a + 0.5;
-                dst[d + 3] = a * 255 + 0.5;
+                dst[d] = (src[s] * fa + dst[d] * ba) / a;
+                dst[d + 1] = (src[s + 1] * fa + dst[d + 1] * ba) / a;
+                dst[d + 2] = (src[s + 2] * fa + dst[d + 2] * ba) / a;
+                dst[d + 3] = a * 255;
             }
         }
 
@@ -773,8 +773,12 @@ export class Image {
      * Inverts the images colors
      */
     invert(): this {
-        for (const [x, y, color] of this.iterateWithColors())
-            this.__set_pixel__(x, y, ((0xffffffff - color) & 0xffffff00) | (color & 0xff));
+        const bitmap = this.bitmap;
+        for (let i = 0; i < bitmap.length; i += 4) {
+            bitmap[i] = 255 - bitmap[i];
+            bitmap[i + 1] = 255 - bitmap[i + 1];
+            bitmap[i + 2] = 255 - bitmap[i + 2];
+        }
 
         return this;
     }
@@ -783,36 +787,21 @@ export class Image {
      * Inverts the images value (lightness)
      */
     invertValue(): this {
-        for (const [x, y, color] of this.iterateWithColors()) {
-            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
-            this.__set_pixel__(x, y, Image.hslaToColor(h, s, 1 - l, a));
-        }
-
-        return this;
+        return this.__map_hsla__((h, s, l, a) => Image.hslaToColor(h, s, 1 - l, a));
     }
 
     /**
      * Inverts the images saturation
      */
     invertSaturation(): this {
-        for (const [x, y, color] of this.iterateWithColors()) {
-            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
-            this.__set_pixel__(x, y, Image.hslaToColor(h, 1 - s, l, a));
-        }
-
-        return this;
+        return this.__map_hsla__((h, s, l, a) => Image.hslaToColor(h, 1 - s, l, a));
     }
 
     /**
      * Inverts the images hue
      */
     invertHue(): this {
-        for (const [x, y, color] of this.iterateWithColors()) {
-            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
-            this.__set_pixel__(x, y, Image.hslaToColor(1 - h, s, l, a));
-        }
-
-        return this;
+        return this.__map_hsla__((h, s, l, a) => Image.hslaToColor(1 - h, s, l, a));
     }
 
     /**
@@ -820,9 +809,20 @@ export class Image {
      * @param degrees How many degrees to shift the hue by
      */
     hueShift(degrees: number): this {
-        for (const [x, y, color] of this.iterateWithColors()) {
-            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
-            this.__set_pixel__(x, y, Image.hslaToColor(h + degrees / 360, s, l, a));
+        return this.__map_hsla__((h, s, l, a) => Image.hslaToColor(h + degrees / 360, s, l, a));
+    }
+
+    /**
+     * Replaces every pixel with the color returned for its HSLA components
+     * @internal
+     */
+    protected __map_hsla__(map: (h: number, s: number, l: number, a: number) => Color): this {
+        const bitmap = this.bitmap;
+        const view = new DataView(bitmap.buffer, bitmap.byteOffset, bitmap.byteLength);
+
+        for (let i = 0; i < bitmap.length; i += 4) {
+            const [h, s, l, a] = Image.rgbaToHSLA(bitmap[i], bitmap[i + 1], bitmap[i + 2], bitmap[i + 3]);
+            view.setUint32(i, map(h, s, l, a), false);
         }
 
         return this;
@@ -854,27 +854,28 @@ export class Image {
      * @return The images dominant color (fully transparent pixels are ignored)
      */
     dominantColor(ignoreBlack = true, ignoreWhite = true, bwThreshold = 0xf): Color {
-        const colorCounts: number[] = new Array(0x40000);
+        const colorCounts = new Uint32Array(0x40000);
         for (let i = 0; i < this.bitmap.length; i += 4) {
             if (this.bitmap[i + 3] === 0) continue;
-            const color = this.__view__.getUint32(i, false);
-            const [h, s, l] = Image.rgbaToHSLA(...Image.colorToRGBA(color)).map(v => (~~(v * 0x3f)));
+            const [hf, sf, lf] = Image.rgbaToHSLA(this.bitmap[i], this.bitmap[i + 1], this.bitmap[i + 2], 0xff);
+            const h = ~~(hf * 0x3f), s = ~~(sf * 0x3f), l = ~~(lf * 0x3f);
             if (ignoreBlack && l < bwThreshold) continue;
             if (ignoreWhite && l > 0x3f - bwThreshold) continue;
             const key = h << 12 | s << 6 | l;
-            colorCounts[key] = (colorCounts[key] || 0) + 1;
+            colorCounts[key]++;
         }
 
-        let maxColorCount = -1;
+        // ties go to the highest key
+        let maxColorCount = 0;
         let mostProminentValue = 0;
-        colorCounts.forEach((el, i) => {
-            if (el < maxColorCount) return;
-            maxColorCount = el;
+        for (let i = 0; i < colorCounts.length; i++) {
+            if (!colorCounts[i] || colorCounts[i] < maxColorCount) continue;
+            maxColorCount = colorCounts[i];
             mostProminentValue = i;
-        });
+        }
 
         // nothing left after ignoring dark/light colors: relax the threshold
-        if (maxColorCount === -1) {
+        if (maxColorCount === 0) {
             if (bwThreshold > 0 && (ignoreBlack || ignoreWhite))
                 return this.dominantColor(ignoreBlack, ignoreWhite, bwThreshold - 1);
             return Image.rgbaToColor(0, 0, 0, 0xff);
@@ -923,6 +924,17 @@ export class Image {
         const s8 = this.bitmap, d8 = out.bitmap;
 
         // bilinear sampling of the counterclockwise rotated source, with premultiplied alpha
+        let r = 0, g = 0, b = 0, a = 0;
+        const sample = (px: number, py: number, weight: number): void => {
+            if (px < 0 || py < 0 || px >= width || py >= height || weight === 0) return;
+            const i = 4 * (py * width + px);
+            const wa = weight * s8[i + 3];
+            r += wa * s8[i];
+            g += wa * s8[i + 1];
+            b += wa * s8[i + 2];
+            a += wa;
+        };
+
         for (let oy = 0; oy < outHeight; oy++) {
             for (let ox = 0; ox < outWidth; ox++) {
                 const dx = ox + 0.5 - outWidth / 2, dy = oy + 0.5 - outHeight / 2;
@@ -931,23 +943,19 @@ export class Image {
                 const x0 = Math.floor(sx), y0 = Math.floor(sy);
                 const fx = sx - x0, fy = sy - y0;
 
-                let r = 0, g = 0, b = 0, a = 0;
-                for (const [px, py, weight] of [[x0, y0, (1 - fx) * (1 - fy)], [x0 + 1, y0, fx * (1 - fy)], [x0, y0 + 1, (1 - fx) * fy], [x0 + 1, y0 + 1, fx * fy]] as Array<[number, number, number]>) {
-                    if (px < 0 || py < 0 || px >= width || py >= height || weight === 0) continue;
-                    const i = 4 * (py * width + px);
-                    const wa = weight * s8[i + 3];
-                    r += wa * s8[i];
-                    g += wa * s8[i + 1];
-                    b += wa * s8[i + 2];
-                    a += wa;
-                }
+                r = g = b = a = 0;
+                sample(x0, y0, (1 - fx) * (1 - fy));
+                sample(x0 + 1, y0, fx * (1 - fy));
+                sample(x0, y0 + 1, (1 - fx) * fy);
+                sample(x0 + 1, y0 + 1, fx * fy);
 
                 if (a <= 0) continue;
+                // the clamped bitmap rounds on assignment
                 const o = 4 * (oy * outWidth + ox);
-                d8[o] = r / a + 0.5;
-                d8[o + 1] = g / a + 0.5;
-                d8[o + 2] = b / a + 0.5;
-                d8[o + 3] = a + 0.5;
+                d8[o] = r / a;
+                d8[o + 1] = g / a;
+                d8[o + 2] = b / a;
+                d8[o + 3] = a;
             }
         }
 
