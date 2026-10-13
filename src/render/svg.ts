@@ -1,4 +1,5 @@
-'use strict';
+import { decode as decodeUTF8 } from '../util/utf8.ts';
+import { PathCommand } from './font.ts';
 
 /**
  * SVG renderer supporting a static subset of SVG 1.1/2:
@@ -19,7 +20,78 @@ const SWITCHABLE = new Set(['svg', 'g', 'a', 'switch', 'use', 'path', 'rect', 'c
 
 const PROPERTIES = new Set([...INHERITED, 'opacity', 'display', 'clip-path', 'mask', 'stop-color', 'stop-opacity', 'transform']);
 
-const DEFAULTS = {
+interface XNode {
+    name: string;
+    attrs: Record<string, string>;
+    children: XNode[];
+    text: string;
+    /** whether the element is in the SVG namespace */
+    svg: boolean;
+    parent?: XNode;
+    computed?: Style | null;
+    computedParent?: Style | null;
+}
+
+type Style = Record<string, string | undefined>;
+type Matrix = number[];
+type Color = number[];
+
+interface Viewport {
+    width: number;
+    height: number;
+}
+
+interface Context {
+    matrix: Matrix;
+    style: Style | null;
+    viewport: Viewport;
+    layer: Layer;
+    depth: number;
+}
+
+interface Paint {
+    (x: number, y: number): Color;
+    solid?: Color;
+}
+
+interface Coverage {
+    x0: number;
+    y0: number;
+    w: number;
+    h: number;
+    data: Float32Array;
+}
+
+interface Subpath {
+    points: number[];
+    closed: boolean;
+}
+
+interface BBox {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+interface Declarations {
+    normal: Record<string, string>;
+    important: Record<string, string>;
+}
+
+interface Rule {
+    specificity: number;
+    order: number;
+    match: (node: XNode) => boolean;
+    declarations: Declarations;
+}
+
+interface Stop {
+    offset: number;
+    color: Color;
+}
+
+const DEFAULTS: Record<string, string> = {
     'fill': 'black', 'fill-opacity': '1', 'fill-rule': 'nonzero', 'stroke': 'none', 'stroke-width': '1', 'stroke-opacity': '1',
     'stroke-linecap': 'butt', 'stroke-linejoin': 'miter', 'stroke-miterlimit': '4', 'stroke-dasharray': 'none', 'stroke-dashoffset': '0',
     'color': 'black', 'visibility': 'visible', 'clip-rule': 'nonzero', 'font-size': '16', 'opacity': '1', 'display': 'inline',
@@ -34,16 +106,16 @@ const SAMPLES = 16; // sub-scanlines per pixel
  * @param {number} size
  * @return {{width: number, height: number, pixels: Uint8Array}}
  */
-function render(source, mode, size) {
-    if (typeof source !== 'string') source = new TextDecoder().decode(source);
+export function render(source: string | Uint8Array, mode: number, size: number): { width: number, height: number, pixels: Uint8Array } {
+    if (typeof source !== 'string') source = decodeUTF8(source);
 
     const root = parseXML(source).children.find(node => node.name === 'svg' && node.svg);
     if (!root) throw new Error('SVG: no <svg> element');
 
-    const document = new Document(root);
+    const doc = new Document(root);
     const viewBox = parseViewBox(root.attrs.viewBox);
 
-    const lengthOf = (value, fallback) => {
+    const lengthOf = (value: string | undefined, fallback: number): number => {
         if (value === undefined || value === 'auto') return fallback;
         if (/%\s*$/.test(value)) return fallback * parseFloat(value) / 100;
         return parseLength(value, null, 16);
@@ -72,12 +144,12 @@ function render(source, mode, size) {
 
     let matrix0 = [outWidth / width, 0, 0, outHeight / height, 0, 0];
     // transform on the root element (SVG 2) applies before the viewBox mapping
-    const rootStyle = document.computeStyle(root, null);
+    const rootStyle = doc.computeStyle(root, null);
     if (rootStyle.transform) matrix0 = multiply(matrix0, parseTransform(rootStyle.transform));
     if (viewBox) matrix0 = multiply(matrix0, viewBoxTransform(viewBox, width, height, root.attrs.preserveAspectRatio));
 
     const viewport = viewBox ? { width: viewBox[2], height: viewBox[3] } : { width, height };
-    document.renderNode(root, { matrix: matrix0, style: null, viewport, layer: canvas, depth: 0 }, true);
+    doc.renderNode(root, { matrix: matrix0, style: null, viewport, layer: canvas, depth: 0 }, true);
 
     return { width: outWidth, height: outHeight, pixels: canvas.toRGBA() };
 }
@@ -88,26 +160,26 @@ function render(source, mode, size) {
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-function parseXML(text) {
-    const root = { name: '#root', attrs: {}, children: [], text: '', svg: false };
-    const stack = [root];
-    const namespaces = [{ '': SVG_NS }];
-    const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: '\'' };
+function parseXML(text: string): XNode {
+    const root: XNode = { name: '#root', attrs: {}, children: [], text: '', svg: false };
+    const stack: XNode[] = [root];
+    const namespaces: Array<Record<string, string>> = [{ '': SVG_NS }];
+    const entities: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: '\'' };
 
     // entities declared in the DOCTYPE may contain markup, expand them before parsing
     const doctype = /<!DOCTYPE[^[>]*\[([\s\S]*?)\]\s*>/i.exec(text);
     if (doctype) {
-        const custom = {};
+        const custom: Record<string, string> = {};
         for (const [, name, a, b] of doctype[1].matchAll(/<!ENTITY\s+([\w.-]+)\s+(?:"([^"]*)"|'([^']*)')\s*>/g))
             custom[name] = a !== undefined ? a : b;
 
         let rest = text.slice(doctype.index + doctype[0].length);
         for (let pass = 0; pass < 4; pass++)
-            rest = rest.replace(/&([\w.-]+);/g, (match, name) => name in custom ? custom[name] : match);
+            rest = rest.replace(/&([\w.-]+);/g, (match: string, name: string): string => name in custom ? custom[name] : match);
         text = text.slice(0, doctype.index) + rest;
     }
 
-    const decode = s => s.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z_][\w.-]*);/gi, (match, name) => {
+    const decode = (s: string): string => s.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z_][\w.-]*);/gi, (match: string, name: string): string => {
         if (name[0] === '#') return String.fromCodePoint(name[1] === 'x' || name[1] === 'X' ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10));
         return name in entities ? entities[name] : match;
     });
@@ -154,7 +226,7 @@ function parseXML(text) {
             }
 
             const qualified = match[1];
-            const node = { name: '', attrs: {}, children: [], text: '', svg: false };
+            const node: XNode = { name: '', attrs: {}, children: [], text: '', svg: false };
             i += match[0].length;
 
             const attribute = /\s*([^\s=/>]+)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/y;
@@ -199,8 +271,8 @@ function parseXML(text) {
 // CSS
 // ---------------------------------------------------------------------------
 
-function parseStyleSheet(text) {
-    const rules = [];
+function parseStyleSheet(text: string): Rule[] {
+    const rules: Rule[] = [];
     text = text.replace(/\/\*[\s\S]*?\*\//g, '');
 
     let order = 0;
@@ -219,11 +291,11 @@ function parseStyleSheet(text) {
 }
 
 // supports type, universal, class, id, attribute and :first-child selectors with descendant, child and sibling combinators
-function parseSelector(selector) {
+function parseSelector(selector: string): { specificity: number, match: (node: XNode) => boolean } | null {
     const tokens = selector.match(/\s*[>+~]\s*|\s+|[^\s>+~]+/g);
     if (!tokens) return null;
 
-    const compounds = [];
+    const compounds: Array<{ combinator: string | null, test: (node: XNode) => boolean }> = [];
     let combinator = null;
     let specificity = 0;
 
@@ -234,7 +306,7 @@ function parseSelector(selector) {
             continue;
         }
 
-        const tests = [];
+        const tests: Array<(node: XNode) => boolean> = [];
         const part = /([a-zA-Z][\w-]*|\*)|#([\w-]+)|\.([\w-]+)|\[\s*([\w:-]+)\s*(?:([~|^$*]?=)\s*(?:"([^"]*)"|'([^']*)'|([^\]\s]*)))?\s*\]|:(first-child)|(.)/g;
         for (const m of trimmed.matchAll(part)) {
             if (m[10] !== undefined) return null;
@@ -275,7 +347,7 @@ function parseSelector(selector) {
 
     if (!compounds.length) return null;
 
-    const matchAt = (node, index) => {
+    const matchAt = (node: XNode | undefined, index: number): boolean => {
         if (!node || !compounds[index].test(node)) return false;
         if (index === 0) return true;
 
@@ -296,8 +368,8 @@ function parseSelector(selector) {
 }
 
 // returns {normal: {name: value}, important: {name: value}}
-function parseDeclarations(text) {
-    const declarations = { normal: {}, important: {} };
+function parseDeclarations(text: string): Declarations {
+    const declarations: Declarations = { normal: {}, important: {} };
     text = text.replace(/\/\*[\s\S]*?\*\//g, '');
 
     for (const part of text.split(';')) {
@@ -314,7 +386,7 @@ function parseDeclarations(text) {
 }
 
 // rejects values that would be ignored by the cascade
-function validProperty(name, value) {
+function validProperty(name: string, value: string): boolean {
     switch (name) {
         case 'fill': case 'stroke':
             return value === 'none' || value === 'currentColor' || value === 'inherit' || /^context-(fill|stroke)$/.test(value)
@@ -333,12 +405,17 @@ function validProperty(name, value) {
 // ---------------------------------------------------------------------------
 
 class Document {
-    constructor(root) {
+    ids: Map<string, XNode>;
+    active: Set<XNode>;
+    root: XNode;
+    rules: Rule[];
+
+    constructor(root: XNode) {
         this.ids = new Map();
         this.active = new Set(); // clip paths and masks being rendered, to break reference cycles
-        const styles = [];
+        const styles: string[] = [];
 
-        const walk = node => {
+        const walk = (node: XNode): void => {
             if (node.attrs.id && !this.ids.has(node.attrs.id)) this.ids.set(node.attrs.id, node);
             if (node.name === 'style' && node.svg && (!node.attrs.type || node.attrs.type === 'text/css')) styles.push(node.text);
             for (const child of node.children) {
@@ -352,26 +429,26 @@ class Document {
         this.rules = parseStyleSheet(styles.join('\n'));
     }
 
-    reference(value) {
+    reference(value: string | undefined): XNode | null {
         if (!value) return null;
         const match = /url\(\s*['"]?\s*#([^)'"]+?)\s*['"]?\s*\)/.exec(value) || /^\s*#(.+?)\s*$/.exec(value);
         return match ? this.ids.get(match[1]) || null : null;
     }
 
-    href(node) {
+    href(node: XNode): string | undefined {
         return node.attrs.href || node.attrs['xlink:href'];
     }
 
     // cascade: presentation attributes < style sheet rules < style attribute < !important rules < !important style attribute
-    computeStyle(node, parent) {
+    computeStyle(node: XNode, parent: Style | null): Style {
         if (node.computed && node.computedParent === parent) return node.computed;
 
-        const own = {};
-        const apply = declarations => {
+        const own: Record<string, string> = {};
+        const apply = (declarations: Record<string, string>): void => {
             for (const name in declarations) if (validProperty(name, declarations[name])) own[name] = declarations[name];
         };
 
-        const presentation = {};
+        const presentation: Record<string, string> = {};
         for (const name in node.attrs) if (PROPERTIES.has(name)) presentation[name] = node.attrs[name];
         apply(presentation);
 
@@ -382,10 +459,10 @@ class Document {
         for (const rule of rules) apply(rule.declarations.important);
         if (inline) apply(inline.important);
 
-        const style = {};
+        const style: Style = {};
         for (const name of PROPERTIES) {
             if (name === 'transform') continue;
-            let value = own[name];
+            let value: string | undefined = own[name];
             if (value === 'inherit' || (value === undefined && INHERITED.has(name))) value = parent ? parent[name] : DEFAULTS[name];
             if (value === undefined || value === 'initial') value = DEFAULTS[name];
             style[name] = value === undefined ? undefined : String(value).trim();
@@ -400,16 +477,16 @@ class Document {
     }
 
     // style of an element inheriting along its document ancestors
-    styleOf(node) {
+    styleOf(node: XNode): Style {
         return this.computeStyle(node, node.parent && node.parent.name !== '#root' ? this.styleOf(node.parent) : null);
     }
 
-    renderChildren(node, context) {
+    renderChildren(node: XNode, context: Context): void {
         for (const child of node.children) this.renderNode(child, context);
     }
 
     // conditional processing attributes, evaluated for an English user agent
-    passesConditions(node) {
+    passesConditions(node: XNode): boolean {
         if (node.attrs.requiredExtensions !== undefined) return false;
         const languages = node.attrs.systemLanguage;
         if (languages === undefined) return true;
@@ -419,7 +496,7 @@ class Document {
         });
     }
 
-    renderNode(node, context, root = false) {
+    renderNode(node: XNode, context: Context, root = false): void {
         if (!node.svg || UNSUPPORTED.has(node.name) || context.depth > 32 || !this.passesConditions(node)) return;
 
         const style = this.computeStyle(node, context.style);
@@ -438,7 +515,7 @@ class Document {
         const clipping = clip && !this.active.has(clip);
         const masking = mask && !this.active.has(mask);
 
-        const draw = layer => {
+        const draw = (layer: Layer): void => {
             const ctx = { ...context, matrix, style, layer, depth: context.depth + 1 };
 
             switch (node.name) {
@@ -475,7 +552,7 @@ class Document {
     }
 
     // renders into a layer clipped to a rectangle in user space (viewports of nested svg and symbol elements)
-    clipped(ctx, x, y, width, height, draw) {
+    clipped(ctx: Context, x: number, y: number, width: number, height: number, draw: (layer: Layer) => void): void {
         const layer = new Layer(ctx.layer.width, ctx.layer.height);
         draw(layer);
 
@@ -490,7 +567,7 @@ class Document {
         ctx.layer.composite(layer, 1, alpha);
     }
 
-    renderNestedSvg(node, ctx) {
+    renderNestedSvg(node: XNode, ctx: Context): void {
         const { viewport } = ctx;
         const x = parseLength(node.attrs.x, viewport, 16, 'x');
         const y = parseLength(node.attrs.y, viewport, 16, 'y');
@@ -507,12 +584,12 @@ class Document {
         this.clipped(ctx, x, y, width, height, layer => this.renderChildren(node, { ...inner, layer }));
     }
 
-    renderUse(node, ctx) {
+    renderUse(node: XNode, ctx: Context): void {
         const target = this.reference(this.href(node));
         if (!target || ctx.depth > 24) return;
 
         // a use must not reference one of its ancestors
-        for (let p = node; p; p = p.parent) if (p === target) return;
+        for (let p: XNode | undefined = node; p; p = p.parent) if (p === target) return;
 
         const x = parseLength(node.attrs.x, ctx.viewport, 16, 'x');
         const y = parseLength(node.attrs.y, ctx.viewport, 16, 'y');
@@ -535,7 +612,7 @@ class Document {
 
             const opacity = clamp01(parseNumber(style.opacity, 1));
             const innerContext = { ...ctx, matrix: inner, style, viewport: viewBox ? { width: viewBox[2], height: viewBox[3] } : { width, height } };
-            const draw = layer => /^(visible|auto)$/.test(target.attrs.overflow || '')
+            const draw = (layer: Layer): void => /^(visible|auto)$/.test(target.attrs.overflow || '')
                 ? this.renderChildren(target, { ...innerContext, layer })
                 : this.clipped({ ...ctx, matrix: outer, layer }, 0, 0, width, height, inner => this.renderChildren(target, { ...innerContext, layer: inner }));
 
@@ -554,8 +631,9 @@ class Document {
         target.computedParent = computedParent;
     }
 
-    paintPath(path, node, ctx) {
-        const { style, matrix, layer } = ctx;
+    paintPath(path: PathCommand[], node: XNode, ctx: Context): void {
+        const { matrix, layer } = ctx;
+        const style = ctx.style as Style;
         if (style.visibility === 'hidden' || style.visibility === 'collapse') return;
 
         const scale = Math.sqrt(Math.abs(matrix[0] * matrix[3] - matrix[1] * matrix[2])) || 1e-9;
@@ -563,14 +641,14 @@ class Document {
         const subpaths = flatten(path, tolerance);
         const bbox = boundingBox(subpaths);
 
-        const fill = this.paint(style.fill, style, node, bbox, matrix, style['fill-opacity'], ctx);
+        const fill = this.paint(style.fill, style, bbox, matrix, style['fill-opacity'], ctx);
         if (fill && node.name !== 'line') {
             const polygons = subpaths.map(points => transformPoints(points.points, matrix));
             const coverage = rasterize(polygons, style['fill-rule'] === 'evenodd', layer.width, layer.height);
             if (coverage) layer.fill(coverage, fill);
         }
 
-        const stroke = this.paint(style.stroke, style, node, bbox, matrix, style['stroke-opacity'], ctx);
+        const stroke = this.paint(style.stroke, style, bbox, matrix, style['stroke-opacity'], ctx);
         const strokeWidth = parseLength(style['stroke-width'], ctx.viewport, 16, 'diagonal');
         if (stroke && strokeWidth > 0) {
             let lines = subpaths;
@@ -586,7 +664,7 @@ class Document {
     }
 
     // returns a paint function (x, y) => [r, g, b, a] in device pixels, or null for no paint
-    paint(value, style, node, bbox, matrix, opacityValue, ctx) {
+    paint(value: string | undefined, style: Style, bbox: BBox | null, matrix: Matrix, opacityValue: string | undefined, ctx: Context): Paint | null {
         if (!value || value === 'none') return null;
         const opacity = clamp01(parseNumber(opacityValue, 1));
 
@@ -610,12 +688,12 @@ class Document {
     }
 
     // collects gradient attributes and stops along href chains
-    gradientAttributes(node) {
-        const attrs = {};
-        let stops = null;
+    gradientAttributes(node: XNode): { attrs: Record<string, string>, stops: Stop[] } {
+        const attrs: Record<string, string> = {};
+        let stops: Stop[] | null = null;
         const geometry = node.name === 'linearGradient' ? ['x1', 'y1', 'x2', 'y2'] : ['cx', 'cy', 'r', 'fx', 'fy', 'fr'];
 
-        for (let current = node, depth = 0; current && depth < 16; current = this.reference(this.href(current)), depth++) {
+        for (let current: XNode | null = node, depth = 0; current && depth < 16; current = this.reference(this.href(current)), depth++) {
             if (current.name !== 'linearGradient' && current.name !== 'radialGradient') break;
 
             // geometry is only inherited from gradients of the same kind
@@ -637,7 +715,7 @@ class Document {
         return { attrs, stops: stops || [] };
     }
 
-    gradient(node, bbox, matrix, opacity, ctx) {
+    gradient(node: XNode, bbox: BBox | null, matrix: Matrix, opacity: number, ctx: Context): Paint | null | undefined {
         const { attrs, stops } = this.gradientAttributes(node);
         // undefined: invalid gradient, the fallback color is used if there is one
         if (!stops.length) return undefined;
@@ -653,21 +731,21 @@ class Document {
         const objectBox = attrs.gradientUnits !== 'userSpaceOnUse';
         if (objectBox && (!bbox || bbox.width <= 0 || bbox.height <= 0)) return null;
 
-        const coordinate = (value, fallback, axis) => {
+        const coordinate = (value: string | undefined, fallback: number, axis: 'x' | 'y' | 'diagonal'): number => {
             if (value === undefined) return fallback;
             if (objectBox) return /%\s*$/.test(value) ? parseFloat(value) / 100 : parseNumber(value, fallback);
             return parseLength(value, ctx.viewport, 16, axis);
         };
 
         let gradientMatrix = matrix;
-        if (objectBox) gradientMatrix = multiply(gradientMatrix, [bbox.width, 0, 0, bbox.height, bbox.x, bbox.y]);
+        if (objectBox && bbox) gradientMatrix = multiply(gradientMatrix, [bbox.width, 0, 0, bbox.height, bbox.x, bbox.y]);
         if (attrs.gradientTransform) gradientMatrix = multiply(gradientMatrix, parseTransform(attrs.gradientTransform));
         const inverse = invert(gradientMatrix);
         if (!inverse) return null;
 
         const spread = attrs.spreadMethod === 'reflect' ? 1 : attrs.spreadMethod === 'repeat' ? 2 : 0;
         const lookup = gradientLookup(stops, opacity);
-        const color = t => {
+        const color = (t: number): Color => {
             if (spread === 2) t -= Math.floor(t);
             else if (spread === 1) {
                 t = Math.abs(t) % 2;
@@ -728,13 +806,13 @@ class Document {
         };
     }
 
-    lastStopPaint(stops, opacity) {
+    lastStopPaint(stops: Stop[], opacity: number): Paint {
         const c = stops[stops.length - 1].color;
         return solidPaint([c[0], c[1], c[2], c[3] * opacity]);
     }
 
     // renders a clipPath into a coverage mask
-    clipMask(clip, node, matrix, context) {
+    clipMask(clip: XNode, node: XNode, matrix: Matrix, context: Context): Float32Array {
         const { width, height } = context.layer;
         const alpha = new Float32Array(width * height);
         const style = this.styleOf(clip);
@@ -800,9 +878,9 @@ class Document {
         return alpha;
     }
 
-    groupBoundingBox(node, viewport) {
-        let box = null;
-        const visit = (n, matrix) => {
+    groupBoundingBox(node: XNode, viewport: Viewport): BBox | null {
+        let box: BBox | null = null;
+        const visit = (n: XNode, matrix: Matrix): void => {
             const path = shapePath(n, viewport, 16);
             if (path) {
                 const points = flatten(path, 0.1).map(p => transformPoints(p.points, matrix));
@@ -817,7 +895,7 @@ class Document {
     }
 
     // renders a mask's content and returns its luminance times alpha
-    maskValues(mask, node, matrix, context) {
+    maskValues(mask: XNode, node: XNode, matrix: Matrix, context: Context): Float32Array {
         const { width, height } = context.layer;
         const values = new Float32Array(width * height);
 
@@ -827,21 +905,33 @@ class Document {
         const contentBox = mask.attrs.maskContentUnits === 'objectBoundingBox';
         if ((!userSpace || contentBox) && (!bbox || bbox.width <= 0 || bbox.height <= 0)) return values;
 
-        const region = (name, fallback, axis, origin, extent) => {
+        const box = bbox || { x: 0, y: 0, width: 0, height: 0 };
+        const fraction = (name: string, fallback: number): number => {
             const value = mask.attrs[name];
-            if (userSpace) return value === undefined ? fallback * (axis === 'x' ? context.viewport.width : context.viewport.height) + (name === 'x' || name === 'y' ? 0 : 0) : parseLength(value, context.viewport, 16, axis);
-            const v = value === undefined ? fallback : /%\s*$/.test(value) ? parseFloat(value) / 100 : parseNumber(value, fallback);
-            return origin + v * extent;
+            if (value === undefined) return fallback;
+            return /%\s*$/.test(value) ? parseFloat(value) / 100 : parseNumber(value, fallback);
         };
 
-        const rx = region('x', -0.1, 'x', bbox ? bbox.x : 0, bbox ? bbox.width : 0);
-        const ry = region('y', -0.1, 'y', bbox ? bbox.y : 0, bbox ? bbox.height : 0);
-        const rw = userSpace ? (mask.attrs.width === undefined ? 1.2 * context.viewport.width : parseLength(mask.attrs.width, context.viewport, 16, 'x')) : region('width', 1.2, 'x', 0, bbox.width);
-        const rh = userSpace ? (mask.attrs.height === undefined ? 1.2 * context.viewport.height : parseLength(mask.attrs.height, context.viewport, 16, 'y')) : region('height', 1.2, 'y', 0, bbox.height);
+        // the mask region defaults to -10%/120% of the bounding box (or viewport)
+        let rx: number, ry: number, rw: number, rh: number;
+        if (userSpace) {
+            const { viewport } = context;
+            const length = (name: string, fallback: number, axis: 'x' | 'y'): number =>
+                mask.attrs[name] === undefined ? fallback : parseLength(mask.attrs[name], viewport, 16, axis);
+            rx = length('x', -0.1 * viewport.width, 'x');
+            ry = length('y', -0.1 * viewport.height, 'y');
+            rw = length('width', 1.2 * viewport.width, 'x');
+            rh = length('height', 1.2 * viewport.height, 'y');
+        } else {
+            rx = box.x + fraction('x', -0.1) * box.width;
+            ry = box.y + fraction('y', -0.1) * box.height;
+            rw = fraction('width', 1.2) * box.width;
+            rh = fraction('height', 1.2) * box.height;
+        }
 
         const layer = new Layer(width, height);
         let contentMatrix = matrix;
-        if (contentBox) contentMatrix = multiply(contentMatrix, [bbox.width, 0, 0, bbox.height, bbox.x, bbox.y]);
+        if (contentBox) contentMatrix = multiply(contentMatrix, [box.width, 0, 0, box.height, box.x, box.y]);
         const maskStyle = this.styleOf(mask);
         this.active.add(mask);
         this.renderChildren(mask, { ...context, matrix: contentMatrix, style: maskStyle, layer, depth: context.depth + 1 });
@@ -876,15 +966,15 @@ class Document {
     }
 }
 
-const TRANSPARENT = [0, 0, 0, 0];
+const TRANSPARENT: Color = [0, 0, 0, 0];
 
-function solidPaint(color) {
+function solidPaint(color: Color): Paint {
     const paint = () => color;
     paint.solid = color;
     return paint;
 }
 
-function gradientLookup(stops, opacity) {
+function gradientLookup(stops: Stop[], opacity: number): Color[] {
     const table = new Array(1024);
     for (let i = 0; i < 1024; i++) {
         const t = i / 1023;
@@ -908,14 +998,18 @@ function gradientLookup(stops, opacity) {
 
 // premultiplied float RGBA surface
 class Layer {
-    constructor(width, height) {
+    width: number;
+    height: number;
+    data: Float32Array;
+
+    constructor(width: number, height: number) {
         this.width = width;
         this.height = height;
         this.data = new Float32Array(width * height * 4);
     }
 
     // composites a paint through a coverage mask (source over)
-    fill({ x0, y0, w, h, data }, paint) {
+    fill({ x0, y0, w, h, data }: Coverage, paint: Paint): void {
         const d = this.data;
         const solid = paint.solid;
 
@@ -960,7 +1054,7 @@ class Layer {
         }
     }
 
-    composite(layer, opacity, mask) {
+    composite(layer: Layer, opacity: number, mask: Float32Array | null): void {
         const s = layer.data, d = this.data;
         for (let p = 0, i = 0; p < this.width * this.height; p++, i += 4) {
             if (s[i + 3] <= 0) continue;
@@ -976,7 +1070,7 @@ class Layer {
         }
     }
 
-    toRGBA() {
+    toRGBA(): Uint8Array {
         // clamped arrays round and clamp on assignment
         const out = new Uint8ClampedArray(this.width * this.height * 4);
         const d = this.data;
@@ -1004,8 +1098,8 @@ class Layer {
  * @param {Array<Array<number>>} polygons flat [x0, y0, x1, y1, ...] lists in device pixels, implicitly closed
  * @return {{x0: number, y0: number, w: number, h: number, data: Float32Array}|null}
  */
-function rasterize(polygons, evenOdd, width, height) {
-    const edges = [];
+function rasterize(polygons: number[][], evenOdd: boolean, width: number, height: number): Coverage | null {
+    const edges: Array<{ top: number, bottom: number, x: number, slope: number, dir: number }> = [];
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
     for (const points of polygons) {
@@ -1044,10 +1138,10 @@ function rasterize(polygons, evenOdd, width, height) {
 
     edges.sort((a, b) => a.top - b.top);
     let next = 0;
-    let active = [];
-    const crossings = [];
+    let active: typeof edges = [];
+    const crossings: number[] = [];
 
-    const span = (a, b) => {
+    const span = (a: number, b: number): void => {
         a = Math.max(a, x0) - x0;
         b = Math.min(b, x1) - x0;
         if (b <= a) return;
@@ -1114,8 +1208,8 @@ function rasterize(polygons, evenOdd, width, height) {
 // ---------------------------------------------------------------------------
 
 // returns path commands (M/L/C/Z, absolute) for a basic shape or path element
-function shapePath(node, viewport, fontSize) {
-    const length = (name, axis, fallback = 0) => node.attrs[name] === undefined ? fallback : parseLength(node.attrs[name], viewport, fontSize, axis);
+function shapePath(node: XNode, viewport: Viewport, fontSize: number): PathCommand[] | null {
+    const length = (name: string, axis: 'x' | 'y' | 'diagonal', fallback = 0): number => node.attrs[name] === undefined ? fallback : parseLength(node.attrs[name], viewport, fontSize, axis);
 
     switch (node.name) {
         case 'path':
@@ -1147,17 +1241,17 @@ function shapePath(node, viewport, fontSize) {
 
         case 'circle': case 'ellipse': {
             const cx = length('cx', 'x'), cy = length('cy', 'y');
-            let rx, ry;
+            let rx: number | undefined, ry: number | undefined;
             if (node.name === 'circle') rx = ry = length('r', 'diagonal');
             else {
                 rx = node.attrs.rx === undefined || node.attrs.rx === 'auto' ? undefined : length('rx', 'x');
                 ry = node.attrs.ry === undefined || node.attrs.ry === 'auto' ? undefined : length('ry', 'y');
-                if (rx < 0) rx = undefined;
-                if (ry < 0) ry = undefined;
+                if (rx !== undefined && rx < 0) rx = undefined;
+                if (ry !== undefined && ry < 0) ry = undefined;
                 if (rx === undefined) rx = ry;
                 if (ry === undefined) ry = rx;
             }
-            if (!(rx > 0) || !(ry > 0)) return null;
+            if (rx === undefined || ry === undefined || !(rx > 0) || !(ry > 0)) return null;
 
             const k = 0.5522847498;
             return [
@@ -1176,7 +1270,7 @@ function shapePath(node, viewport, fontSize) {
         case 'polyline': case 'polygon': {
             const numbers = parseNumberList(node.attrs.points || '');
             if (numbers.length < 4) return null;
-            const path = [['M', numbers[0], numbers[1]]];
+            const path: PathCommand[] = [['M', numbers[0], numbers[1]]];
             for (let i = 2; i + 1 < numbers.length; i += 2) path.push(['L', numbers[i], numbers[i + 1]]);
             if (node.name === 'polygon') path.push(['Z']);
             return path;
@@ -1186,19 +1280,20 @@ function shapePath(node, viewport, fontSize) {
     return null;
 }
 
-function parsePath(d) {
-    const path = [];
+function parsePath(d: string): PathCommand[] {
+    const path: PathCommand[] = [];
     const tokens = /([MmZzLlHhVvCcSsQqTtAa])|([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)/g;
     // numbers stay strings so compact arc flags can be split later
-    const items = [];
+    const items: Array<string | { command: string }> = [];
     for (const m of d.matchAll(tokens)) items.push(m[1] ? { command: m[1] } : m[2]);
 
-    let i = 0, command = null;
+    let i = 0;
+    let command: string | null = null;
     let x = 0, y = 0, sx = 0, sy = 0;
     let lastControlX = 0, lastControlY = 0, lastCommand = '';
 
-    const number = () => typeof items[i] === 'string' ? parseFloat(items[i++]) : NaN;
-    const flag = () => {
+    const number = (): number => typeof items[i] === 'string' ? parseFloat(items[i++] as string) : NaN;
+    const flag = (): number => {
         // flags may be written without separators, e.g. "a1 1 0 00 1 1"
         const v = items[i];
         if (typeof v !== 'string' || (v[0] !== '0' && v[0] !== '1')) return NaN;
@@ -1208,7 +1303,7 @@ function parsePath(d) {
     };
 
     while (i < items.length) {
-        if (typeof items[i] === 'object') command = items[i++].command;
+        if (typeof items[i] === 'object') command = (items[i++] as { command: string }).command;
         else if (command === null) return path; // path data must start with a command
         else if (command === 'M') command = 'L';
         else if (command === 'm') command = 'l';
@@ -1302,11 +1397,14 @@ function parsePath(d) {
 }
 
 // SVG implementation notes F.6.5: endpoint to center parameterization, split into <= 90 degree cubic segments
-function arcToCubics(path, x1, y1, rx, ry, rotation, large, sweep, x2, y2) {
+function arcToCubics(path: PathCommand[], x1: number, y1: number, rx: number, ry: number, rotation: number, large: number, sweep: number, x2: number, y2: number): void {
     if (x1 === x2 && y1 === y2) return;
     rx = Math.abs(rx);
     ry = Math.abs(ry);
-    if (!rx || !ry) return path.push(['L', x2, y2]);
+    if (!rx || !ry) {
+        path.push(['L', x2, y2]);
+        return;
+    }
 
     const phi = rotation * Math.PI / 180;
     const cos = Math.cos(phi), sin = Math.sin(phi);
@@ -1328,7 +1426,7 @@ function arcToCubics(path, x1, y1, rx, ry, rotation, large, sweep, x2, y2) {
     const cx = cos * cxp - sin * cyp + (x1 + x2) / 2;
     const cy = sin * cxp + cos * cyp + (y1 + y2) / 2;
 
-    const angle = (ux, uy, vx, vy) => {
+    const angle = (ux: number, uy: number, vx: number, vy: number): number => {
         const a = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
         return a;
     };
@@ -1342,8 +1440,8 @@ function arcToCubics(path, x1, y1, rx, ry, rotation, large, sweep, x2, y2) {
     const step = delta / segments;
     const k = 4 / 3 * Math.tan(step / 4);
 
-    const point = t => [cx + rx * Math.cos(t) * cos - ry * Math.sin(t) * sin, cy + rx * Math.cos(t) * sin + ry * Math.sin(t) * cos];
-    const derivative = t => [-rx * Math.sin(t) * cos - ry * Math.cos(t) * sin, -rx * Math.sin(t) * sin + ry * Math.cos(t) * cos];
+    const point = (t: number): [number, number] => [cx + rx * Math.cos(t) * cos - ry * Math.sin(t) * sin, cy + rx * Math.cos(t) * sin + ry * Math.sin(t) * cos];
+    const derivative = (t: number): [number, number] => [-rx * Math.sin(t) * cos - ry * Math.cos(t) * sin, -rx * Math.sin(t) * sin + ry * Math.cos(t) * cos];
 
     let t = theta1;
     for (let i = 0; i < segments; i++) {
@@ -1356,14 +1454,15 @@ function arcToCubics(path, x1, y1, rx, ry, rotation, large, sweep, x2, y2) {
 }
 
 // flattens path commands into polylines: [{points: [x, y, ...], closed}]
-function flatten(path, tolerance) {
-    const subpaths = [];
-    let current = null;
+function flatten(path: PathCommand[], tolerance: number): Subpath[] {
+    const subpaths: Subpath[] = [];
+    let current: Subpath | null = null;
     let x = 0, y = 0, sx = 0, sy = 0;
 
-    const start = (px, py) => {
-        current = { points: [px, py], closed: false };
-        subpaths.push(current);
+    const start = (px: number, py: number): Subpath => {
+        const subpath = { points: [px, py], closed: false };
+        subpaths.push(subpath);
+        return subpath;
     };
 
     for (const command of path) {
@@ -1371,16 +1470,16 @@ function flatten(path, tolerance) {
             case 'M':
                 x = sx = command[1];
                 y = sy = command[2];
-                start(x, y);
+                current = start(x, y);
                 break;
             case 'L':
-                if (!current) start(x, y);
+                if (!current) current = start(x, y);
                 x = command[1];
                 y = command[2];
                 current.points.push(x, y);
                 break;
             case 'C': {
-                if (!current) start(x, y);
+                if (!current) current = start(x, y);
                 const [, c1x, c1y, c2x, c2y, ex, ey] = command;
                 const ddx = Math.max(Math.abs(x - 2 * c1x + c2x), Math.abs(c1x - 2 * c2x + ex));
                 const ddy = Math.max(Math.abs(y - 2 * c1y + c2y), Math.abs(c1y - 2 * c2y + ey));
@@ -1410,7 +1509,7 @@ function flatten(path, tolerance) {
     return subpaths;
 }
 
-function boundingBox(subpaths) {
+function boundingBox(subpaths: Array<{ points: number[] }>): BBox | null {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const { points } of subpaths)
         for (let i = 0; i < points.length; i += 2) {
@@ -1422,12 +1521,12 @@ function boundingBox(subpaths) {
     return minX === Infinity ? null : { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-function union(a, b) {
+function union(a: BBox, b: BBox): BBox {
     const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
     return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
 }
 
-function transformPoints(points, m) {
+function transformPoints(points: number[], m: Matrix): number[] {
     const out = new Array(points.length);
     for (let i = 0; i < points.length; i += 2) {
         const x = points[i], y = points[i + 1];
@@ -1438,9 +1537,9 @@ function transformPoints(points, m) {
 }
 
 // splits polylines into dashes
-function dash(subpaths, pattern, offset) {
+function dash(subpaths: Subpath[], pattern: number[], offset: number): Subpath[] {
     const total = pattern.reduce((a, b) => a + b, 0);
-    const result = [];
+    const result: Subpath[] = [];
 
     for (const { points, closed } of subpaths) {
         const pts = closed ? [...points, points[0], points[1]] : points;
@@ -1454,7 +1553,7 @@ function dash(subpaths, pattern, offset) {
         remaining = pattern[index] - remaining;
 
         let on = index % 2 === 0;
-        let current = on ? [pts[0], pts[1]] : null;
+        let current: number[] | null = on ? [pts[0], pts[1]] : null;
 
         for (let i = 0; i + 3 < pts.length; i += 2) {
             let ax = pts[i], ay = pts[i + 1];
@@ -1464,14 +1563,16 @@ function dash(subpaths, pattern, offset) {
             while (length > 0) {
                 if (remaining >= length) {
                     remaining -= length;
-                    if (on) current.push(bx, by);
+                    if (on && current) current.push(bx, by);
                     length = 0;
                 } else {
                     const t = remaining / length;
                     const mx = ax + (bx - ax) * t, my = ay + (by - ay) * t;
                     if (on) {
-                        current.push(mx, my);
-                        result.push({ points: current, closed: false });
+                        if (current) {
+                            current.push(mx, my);
+                            result.push({ points: current, closed: false });
+                        }
                         current = null;
                     } else current = [mx, my];
                     on = !on;
@@ -1491,9 +1592,9 @@ function dash(subpaths, pattern, offset) {
 }
 
 // builds fill polygons (counter-clockwise, to be filled nonzero) for stroked polylines
-function strokePolygons(subpaths, halfWidth, cap, join, miterLimit, tolerance) {
-    const polygons = [];
-    const add = polygon => {
+function strokePolygons(subpaths: Subpath[], halfWidth: number, cap: string | undefined, join: string | undefined, miterLimit: number, tolerance: number): number[][] {
+    const polygons: number[][] = [];
+    const add = (polygon: number[]): void => {
         let area = 0;
         for (let i = 0, n = polygon.length; i < n; i += 2) {
             const j = (i + 2) % n;
@@ -1508,7 +1609,7 @@ function strokePolygons(subpaths, halfWidth, cap, join, miterLimit, tolerance) {
     };
 
     const circleSegments = Math.max(8, Math.min(256, Math.ceil(Math.PI / Math.acos(Math.max(-1, 1 - tolerance / halfWidth)))));
-    const circle = (cx, cy) => {
+    const circle = (cx: number, cy: number): void => {
         const polygon = [];
         for (let i = 0; i < circleSegments; i++) {
             const a = i / circleSegments * 2 * Math.PI;
@@ -1576,7 +1677,7 @@ function strokePolygons(subpaths, halfWidth, cap, join, miterLimit, tolerance) {
         }
 
         if (!closed) {
-            for (const [index, direction, sign] of [[0, directions[0], -1], [n - 1, directions[segmentCount - 1], 1]]) {
+            for (const [index, direction, sign] of [[0, directions[0], -1], [n - 1, directions[segmentCount - 1], 1]] as Array<[number, number[], number]>) {
                 const x = points[index * 2], y = points[index * 2 + 1];
                 if (cap === 'round') circle(x, y);
                 else if (cap === 'square') {
@@ -1595,7 +1696,7 @@ function strokePolygons(subpaths, halfWidth, cap, join, miterLimit, tolerance) {
 // values
 // ---------------------------------------------------------------------------
 
-function multiply(a, b) {
+function multiply(a: Matrix, b: Matrix): Matrix {
     return [
         a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1],
         a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3],
@@ -1603,19 +1704,19 @@ function multiply(a, b) {
     ];
 }
 
-function invert(m) {
+function invert(m: Matrix): Matrix | null {
     const det = m[0] * m[3] - m[1] * m[2];
     if (!det || !isFinite(det)) return null;
     return [m[3] / det, -m[1] / det, -m[2] / det, m[0] / det, (m[2] * m[5] - m[3] * m[4]) / det, (m[1] * m[4] - m[0] * m[5]) / det];
 }
 
-function parseTransform(value) {
+function parseTransform(value: string): Matrix {
     let matrix = [1, 0, 0, 1, 0, 0];
     const functions = /(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]*)\)/g;
 
     for (const [, name, args] of value.matchAll(functions)) {
         const a = parseNumberList(args);
-        let m;
+        let m: Matrix = [1, 0, 0, 1, 0, 0];
         switch (name) {
             case 'matrix': if (a.length !== 6) return [1, 0, 0, 1, 0, 0]; m = a; break;
             case 'translate': m = [1, 0, 0, 1, a[0] || 0, a[1] || 0]; break;
@@ -1637,13 +1738,13 @@ function parseTransform(value) {
     return matrix;
 }
 
-function parseViewBox(value) {
+function parseViewBox(value: string | undefined): number[] | null {
     if (!value) return null;
     const v = parseNumberList(value);
     return v.length === 4 && v[2] > 0 && v[3] > 0 ? v : null;
 }
 
-function viewBoxTransform([vx, vy, vw, vh], width, height, preserve = 'xMidYMid meet') {
+function viewBoxTransform([vx, vy, vw, vh]: number[], width: number, height: number, preserve = 'xMidYMid meet'): Matrix {
     const parts = preserve.trim().split(/\s+/);
     const align = parts[0] === 'defer' ? parts[1] : parts[0];
     const slice = parts[parts.length - 1] === 'slice';
@@ -1667,9 +1768,9 @@ function viewBoxTransform([vx, vy, vw, vh], width, height, preserve = 'xMidYMid 
     return [sx, 0, 0, sy, tx, ty];
 }
 
-const UNITS = { px: 1, pt: 4 / 3, pc: 16, mm: 96 / 25.4, cm: 96 / 2.54, in: 96 };
+const UNITS: Record<string, number> = { px: 1, pt: 4 / 3, pc: 16, mm: 96 / 25.4, cm: 96 / 2.54, in: 96 };
 
-function parseLength(value, viewport, fontSize = 16, axis = 'x') {
+function parseLength(value: string | undefined, viewport: Viewport | null, fontSize = 16, axis: 'x' | 'y' | 'diagonal' = 'x'): number {
     if (value === undefined || value === null) return 0;
     const match = /^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*(px|pt|pc|mm|cm|in|em|ex|%)?\s*$/.exec(String(value));
     if (!match) return 0;
@@ -1688,24 +1789,24 @@ function parseLength(value, viewport, fontSize = 16, axis = 'x') {
     return number * UNITS[unit];
 }
 
-function parseNumber(value, fallback) {
+function parseNumber(value: string | undefined, fallback: number): number {
     const v = parseStrictNumber(value);
     return v === null ? fallback : v;
 }
 
 // a number or percentage (as a fraction), null for anything else
-function parseStrictNumber(value) {
+function parseStrictNumber(value: string | undefined): number | null {
     if (value === undefined || value === null) return null;
     const match = /^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*(%?)\s*$/.exec(String(value));
     if (!match) return null;
     return match[2] ? parseFloat(match[1]) / 100 : parseFloat(match[1]);
 }
 
-function parseNumberList(value) {
+function parseNumberList(value: string): number[] {
     return [...String(value).matchAll(/[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g)].map(m => parseFloat(m[0]));
 }
 
-function parseDashArray(value, viewport, fontSize) {
+function parseDashArray(value: string | undefined, viewport: Viewport, fontSize: number): number[] | null {
     if (!value || value === 'none') return null;
     let dashes = value.split(/[\s,]+/).filter(Boolean).map(v => parseLength(v, viewport, fontSize, 'diagonal'));
     if (!dashes.length || dashes.some(d => d < 0 || isNaN(d))) return null;
@@ -1713,12 +1814,12 @@ function parseDashArray(value, viewport, fontSize) {
     return dashes.reduce((a, b) => a + b, 0) > 0 ? dashes : null;
 }
 
-function clamp01(v) {
+function clamp01(v: number): number {
     return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
 // returns [r, g, b, a] with components in [0, 1], or null
-function parseColor(value) {
+function parseColor(value: string | undefined): Color | null {
     if (!value) return null;
     value = value.trim().toLowerCase();
     if (value === 'transparent') return [0, 0, 0, 0];
@@ -1726,7 +1827,7 @@ function parseColor(value) {
     let match = /^#([0-9a-f]{3,8})$/.exec(value);
     if (match) {
         const hex = match[1];
-        if (hex.length === 3 || hex.length === 4) return [...hex].map((c, i) => parseInt(c + c, 16) / 255).concat(hex.length === 3 ? [1] : []);
+        if (hex.length === 3 || hex.length === 4) return [...hex].map(c => parseInt(c + c, 16) / 255).concat(hex.length === 3 ? [1] : []);
         if (hex.length === 6 || hex.length === 8) return [0, 2, 4, 6].slice(0, hex.length / 2).map(i => parseInt(hex.slice(i, i + 2), 16) / 255).concat(hex.length === 6 ? [1] : []);
         return null;
     }
@@ -1738,14 +1839,14 @@ function parseColor(value) {
         const alpha = parts.length > 3 ? clamp01(parseNumber(parts[3], 1)) : 1;
 
         if (match[1].startsWith('rgb')) {
-            const channel = p => clamp01(/%$/.test(p) ? parseFloat(p) / 100 : parseFloat(p) / 255);
+            const channel = (p: string): number => clamp01(/%$/.test(p) ? parseFloat(p) / 100 : parseFloat(p) / 255);
             return [channel(parts[0]), channel(parts[1]), channel(parts[2]), alpha];
         }
 
         const h = (((parseFloat(parts[0]) % 360) + 360) % 360) / 360;
         const s = clamp01(parseFloat(parts[1]) / 100), l = clamp01(parseFloat(parts[2]) / 100);
         const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
-        const hue = t => {
+        const hue = (t: number): number => {
             t = (t + 1) % 1;
             return t < 1 / 6 ? p + (q - p) * 6 * t : t < 1 / 2 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p;
         };
@@ -1756,7 +1857,7 @@ function parseColor(value) {
     return named === undefined ? null : [(named >> 16 & 255) / 255, (named >> 8 & 255) / 255, (named & 255) / 255, 1];
 }
 
-const NAMED_COLORS = {
+const NAMED_COLORS: Record<string, number> = {
     aliceblue: 0xf0f8ff, antiquewhite: 0xfaebd7, aqua: 0x00ffff, aquamarine: 0x7fffd4, azure: 0xf0ffff, beige: 0xf5f5dc, bisque: 0xffe4c4,
     black: 0x000000, blanchedalmond: 0xffebcd, blue: 0x0000ff, blueviolet: 0x8a2be2, brown: 0xa52a2a, burlywood: 0xdeb887, cadetblue: 0x5f9ea0,
     chartreuse: 0x7fff00, chocolate: 0xd2691e, coral: 0xff7f50, cornflowerblue: 0x6495ed, cornsilk: 0xfff8dc, crimson: 0xdc143c, cyan: 0x00ffff,
@@ -1782,4 +1883,3 @@ const NAMED_COLORS = {
     whitesmoke: 0xf5f5f5, yellow: 0xffff00, yellowgreen: 0x9acd32
 };
 
-module.exports = { render };

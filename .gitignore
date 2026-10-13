@@ -3,6 +3,5 @@ old/
 coverage/
 .DS_Store
 .nyc_output/
-.node_modules/
-bench/node_modules/
-bench/package-lock.json
+node_modules/
+dist/

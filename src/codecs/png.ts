@@ -1,7 +1,7 @@
-'use strict';
-const { crc32 } = require('./crc.js');
-const { from_parts } = require('../utils/mem.js');
-const { compress, decompress } = require('./zlib.js');
+import { crc32 } from './crc.ts';
+import { concat } from '../util/mem.ts';
+import { encode as utf8 } from '../util/utf8.ts';
+import { compress, decompressAsync } from './zlib.ts';
 
 const HEAD = Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10);
 const IHDR = 0x49484452;
@@ -11,14 +11,32 @@ const IDAT = 0x49444154;
 const IEND = 0x49454e44;
 const IEND_CRC = crc32(Uint8Array.of(73, 69, 78, 68));
 
-const COLOR_TYPE_CHANNELS = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
-const CHANNELS_TO_COLOR_TYPE = { 1: 0, 2: 4, 3: 2, 4: 6 };
-const VALID_DEPTHS = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
+const COLOR_TYPE_CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+const CHANNELS_TO_COLOR_TYPE: Record<number, number> = { 1: 0, 2: 4, 3: 2, 4: 6 };
+const VALID_DEPTHS: Record<number, number[]> = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
+
+export interface EncodeOptions {
+    /** tEXt chunks, empty values are skipped */
+    text?: Record<string, string | undefined>;
+    width: number;
+    height: number;
+    channels: number;
+    depth?: number;
+    level?: number;
+}
+
+export interface Decoded {
+    width: number;
+    height: number;
+    /** 8-bit RGBA */
+    pixels: Uint8Array;
+}
+
+type Converter = (pixels: Uint8Array, rowBytes: number, w: number, h: number, out: Uint8Array, position: (x: number, y: number) => number) => void;
 
 // [x start, y start, x step, y step] per adam7 pass
 const ADAM7 = [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]];
 
-const utf8encoder = new TextEncoder();
 
 /**
  * Encodes raw pixel data into a PNG
@@ -26,7 +44,7 @@ const utf8encoder = new TextEncoder();
  * @param {{text?: Object<string, string>, width: number, height: number, channels: number, depth?: number, level?: number}} options
  * @return {Uint8Array}
  */
-function encode(data, { text, width, height, channels, depth = 8, level = 0 }) {
+export function encode(data: Uint8Array, { text, width, height, channels, depth = 8, level = 0 }: EncodeOptions): Uint8Array {
     let offset = 0;
     let tmp_offset = 0;
     const row_length = width * channels;
@@ -38,14 +56,16 @@ function encode(data, { text, width, height, channels, depth = 8, level = 0 }) {
         tmp_offset += row_length;
     }
 
+    let textChunks: Uint8Array | null = null;
     if (text) {
-        const chunks = [];
+        const chunks: Uint8Array[] = [];
 
         for (const key in text) {
-            if (!text[key]) continue;
+            const value = text[key];
+            if (!value) continue;
 
-            const kb = utf8encoder.encode(key);
-            const tb = utf8encoder.encode(text[key]);
+            const kb = utf8(key);
+            const tb = utf8(value);
             const chunk = new Uint8Array(1 + 12 + kb.length + tb.length);
             const view = new DataView(chunk.buffer);
 
@@ -60,10 +80,10 @@ function encode(data, { text, width, height, channels, depth = 8, level = 0 }) {
             chunks.push(chunk);
         }
 
-        text = from_parts(chunks);
+        textChunks = concat(chunks);
     }
 
-    offset = text ? text.length : 0;
+    offset = textChunks ? textChunks.length : 0;
     const compressed = compress(tmp, level);
     const array = new Uint8Array(49 + offset + HEAD.length + compressed.length);
     const view = new DataView(array.buffer);
@@ -80,7 +100,7 @@ function encode(data, { text, width, height, channels, depth = 8, level = 0 }) {
     view.setUint32(37, IDAT);
     array.set(compressed, 41);
     view.setUint32(41 + compressed.length, crc32(new Uint8Array(array.buffer, 37, 4 + compressed.length)));
-    if (text) array.set(text, 45 + compressed.length);
+    if (textChunks) array.set(textChunks, 45 + compressed.length);
     view.setUint32(45 + offset + compressed.length, 0);
     view.setUint32(49 + offset + compressed.length, IEND);
     view.setUint32(53 + offset + compressed.length, IEND_CRC);
@@ -94,16 +114,16 @@ function encode(data, { text, width, height, channels, depth = 8, level = 0 }) {
  * @param {Uint8Array} array The PNG data
  * @return {{width: number, height: number, pixels: Uint8Array}}
  */
-function decode(array) {
+export async function decode(array: Uint8Array): Promise<Decoded> {
     const view = new DataView(array.buffer, array.byteOffset, array.byteLength);
 
     for (let i = 0; i < HEAD.length; i++)
         if (array[i] !== HEAD[i]) throw new Error('PNG: invalid signature');
 
-    let header = null;
-    let palette = null;
-    let transparency = null;
-    const idat = [];
+    let header: { width: number, height: number, depth: number, colorType: number, interlace: number } | null = null;
+    let palette: Uint8Array | null = null;
+    let transparency: Uint8Array | null = null;
+    const idat: Uint8Array[] = [];
 
     let offset = 8;
     while (offset + 8 <= array.length) {
@@ -164,7 +184,7 @@ function decode(array) {
         if (pw > 0 && ph > 0) expected += ph * (1 + Math.ceil(pw * bitsPerPixel / 8));
     }
 
-    const data = decompress(idat.length === 1 ? idat[0] : from_parts(idat), expected);
+    const data = await decompressAsync(idat.length === 1 ? idat[0] : concat(idat), expected);
     if (data.length < expected) throw new Error('PNG: image data is truncated');
 
     const rgba = new Uint8Array(width * height * 4);
@@ -176,7 +196,7 @@ function decode(array) {
 
         const rowBytes = Math.ceil(pw * bitsPerPixel / 8);
         const size = ph * rowBytes;
-        const pixels = unfilter(data, dataOffset, pw, ph, rowBytes, bpp);
+        const pixels = unfilter(data, dataOffset, ph, rowBytes, bpp);
         dataOffset += size + ph;
 
         toRGBA(pixels, rowBytes, pw, ph, rgba, (x, y) => ((ys + y * dy) * width + xs + x * dx) * 4);
@@ -185,7 +205,7 @@ function decode(array) {
     return { width, height, pixels: rgba };
 }
 
-function unfilter(data, offset, width, height, rowBytes, bpp) {
+function unfilter(data: Uint8Array, offset: number, height: number, rowBytes: number, bpp: number): Uint8Array {
     const out = new Uint8Array(height * rowBytes);
 
     for (let y = 0; y < height; y++) {
@@ -226,11 +246,11 @@ function unfilter(data, offset, width, height, rowBytes, bpp) {
     return out;
 }
 
-function createConverter(colorType, depth, palette, transparency) {
+function createConverter(colorType: number, depth: number, palette: Uint8Array | null, transparency: Uint8Array | null): Converter {
     const maxValue = (1 << depth) - 1;
 
     // reads the n-th sample of a row; samples of depth < 8 are packed MSB first
-    const sample = depth === 8 ? (row, n) => row[n]
+    const sample: (row: Uint8Array, n: number) => number = depth === 8 ? (row, n) => row[n]
         : depth === 16 ? (row, n) => row[n * 2] << 8 | row[n * 2 + 1]
             : (row, n) => {
                 const bit = n * depth;
@@ -238,17 +258,18 @@ function createConverter(colorType, depth, palette, transparency) {
             };
 
     // scales a raw sample to 8 bits
-    const scale = depth === 8 ? v => v : depth === 16 ? v => v >> 8 : v => Math.round(v * 255 / maxValue);
+    const scale: (v: number) => number = depth === 8 ? v => v : depth === 16 ? v => v >> 8 : v => Math.round(v * 255 / maxValue);
 
     if (colorType === 3) {
-        const entries = palette.length / 3 | 0;
+        const pal = palette as Uint8Array;
+        const entries = pal.length / 3 | 0;
         const lut = new Uint8Array(256 * 4);
 
         for (let i = 0; i < 256; i++) {
             if (i < entries) {
-                lut[i * 4] = palette[i * 3];
-                lut[i * 4 + 1] = palette[i * 3 + 1];
-                lut[i * 4 + 2] = palette[i * 3 + 2];
+                lut[i * 4] = pal[i * 3];
+                lut[i * 4 + 1] = pal[i * 3 + 1];
+                lut[i * 4 + 2] = pal[i * 3 + 2];
             }
 
             lut[i * 4 + 3] = transparency && i < transparency.length ? transparency[i] : 0xff;
@@ -353,4 +374,3 @@ function createConverter(colorType, depth, palette, transparency) {
     };
 }
 
-module.exports = { encode, decode };

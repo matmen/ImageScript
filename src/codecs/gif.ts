@@ -1,5 +1,4 @@
-'use strict';
-const { quantize } = require('./quantize.js');
+import { quantize } from './quantize.ts';
 
 // ImageScript disposal modes (any, keep, previous, background) <-> GIF disposal methods (unspecified, none, background, previous)
 const DISPOSAL_TO_GIF = [0, 1, 3, 2];
@@ -8,16 +7,32 @@ const DISPOSAL_FROM_GIF = [0, 1, 3, 2, 0, 0, 0, 0];
 const MAX_CODE = 4095;
 const UNEXPECTED_END = new Error('GIF: unexpected end of data');
 
-/**
- * @typedef {Object} GIFFrame
- * @property {number} x
- * @property {number} y
- * @property {number} width
- * @property {number} height
- * @property {number} delay Frame delay in centiseconds
- * @property {number} dispose ImageScript disposal mode (0 any, 1 keep, 2 previous, 3 background)
- * @property {Uint8Array} pixels RGBA pixel data
- */
+export interface GIFFrame {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    /** Frame delay in centiseconds */
+    delay: number;
+    /** ImageScript disposal mode (0 any, 1 keep, 2 previous, 3 background) */
+    dispose: number;
+    /** RGBA pixel data */
+    pixels: Uint8Array;
+}
+
+export interface GIFData {
+    width: number;
+    height: number;
+    /** -1 loops forever, 0 plays once, n repeats n times */
+    loopCount: number;
+    frames: GIFFrame[];
+}
+
+interface GraphicControl {
+    dispose: number;
+    delay: number;
+    transparentIndex: number;
+}
 
 /**
  * Encodes frames into a GIF
@@ -25,7 +40,7 @@ const UNEXPECTED_END = new Error('GIF: unexpected end of data');
  * @param {number} [quality=95] 1-100, scales the palette size (1 = 8 colors, 50 = 55, 90 and above = 256)
  * @return {Uint8Array}
  */
-function encode({ width, height, loopCount = -1, frames }, quality = 95) {
+export function encode({ width, height, loopCount = -1, frames }: Omit<GIFData, 'loopCount'> & { loopCount?: number }, quality = 95): Uint8Array {
     const out = new ByteWriter();
 
     out.bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61); // GIF89a
@@ -73,7 +88,7 @@ function encode({ width, height, loopCount = -1, frames }, quality = 95) {
     return out.finish();
 }
 
-function lzwEncode(indices, minCodeSize) {
+function lzwEncode(indices: Uint8Array, minCodeSize: number): Uint8Array {
     const out = new ByteWriter(indices.length);
     const clear = 1 << minCodeSize;
     const eoi = clear + 1;
@@ -81,8 +96,8 @@ function lzwEncode(indices, minCodeSize) {
     // dictionary keyed by (prefix code << 8 | next index)
     const dictionary = new Int16Array(4096 * 256);
 
-    let codeSize, next, buffer = 0, bufferBits = 0;
-    const emit = code => {
+    let codeSize = 0, next = 0, buffer = 0, bufferBits = 0;
+    const emit = (code: number): void => {
         buffer |= code << bufferBits;
         bufferBits += codeSize;
         while (bufferBits >= 8) {
@@ -138,7 +153,7 @@ function lzwEncode(indices, minCodeSize) {
     return out.finish();
 }
 
-function writeSubBlocks(out, data) {
+function writeSubBlocks(out: ByteWriter, data: Uint8Array): void {
     for (let i = 0; i < data.length; i += 255) {
         const block = data.subarray(i, i + 255);
         out.byte(block.length);
@@ -154,7 +169,7 @@ function writeSubBlocks(out, data) {
  * @param {boolean} [onlyFirstFrame=false]
  * @return {{width: number, height: number, loopCount: number, frames: GIFFrame[]}}
  */
-function decode(data, onlyFirstFrame = false) {
+export function decode(data: Uint8Array, onlyFirstFrame = false): GIFData {
     const reader = new ByteReader(data);
 
     const signature = reader.string(6);
@@ -167,9 +182,9 @@ function decode(data, onlyFirstFrame = false) {
 
     const globalTable = flags & 0x80 ? reader.slice(3 << (flags & 7) + 1) : null;
 
-    const frames = [];
+    const frames: GIFFrame[] = [];
     let loopCount = 0;
-    let control = null;
+    let control: GraphicControl | null = null;
 
     try {
         parse();
@@ -180,7 +195,7 @@ function decode(data, onlyFirstFrame = false) {
 
     return { width, height, loopCount, frames };
 
-    function parse() {
+    function parse(): void {
         while (reader.offset < data.length) {
             const block = reader.u8();
 
@@ -272,7 +287,7 @@ function decode(data, onlyFirstFrame = false) {
  * @param {{width: number, height: number, frames: GIFFrame[]}} gif output of {@link decode}
  * @return {Array<{pixels: Uint8Array, delay: number}>} full screen RGBA frames
  */
-function composite({ width, height, frames }) {
+export function composite({ width, height, frames }: GIFData): Array<{ pixels: Uint8Array, delay: number }> {
     const canvas = new Uint32Array(width * height);
     const output = [];
 
@@ -305,14 +320,14 @@ function composite({ width, height, frames }) {
 }
 
 // maps the n-th stored row of an interlaced image to its actual row
-function interlacedRows(height) {
+function interlacedRows(height: number): number[] {
     const rows = [];
     for (const [start, step] of [[0, 8], [4, 8], [2, 4], [1, 2]])
         for (let y = start; y < height; y += step) rows.push(y);
     return rows;
 }
 
-function lzwDecode(data, minCodeSize, pixelCount) {
+function lzwDecode(data: Uint8Array, minCodeSize: number, pixelCount: number): Uint8Array {
     const output = new Uint8Array(pixelCount);
     if (minCodeSize < 1 || minCodeSize > 11) return output;
 
@@ -395,7 +410,7 @@ function lzwDecode(data, minCodeSize, pixelCount) {
     return output;
 }
 
-function readSubBlocks(reader) {
+function readSubBlocks(reader: ByteReader): Uint8Array {
     const blocks = [];
     let total = 0;
 
@@ -415,12 +430,15 @@ function readSubBlocks(reader) {
     return out;
 }
 
-function skipSubBlocks(reader) {
+function skipSubBlocks(reader: ByteReader): void {
     for (let length; reader.offset < reader.data.length && (length = reader.u8());) reader.skip(length);
 }
 
 class ByteReader {
-    constructor(data) {
+    data: Uint8Array;
+    offset: number;
+
+    constructor(data: Uint8Array) {
         this.data = data;
         this.offset = 0;
     }
@@ -434,61 +452,63 @@ class ByteReader {
         return this.u8() | this.u8() << 8;
     }
 
-    skip(length) {
+    skip(length: number): void {
         this.offset += length;
     }
 
-    slice(length) {
+    slice(length: number): Uint8Array {
         const slice = this.data.subarray(this.offset, this.offset + length);
         this.offset += length;
         return slice;
     }
 
-    string(length) {
+    string(length: number): string {
         return String.fromCharCode(...this.slice(length));
     }
 }
 
 class ByteWriter {
+    buffer: Uint8Array;
+    length: number;
+
     constructor(capacity = 1024) {
         this.buffer = new Uint8Array(Math.max(16, capacity));
         this.length = 0;
     }
 
-    reserve(size) {
+    reserve(size: number): void {
         if (this.length + size <= this.buffer.length) return;
         const buffer = new Uint8Array(Math.max(this.buffer.length * 2, this.length + size));
         buffer.set(this.buffer.subarray(0, this.length));
         this.buffer = buffer;
     }
 
-    byte(value) {
+    byte(value: number): void {
         this.reserve(1);
         this.buffer[this.length++] = value;
     }
 
-    bytes(...values) {
+    bytes(...values: number[]): void {
         for (const value of values) this.byte(value);
     }
 
-    u16(value) {
+    u16(value: number): void {
         this.byte(value & 0xff);
         this.byte(value >> 8 & 0xff);
     }
 
-    string(value) {
+    string(value: string): void {
         for (let i = 0; i < value.length; i++) this.byte(value.charCodeAt(i));
     }
 
-    array(values) {
+    array(values: ArrayLike<number>): void {
         this.reserve(values.length);
         this.buffer.set(values, this.length);
         this.length += values.length;
     }
 
-    finish() {
+    finish(): Uint8Array {
         return this.buffer.slice(0, this.length);
     }
 }
 
-module.exports = { encode, decode, composite };

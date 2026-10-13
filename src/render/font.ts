@@ -1,15 +1,38 @@
-'use strict';
+
+/**
+ * A path command in font units (y up) or user units:
+ * ['M', x, y], ['L', x, y], ['Q', cx, cy, x, y], ['C', c1x, c1y, c2x, c2y, x, y], ['Z']
+ */
+export type PathCommand = [string, ...number[]];
+
+interface CFF {
+    charStrings: Uint8Array[];
+    globalSubrs: Uint8Array[];
+    privateFor: (glyph: number) => { subrs: Uint8Array[] };
+}
+
+type Dict = Record<number, number[]>;
 
 /**
  * Parses TrueType (glyf) and OpenType (CFF) fonts, including the first font of a collection
- * Glyph outlines are returned as path commands in font units (y up):
- * ['M', x, y], ['L', x, y], ['Q', cx, cy, x, y], ['C', c1x, c1y, c2x, c2y, x, y], ['Z']
  */
-class Font {
-    /**
-     * @param {Uint8Array} data
-     */
-    constructor(data) {
+export class Font {
+    data: Uint8Array;
+    view: DataView;
+    tables: Record<string, { offset: number, length: number }>;
+    unitsPerEm: number;
+    indexToLocFormat: number;
+    ascender: number;
+    descender: number;
+    lineGap: number;
+    numberOfHMetrics: number;
+    numGlyphs: number;
+    outlines: 'glyf' | 'cff';
+    cff: CFF | null = null;
+    cmap: (codepoint: number) => number;
+    outlineCache: Map<number, PathCommand[]>;
+
+    constructor(data: Uint8Array) {
         this.data = data;
         this.view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
@@ -55,18 +78,18 @@ class Font {
         this.outlineCache = new Map();
     }
 
-    u8(o) { return this.data[o]; }
-    i8(o) { return this.view.getInt8(o); }
-    u16(o) { return this.view.getUint16(o); }
-    i16(o) { return this.view.getInt16(o); }
-    u32(o) { return this.view.getUint32(o); }
-    i32(o) { return this.view.getInt32(o); }
+    u8(o: number): number { return this.data[o]; }
+    i8(o: number): number { return this.view.getInt8(o); }
+    u16(o: number): number { return this.view.getUint16(o); }
+    i16(o: number): number { return this.view.getInt16(o); }
+    u32(o: number): number { return this.view.getUint32(o); }
+    i32(o: number): number { return this.view.getInt32(o); }
 
     /**
      * @param {number} codepoint
      * @return {number} glyph index, 0 (.notdef) if the font has no glyph for it
      */
-    glyphIndex(codepoint) {
+    glyphIndex(codepoint: number): number {
         return this.cmap(codepoint) || 0;
     }
 
@@ -74,7 +97,7 @@ class Font {
      * @param {number} glyph
      * @return {number} advance width in font units
      */
-    advance(glyph) {
+    advance(glyph: number): number {
         const hmtx = this.tables.hmtx.offset;
         const index = Math.min(glyph, this.numberOfHMetrics - 1);
         return this.u16(hmtx + index * 4);
@@ -84,7 +107,7 @@ class Font {
      * @param {number} glyph
      * @return {Array} path commands in font units
      */
-    outline(glyph) {
+    outline(glyph: number): PathCommand[] {
         if (glyph >= this.numGlyphs) glyph = 0;
         let path = this.outlineCache.get(glyph);
         if (!path) {
@@ -94,7 +117,7 @@ class Font {
         return path;
     }
 
-    glyfOutline(glyph, depth) {
+    glyfOutline(glyph: number, depth: number): PathCommand[] {
         if (depth > 8) return [];
 
         const loca = this.tables.loca.offset;
@@ -108,7 +131,7 @@ class Font {
         return contours >= 0 ? this.simpleGlyph(offset, contours) : this.compositeGlyph(offset, depth);
     }
 
-    simpleGlyph(offset, contourCount) {
+    simpleGlyph(offset: number, contourCount: number): PathCommand[] {
         const endPoints = [];
         for (let i = 0; i < contourCount; i++) endPoints.push(this.u16(offset + 10 + i * 2));
         const pointCount = contourCount ? endPoints[contourCount - 1] + 1 : 0;
@@ -127,7 +150,7 @@ class Font {
 
         const xs = new Int32Array(pointCount);
         const ys = new Int32Array(pointCount);
-        for (const [coords, short, same] of [[xs, 2, 16], [ys, 4, 32]]) {
+        for (const [coords, short, same] of [[xs, 2, 16], [ys, 4, 32]] as Array<[Int32Array, number, number]>) {
             let value = 0;
             for (let i = 0; i < pointCount; i++) {
                 const flag = flags[i];
@@ -142,7 +165,7 @@ class Font {
             }
         }
 
-        const path = [];
+        const path: PathCommand[] = [];
         let first = 0;
         for (const last of endPoints) {
             contourToPath(path, xs, ys, flags, first, last);
@@ -152,8 +175,8 @@ class Font {
         return path;
     }
 
-    compositeGlyph(offset, depth) {
-        const path = [];
+    compositeGlyph(offset: number, depth: number): PathCommand[] {
+        const path: PathCommand[] = [];
         let p = offset + 10;
 
         for (let more = true; more;) {
@@ -176,7 +199,7 @@ class Font {
             if (!(flags & 2)) dx = dy = 0;
 
             let a = 1, b = 0, c = 0, d = 1;
-            const f2dot14 = o => this.i16(o) / 16384;
+            const f2dot14 = (o: number): number => this.i16(o) / 16384;
             if (flags & 8) {
                 a = d = f2dot14(p);
                 p += 2;
@@ -193,9 +216,9 @@ class Font {
             }
 
             for (const command of this.glyfOutline(glyph, depth + 1)) {
-                const transformed = [command[0]];
+                const transformed: PathCommand = [command[0]];
                 for (let i = 1; i < command.length; i += 2) {
-                    const x = command[i], y = command[i + 1];
+                    const x = command[i] as number, y = command[i + 1] as number;
                     transformed.push(a * x + c * y + dx, b * x + d * y + dy);
                 }
                 path.push(transformed);
@@ -207,18 +230,18 @@ class Font {
         return path;
     }
 
-    cffOutline(glyph) {
-        return cffCharString(this.cff, glyph);
+    cffOutline(glyph: number): PathCommand[] {
+        return cffCharString(this.cff as CFF, glyph);
     }
 }
 
 // converts a TrueType contour (quadratic, with implied on-curve points) to path commands
-function contourToPath(path, xs, ys, flags, first, last) {
+function contourToPath(path: PathCommand[], xs: Int32Array, ys: Int32Array, flags: Uint8Array, first: number, last: number): void {
     if (last < first) return;
     const count = last - first + 1;
-    const on = i => flags[first + (i % count)] & 1;
-    const x = i => xs[first + (i % count)];
-    const y = i => ys[first + (i % count)];
+    const on = (i: number): number => flags[first + (i % count)] & 1;
+    const x = (i: number): number => xs[first + (i % count)];
+    const y = (i: number): number => ys[first + (i % count)];
 
     // find a starting point that is on the curve, or synthesize one between two off-curve points
     let start = -1;
@@ -241,34 +264,36 @@ function contourToPath(path, xs, ys, flags, first, last) {
 
     path.push(['M', sx, sy]);
 
-    let cx = null, cy = null;
+    // pending off-curve control point
+    let cx = 0, cy = 0, pending = false;
     for (let n = 0; n < count; n++) {
         const i = start + n;
         const px = x(i), py = y(i);
 
         if (on(i)) {
-            if (cx === null) path.push(['L', px, py]);
+            if (!pending) path.push(['L', px, py]);
             else {
                 path.push(['Q', cx, cy, px, py]);
-                cx = cy = null;
+                pending = false;
             }
         } else {
-            if (cx !== null) {
+            if (pending) {
                 const mx = (cx + px) / 2, my = (cy + py) / 2;
                 path.push(['Q', cx, cy, mx, my]);
             }
             cx = px;
             cy = py;
+            pending = true;
         }
     }
 
-    if (cx !== null) path.push(['Q', cx, cy, sx, sy]);
+    if (pending) path.push(['Q', cx, cy, sx, sy]);
     path.push(['Z']);
 }
 
-function parseCmap(font, offset) {
+function parseCmap(font: Font, offset: number): (codepoint: number) => number {
     const count = font.u16(offset + 2);
-    const subtables = [];
+    const subtables: Array<{ platform: number, encoding: number, table: number, format: number }> = [];
 
     for (let i = 0; i < count; i++) {
         const record = offset + 4 + i * 8;
@@ -278,7 +303,7 @@ function parseCmap(font, offset) {
         subtables.push({ platform, encoding, table, format: font.u16(table) });
     }
 
-    const rank = ({ platform, encoding, format }) => {
+    const rank = ({ platform, encoding, format }: { platform: number, encoding: number, format: number }): number => {
         if (![0, 4, 6, 12].includes(format)) return -1;
         if (platform === 3 && encoding === 10) return 6;
         if (platform === 0 && (encoding === 4 || encoding === 6)) return 5;
@@ -295,11 +320,11 @@ function parseCmap(font, offset) {
     const { table, format, platform, encoding } = best;
     const symbol = platform === 3 && encoding === 0;
 
-    let lookup;
-    if (format === 0) lookup = c => c < 256 ? font.u8(table + 6 + c) : 0;
+    let lookup: (c: number) => number;
+    if (format === 0) lookup = (c: number): number => c < 256 ? font.u8(table + 6 + c) : 0;
     else if (format === 6) {
         const first = font.u16(table + 6), entries = font.u16(table + 8);
-        lookup = c => c >= first && c < first + entries ? font.u16(table + 10 + (c - first) * 2) : 0;
+        lookup = (c: number): number => c >= first && c < first + entries ? font.u16(table + 10 + (c - first) * 2) : 0;
     } else if (format === 4) {
         const segments = font.u16(table + 6) / 2;
         const ends = table + 14;
@@ -307,7 +332,7 @@ function parseCmap(font, offset) {
         const deltas = starts + segments * 2;
         const rangeOffsets = deltas + segments * 2;
 
-        lookup = c => {
+        lookup = (c: number): number => {
             if (c > 0xffff) return 0;
             // binary search over segment end codes
             let lo = 0, hi = segments - 1;
@@ -329,7 +354,7 @@ function parseCmap(font, offset) {
         };
     } else {
         const groups = font.u32(table + 12);
-        lookup = c => {
+        lookup = (c: number): number => {
             let lo = 0, hi = groups - 1;
             while (lo <= hi) {
                 const mid = lo + hi >> 1;
@@ -343,29 +368,29 @@ function parseCmap(font, offset) {
     }
 
     // symbol fonts map their characters to U+F000-U+F0FF
-    return symbol ? c => lookup(c) || (c < 256 ? lookup(0xf000 + c) : 0) : lookup;
+    return symbol ? (c: number): number => lookup(c) || (c < 256 ? lookup(0xf000 + c) : 0) : lookup;
 }
 
 // ---------------------------------------------------------------------------
 // CFF
 // ---------------------------------------------------------------------------
 
-function parseCFF(font, base) {
+function parseCFF(font: Font, base: number): CFF {
     const data = font.data;
 
-    const readIndex = offset => {
+    const readIndex = (offset: number): { items: Uint8Array[], end: number } => {
         const count = font.u16(offset);
         if (count === 0) return { items: [], end: offset + 2 };
 
         const offSize = data[offset + 2];
-        const readOffset = o => {
+        const readOffset = (o: number): number => {
             let v = 0;
             for (let i = 0; i < offSize; i++) v = v * 256 + data[o + i];
             return v;
         };
 
         const dataStart = offset + 3 + (count + 1) * offSize - 1;
-        const items = [];
+        const items: Uint8Array[] = [];
         for (let i = 0; i < count; i++) {
             const start = dataStart + readOffset(offset + 3 + i * offSize);
             const end = dataStart + readOffset(offset + 3 + (i + 1) * offSize);
@@ -386,7 +411,7 @@ function parseCFF(font, base) {
 
     const charStrings = readIndex(base + top[17][0]).items;
 
-    const readPrivate = entry => {
+    const readPrivate = (entry: number[] | undefined): { subrs: Uint8Array[] } => {
         if (!entry) return { subrs: [] };
         const [size, offset] = entry;
         const dict = parseDict(data.subarray(base + offset, base + offset + size));
@@ -395,7 +420,7 @@ function parseCFF(font, base) {
     };
 
     // CID-keyed fonts select a private dict per glyph
-    let privateFor;
+    let privateFor: CFF['privateFor'];
     if (top[1236]) {
         const fdArray = readIndex(base + top[1236][0]).items.map(dict => readPrivate(parseDict(dict)[18]));
         const fdSelect = base + top[1237][0];
@@ -420,9 +445,9 @@ function parseCFF(font, base) {
 }
 
 // returns operator (escaped operators as 1200 + n) -> operands
-function parseDict(bytes) {
-    const dict = {};
-    const operands = [];
+function parseDict(bytes: Uint8Array): Dict {
+    const dict: Dict = {};
+    const operands: number[] = [];
 
     for (let i = 0; i < bytes.length;) {
         const b0 = bytes[i++];
@@ -457,12 +482,12 @@ function parseDict(bytes) {
     return dict;
 }
 
-function subrBias(count) {
+function subrBias(count: number): number {
     return count < 1240 ? 107 : count < 33900 ? 1131 : 32768;
 }
 
 // Type 2 charstring interpreter
-function cffCharString(cff, glyph) {
+function cffCharString(cff: CFF, glyph: number): PathCommand[] {
     const code = cff.charStrings[glyph];
     if (!code) return [];
 
@@ -470,15 +495,15 @@ function cffCharString(cff, glyph) {
     const globalBias = subrBias(cff.globalSubrs.length);
     const localBias = subrBias(subrs.length);
 
-    const path = [];
-    const stack = [];
+    const path: PathCommand[] = [];
+    const stack: number[] = [];
     let x = 0, y = 0;
     let stems = 0;
     let open = false;
     let widthParsed = false;
     let depth = 0;
 
-    const moveTo = (dx, dy) => {
+    const moveTo = (dx: number, dy: number): void => {
         if (open) path.push(['Z']);
         x += dx;
         y += dy;
@@ -486,13 +511,13 @@ function cffCharString(cff, glyph) {
         open = true;
     };
 
-    const lineTo = (dx, dy) => {
+    const lineTo = (dx: number, dy: number): void => {
         x += dx;
         y += dy;
         path.push(['L', x, y]);
     };
 
-    const curveTo = (dx1, dy1, dx2, dy2, dx3, dy3) => {
+    const curveTo = (dx1: number, dy1: number, dx2: number, dy2: number, dx3: number, dy3: number): void => {
         const c1x = x + dx1, c1y = y + dy1;
         const c2x = c1x + dx2, c2y = c1y + dy2;
         x = c2x + dx3;
@@ -501,12 +526,12 @@ function cffCharString(cff, glyph) {
     };
 
     // the first stack clearing operator may carry the advance width as an extra argument
-    const stripWidth = expectedEven => {
+    const stripWidth = (expectedEven: boolean): void => {
         if (!widthParsed && (stack.length % 2 === 1) === expectedEven) stack.shift();
         widthParsed = true;
     };
 
-    const run = code => {
+    const run = (code: Uint8Array): boolean => {
         if (++depth > 10) return true;
 
         for (let i = 0; i < code.length;) {
@@ -575,13 +600,13 @@ function cffCharString(cff, glyph) {
                 }
 
                 case 8: // rrcurveto
-                    for (let j = 0; j + 5 < stack.length; j += 6) curveTo(...stack.slice(j, j + 6));
+                    for (let j = 0; j + 5 < stack.length; j += 6) curveTo(stack[j], stack[j + 1], stack[j + 2], stack[j + 3], stack[j + 4], stack[j + 5]);
                     stack.length = 0;
                     break;
 
                 case 24: { // rcurveline
                     let j = 0;
-                    for (; j + 5 < stack.length - 2; j += 6) curveTo(...stack.slice(j, j + 6));
+                    for (; j + 5 < stack.length - 2; j += 6) curveTo(stack[j], stack[j + 1], stack[j + 2], stack[j + 3], stack[j + 4], stack[j + 5]);
                     lineTo(stack[j], stack[j + 1]);
                     stack.length = 0;
                     break;
@@ -590,7 +615,7 @@ function cffCharString(cff, glyph) {
                 case 25: { // rlinecurve
                     let j = 0;
                     for (; j + 1 < stack.length - 6; j += 2) lineTo(stack[j], stack[j + 1]);
-                    curveTo(...stack.slice(j, j + 6));
+                    curveTo(stack[j], stack[j + 1], stack[j + 2], stack[j + 3], stack[j + 4], stack[j + 5]);
                     stack.length = 0;
                     break;
                 }
@@ -631,7 +656,7 @@ function cffCharString(cff, glyph) {
 
                 case 10: case 29: { // callsubr, callgsubr
                     const local = b0 === 10;
-                    const index = stack.pop() + (local ? localBias : globalBias);
+                    const index = (stack.pop() as number) + (local ? localBias : globalBias);
                     const subr = (local ? subrs : cff.globalSubrs)[index];
                     if (subr && run(subr)) return true;
                     break;
@@ -692,4 +717,3 @@ function cffCharString(cff, glyph) {
     return path;
 }
 
-module.exports = { Font };

@@ -1,4 +1,4 @@
-const {Image} = require('../ImageScript');
+const {Image} = require('..');
 const fs = require('fs').promises;
 
 const panic = message => {

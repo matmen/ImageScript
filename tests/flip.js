@@ -1,5 +1,5 @@
 const fs = require('fs').promises;
-const {Image} = require('../ImageScript');
+const {Image} = require('..');
 
 (async () => {
     const input = await fs.readFile('./tests/targets/external.png');

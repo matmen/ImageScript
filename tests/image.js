@@ -1,5 +1,5 @@
 const fs = require('fs').promises;
-const {Image} = require('../ImageScript');
+const {Image} = require('..');
 
 module.exports = (async () => {
     const image = new Image(128, 128);
