@@ -1,35 +1,59 @@
-const png = require('./formats/png.js');
-const gif = require('./formats/gif.js');
-const jpeg = require('./formats/jpeg.js');
-const tiff = require('./formats/tiff.js');
-const textRenderer = require('./formats/text.js');
-const svgRenderer = require('./formats/svg.js');
-const mem = require('./utils/mem.js');
-const {version} = require('./package.json');
-
-// old
-
-const MAGIC_NUMBERS = {
-    PNG: 0x89504e47,
-    JPEG: 0xffd8ff,
-    TIFF_LE: 0x49492a00,
-    TIFF_BE: 0x4d4d002a,
-    BIGTIFF_LE: 0x49492b00,
-    BIGTIFF_BE: 0x4d4d002b,
-    GIF: 0x474946
-};
+import * as png from './codecs/png.ts';
+import * as jpeg from './codecs/jpeg.ts';
+import * as tiff from './codecs/tiff.ts';
+import * as textRenderer from './render/text.ts';
+import * as svgRenderer from './render/svg.ts';
+import { BinaryData, view } from './util/mem.ts';
+import { ImageType } from './image-type.ts';
+import { TextLayout } from './text-layout.ts';
+import { VERSION } from './version.ts';
 
 /**
  * Represents an image; provides utility functions
  */
-class Image {
+/** A color as a 32-bit RGBA integer (`0xRRGGBBAA`) */
+export type Color = number;
+
+/** Called with a pixel's (0-based) coordinates, returns its color */
+export type ColorFunction = (x: number, y: number) => Color;
+
+export type ResizeMode = 'RESIZE_NEAREST_NEIGHBOR';
+
+export type SVGScaleMode = 1 | 2 | 3;
+
+export interface PNGMetadata {
+    title?: string;
+    author?: string;
+    description?: string;
+    copyright?: string;
+    creationTime?: string | number | Date;
+    software?: string;
+    disclaimer?: string;
+    warning?: string;
+    source?: string;
+    comment?: string;
+}
+
+export class Image {
+    /** @internal */
+    protected __width__: number;
+    /** @internal */
+    protected __height__: number;
+    /** @internal */
+    protected __buffer__: ArrayBuffer;
+    /** @internal */
+    protected __view__: DataView;
+    /** @internal */
+    protected __u32__: Uint32Array;
+    /** The image's RGBA pixel data */
+    bitmap: Uint8ClampedArray;
+
     /**
      * Creates a new image with the given dimensions
-     * @param {number} width
-     * @param {number} height
-     * @returns {Image}
+     * @param width
+     * @param height
      */
-    constructor(width, height) {
+    constructor(width: number, height: number) {
         width = ~~width;
         height = ~~height;
 
@@ -38,53 +62,40 @@ class Image {
         if (height < 1)
             throw new RangeError('Image has to be at least 1 pixel high');
 
-        /** @private */
         this.__width__ = width;
-        /** @private */
         this.__height__ = height;
-        /** @private */
         this.__buffer__ = new ArrayBuffer(width * height * 4);
-        /** @private */
         this.__view__ = new DataView(this.__buffer__);
-        /** @private */
         this.__u32__ = new Uint32Array(this.__buffer__);
-        /**
-         * The images RGBA pixel data
-         * @type {Uint8ClampedArray}
-         */
         this.bitmap = new Uint8ClampedArray(this.__buffer__);
     }
 
     /**
      * @private
-     * @returns {string}
      */
-    toString() {
+    toString(): string {
         return `Image<${this.width}x${this.height}>`;
     }
 
     /**
      * The images width
-     * @returns {number}
      */
-    get width() {
+    get width(): number {
         return this.__width__;
     }
 
     /**
      * The images height
-     * @returns {number}
      */
-    get height() {
+    get height(): number {
         return this.__height__;
     }
 
     /**
      * Yields an [x, y] array for every pixel in the image (0-based)
-     * @yields {number[]} The coordinates of the pixel ([x, y])
-     * @returns {void}
+     * @yields The coordinates of the pixel ([x, y])
      */
-    *[Symbol.iterator]() {
+    *[Symbol.iterator](): Generator<[x: number, y: number], void, undefined> {
         for (let y = 0; y < this.height; y++)
             for (let x = 0; x < this.width; x++)
                 yield [x, y];
@@ -92,9 +103,9 @@ class Image {
 
     /**
      * Yields an [x, y, color] array for every pixel in the image (0-based)
-     * @yields {number[]} The coordinates and color of the pixel ([x, y, color])
+     * @yields The coordinates and color of the pixel ([x, y, color])
      */
-    *iterateWithColors() {
+    *iterateWithColors(): Generator<[x: number, y: number, color: Color], void, undefined> {
         const view = new DataView(this.bitmap.buffer, this.bitmap.byteOffset, this.bitmap.byteLength);
         let offset = 0;
         for (let y = 0; y < this.height; y++)
@@ -104,47 +115,47 @@ class Image {
 
     /**
      * Converts RGBA components to an RGBA value
-     * @param {number} r red (0..255)
-     * @param {number} g green (0..255)
-     * @param {number} b blue (0..255)
-     * @param {number} a alpha (0..255)
-     * @returns {number} RGBA value
+     * @param r red (0..255)
+     * @param g green (0..255)
+     * @param b blue (0..255)
+     * @param a alpha (0..255)
+     * @returns RGBA value
      */
-    static rgbaToColor(r, g, b, a) {
+    static rgbaToColor(r: number, g: number, b: number, a: number): Color {
         return (((r & 0xff) << 24) | ((g & 0xff) << 16) | ((b & 0xff) << 8) | (a & 0xff)) >>> 0;
     }
 
     /**
      * Converts RGB components to an RGBA value (assuming alpha = 255)
-     * @param {number} r red (0..255)
-     * @param {number} g green (0..255)
-     * @param {number} b blue (0..255)
-     * @returns {number} RGBA value
+     * @param r red (0..255)
+     * @param g green (0..255)
+     * @param b blue (0..255)
+     * @returns RGBA value
      */
-    static rgbToColor(r, g, b) {
+    static rgbToColor(r: number, g: number, b: number): Color {
         return Image.rgbaToColor(r, g, b, 0xff);
     }
 
     /**
      * Converts HSLA colors to RGBA colors
-     * @param {number} h hue (0..1)
-     * @param {number} s saturation (0..1)
-     * @param {number} l lightness (0..1)
-     * @param {number} a opacity (0..1)
-     * @returns {number} color
+     * @param h hue (0..1)
+     * @param s saturation (0..1)
+     * @param l lightness (0..1)
+     * @param a opacity (0..1)
+     * @returns color
      */
-    static hslaToColor(h, s, l, a) {
+    static hslaToColor(h: number, s: number, l: number, a: number): Color {
         h %= 1;
         s = Math.min(1, Math.max(0, s));
         l = Math.min(1, Math.max(0, l));
         a = Math.min(1, Math.max(0, a));
 
-        let r, g, b;
+        let r: number, g: number, b: number;
 
         if (s === 0) {
             r = g = b = l;
         } else {
-            const hue2rgb = (p, q, t) => {
+            const hue2rgb = (p: number, q: number, t: number): number => {
                 if (t < 0) t += 1;
                 if (t > 1) t -= 1;
                 if (t < 1 / 6) return p + (q - p) * 6 * t;
@@ -166,12 +177,12 @@ class Image {
 
     /**
      * Converts HSL colors to RGBA colors (assuming an opacity of 255)
-     * @param {number} h hue (0..1)
-     * @param {number} s saturation (0..1)
-     * @param {number} l lightness (0..1)
-     * @returns {number} color
+     * @param h hue (0..1)
+     * @param s saturation (0..1)
+     * @param l lightness (0..1)
+     * @returns color
      */
-    static hslToColor(h, s, l) {
+    static hslToColor(h: number, s: number, l: number): Color {
         return Image.hslaToColor(h, s, l, 1);
     }
 
@@ -181,15 +192,16 @@ class Image {
      * @param g {number} (0..255)
      * @param b {number} (0..255)
      * @param a {number} (0..255)
-     * @returns {number[]} The HSLA values ([H, S, L, A])
+     * @returns The HSLA values ([H, S, L, A])
      */
-    static rgbaToHSLA(r, g, b, a) {
+    static rgbaToHSLA(r: number, g: number, b: number, a: number): [h: number, s: number, l: number, a: number] {
         r /= 255;
         g /= 255;
         b /= 255;
 
         const max = Math.max(r, g, b), min = Math.min(r, g, b);
-        let h, s, l = (max + min) / 2;
+        let h = 0, s: number;
+        const l = (max + min) / 2;
 
         if (max === min) {
             h = s = 0;
@@ -216,29 +228,30 @@ class Image {
 
     /**
      * Converts a color value to an array of RGBA values
-     * @param {number} color The color value to convert
-     * @returns {number[]} The RGBA values ([R, G, B, A])
+     * @param color The color value to convert
+     * @returns The RGBA values ([R, G, B, A])
      */
-    static colorToRGBA(color) {
+    static colorToRGBA(color: Color): [r: number, g: number, b: number, a: number] {
         return [(color >> 24) & 0xff, (color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff];
     }
 
     /**
      * Converts a color value to an array of RGB values (ignoring the colors alpha)
-     * @param {number} color The color value to convert
-     * @returns {number[]} The RGB values ([R, G, B])
+     * @param color The color value to convert
+     * @returns The RGB values ([R, G, B])
      */
-    static colorToRGB(color) {
-        return Image.colorToRGBA(color).slice(0, 3);
+    static colorToRGB(color: Color): [r: number, g: number, b: number] {
+        const [r, g, b] = Image.colorToRGBA(color);
+        return [r, g, b];
     }
 
     /**
      * Gets the pixel color at the specified position (0-based)
-     * @param {number} x
-     * @param {number} y
-     * @returns {number} The color value
+     * @param x
+     * @param y
+     * @returns The color value
      */
-    getPixelAt(x, y) {
+    getPixelAt(x: number, y: number): Color {
         x = ~~x;
         y = ~~y;
         this.__check_boundaries__(x, y);
@@ -247,11 +260,11 @@ class Image {
 
     /**
      * Gets a view of the RGBA components of the pixel at the specified position (0-based)
-     * @param {number} x
-     * @param {number} y
-     * @returns {Uint8ClampedArray} The RGBA value
+     * @param x
+     * @param y
+     * @returns The RGBA value
      */
-    getRGBAAt(x, y) {
+    getRGBAAt(x: number, y: number): Uint8ClampedArray {
         x = ~~x;
         y = ~~y;
         this.__check_boundaries__(x, y);
@@ -261,11 +274,11 @@ class Image {
 
     /**
      * Sets the pixel color for the specified position (0-based)
-     * @param {number} x
-     * @param {number} y
-     * @param {number} pixelColor
+     * @param x
+     * @param y
+     * @param pixelColor
      */
-    setPixelAt(x, y, pixelColor) {
+    setPixelAt(x: number, y: number, pixelColor: Color): this {
         x = ~~x;
         y = ~~y;
         this.__check_boundaries__(x, y);
@@ -275,20 +288,22 @@ class Image {
 
     /**
      * @private
-     * @param {number} x
-     * @param {number} y
-     * @param {number} pixelColor
+     * @param x
+     * @param y
+     * @param pixelColor
      */
-    __set_pixel__(x, y, pixelColor) {
+    /** @internal */
+    protected __set_pixel__(x: number, y: number, pixelColor: Color): void {
         this.__view__.setUint32((y * this.width + x) * 4, pixelColor, false);
     }
 
     /**
      * @private
-     * @param {number} x
-     * @param {number} y
+     * @param x
+     * @param y
      */
-    __check_boundaries__(x, y) {
+    /** @internal */
+    protected __check_boundaries__(x: number, y: number): void {
         if (isNaN(x)) throw new TypeError(`Invalid pixel coordinates (x=${x})`);
         if (isNaN(y)) throw new TypeError(`Invalid pixel coordinates (y=${y})`);
         if (x < 0)
@@ -304,23 +319,23 @@ class Image {
     /**
      * @private
      */
-    static get __out_of_bounds__() {
+    /** @internal */
+    protected static get __out_of_bounds__(): string {
         return 'Tried referencing a pixel outside of the images boundaries:';
     }
 
     /**
      * @callback colorFunction
-     * @param {number} x 0-based x coordinate
-     * @param {number} y 0-based y coordinate
-     * @returns {number} pixel color
+     * @param x 0-based x coordinate
+     * @param y 0-based y coordinate
+     * @returns pixel color
      */
 
     /**
      * Fills the image data with the supplied color
-     * @param {number|colorFunction} color
-     * @returns {Image}
+     * @param color
      */
-    fill(color) {
+    fill(color: Color | ColorFunction): this {
         const view = new DataView(this.bitmap.buffer, this.bitmap.byteOffset, this.bitmap.byteLength);
 
         if (typeof color === 'function') {
@@ -340,9 +355,8 @@ class Image {
 
     /**
      * Clones the current image
-     * @returns {Image}
      */
-    clone() {
+    clone(): Image {
         const image = new Image(this.width, this.height);
         image.bitmap.set(this.bitmap);
         return image;
@@ -350,33 +364,31 @@ class Image {
 
     /**
      * Use {@link https://en.wikipedia.org/wiki/Image_scaling#Nearest-neighbor_interpolation Nearest-neighbor} resizing.
-     * @returns {string}
      */
-    static get RESIZE_NEAREST_NEIGHBOR() {
+    static get RESIZE_NEAREST_NEIGHBOR(): 'RESIZE_NEAREST_NEIGHBOR' {
         return 'RESIZE_NEAREST_NEIGHBOR';
     }
 
     /**
      * Used for automatically preserving an images aspect ratio when resizing.
-     * @returns {number}
      */
-    static get RESIZE_AUTO() {
+    static get RESIZE_AUTO(): -1 {
         return -1;
     }
 
     /**
      * Resizes the image by the given factor
-     * @param {number} factor The factor to resize the image with
-     * @param {string} [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
-     * @returns {Image}
+     * @param factor The factor to resize the image with
+     * @param [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
      */
-    scale(factor, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+    scale(factor: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
         const image = this.__scale__(factor, mode);
         return this.__apply__(image);
     }
 
     /** @private */
-    __scale__(factor, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+    /** @internal */
+    protected __scale__(factor: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): Image {
         if (factor === 1) return this;
         return this.__resize__(this.width * factor, this.height * factor, mode);
     }
@@ -384,12 +396,12 @@ class Image {
     /**
      * Resizes the image to the given dimensions.
      * Use {@link Image.RESIZE_AUTO} as either width or height to automatically preserve the aspect ratio.
-     * @param {number} width The new width
-     * @param {number} height The new height
-     * @param {string} [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
-     * @returns {Image} The resized image
+     * @param width The new width
+     * @param height The new height
+     * @param [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @returns The resized image
      */
-    resize(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+    resize(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
         const image = this.__resize__(width, height, mode);
         return this.__apply__(image);
     }
@@ -397,12 +409,12 @@ class Image {
     /**
      * Resizes the image so it is contained in the given bounding box.
      * Can return an image with one axis smaller than the given bounding box.
-     * @param {number} width The width of the bounding box
-     * @param {number} height The height of the bounding box
-     * @param {string} [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
-     * @returns {Image} The resized image
+     * @param width The width of the bounding box
+     * @param height The height of the bounding box
+     * @param [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @returns The resized image
      */
-    contain(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+    contain(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
         const scaleFactor = width / height > this.width / this.height ? height / this.height : width / this.width;
         return this.scale(scaleFactor, mode);
     }
@@ -410,12 +422,12 @@ class Image {
     /**
      * Resizes the image so it is contained in the given bounding box, placing it in the center of the given bounding box.
      * Always returns the exact dimensions of the bounding box.
-     * @param {number} width The width of the bounding box
-     * @param {number} height The height of the bounding box
-     * @param {string} [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
-     * @returns {Image} The resized image
+     * @param width The width of the bounding box
+     * @param height The height of the bounding box
+     * @param [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @returns The resized image
      */
-    fit(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+    fit(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
         const result = new Image(width, height);
         this.contain(width, height, mode);
         result.composite(this, (width - this.width) / 2, (height - this.height) / 2);
@@ -425,19 +437,20 @@ class Image {
     /**
      * Resizes the image so it covers the given bounding box, cropping the overflowing edges.
      * Always returns the exact dimensions of the bounding box.
-     * @param {number} width The width of the bounding box
-     * @param {number} height The height of the bounding box
-     * @param {string} [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
-     * @returns {Image} The resized image
+     * @param width The width of the bounding box
+     * @param height The height of the bounding box
+     * @param [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
+     * @returns The resized image
      */
-    cover(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+    cover(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): this {
         const scaleFactor = width / height > this.width / this.height ? width / this.width : height / this.height;
         const result = this.scale(scaleFactor, mode);
         return result.crop((result.width - width) / 2, (result.height - height) / 2, width, height);
     }
 
     /** @private */
-    __resize__(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
+    /** @internal */
+    protected __resize__(width: number, height: number, mode: ResizeMode = Image.RESIZE_NEAREST_NEIGHBOR): Image {
         if (width === Image.RESIZE_AUTO && height === Image.RESIZE_AUTO) throw new Error('RESIZE_AUTO can only be used for either width or height, not for both');
         else if (width === Image.RESIZE_AUTO) width = this.width / this.height * height;
         else if (height === Image.RESIZE_AUTO) height = this.height / this.width * width;
@@ -449,7 +462,7 @@ class Image {
         if (height < 1)
             throw new RangeError('Image has to be at least 1 pixel high');
 
-        let image;
+        let image: Image;
         if (mode === Image.RESIZE_NEAREST_NEIGHBOR)
             image = this.__resize_nearest_neighbor__(width, height);
         else throw new Error('Invalid resize mode');
@@ -459,11 +472,12 @@ class Image {
 
     /**
      * @private
-     * @param {number} width The new width
-     * @param {number} height The new height
+     * @param width The new width
+     * @param height The new height
      */
-    __resize_nearest_neighbor__(width, height) {
-        const image = new this.constructor(width, height);
+    /** @internal */
+    protected __resize_nearest_neighbor__(width: number, height: number): Image {
+        const image = new Image(width, height);
         const src = this.__u32__;
         const dst = image.__u32__;
 
@@ -479,13 +493,12 @@ class Image {
     /**
      * Crops an image to the specified dimensions.
      * The region is clipped to the image, so the result can be smaller than the requested size
-     * @param {number} x The x offset (0-based)
-     * @param {number} y The y offset (0-based)
-     * @param {number} width The new images width
-     * @param {number} height The new images height
-     * @returns {Image}
+     * @param x The x offset (0-based)
+     * @param y The y offset (0-based)
+     * @param width The new images width
+     * @param height The new images height
      */
-    crop(x, y, width, height) {
+    crop(x: number, y: number, width: number, height: number): this {
         x = ~~x;
         y = ~~y;
         width = ~~width;
@@ -500,18 +513,18 @@ class Image {
     }
 
     /**
-     * @param {number} x
-     * @param {number} y
-     * @param {number} width
-     * @param {number} height
-     * @returns {Image}
+     * @param x
+     * @param y
+     * @param width
+     * @param height
      * @private
      */
-    __crop__(x, y, width, height) {
+    /** @internal */
+    protected __crop__(x: number, y: number, width: number, height: number): Image {
         x = ~~x;
         y = ~~y;
 
-        const image = new this.constructor(width, height);
+        const image = new Image(width, height);
 
         for (let tY = 0; tY < height; tY++) {
             const idx = (tY + y) * this.width + x;
@@ -523,14 +536,13 @@ class Image {
 
     /**
      * Draws a box at the specified coordinates (0-based), clipped to the image
-     * @param {number} x The x offset
-     * @param {number} y The y offset
-     * @param {number} width The box width
-     * @param {number} height The box height
-     * @param {number|colorFunction} color The color to fill the box in with, a function gets coordinates relative to the box
-     * @returns {Image}
+     * @param x The x offset
+     * @param y The y offset
+     * @param width The box width
+     * @param height The box height
+     * @param color The color to fill the box in with, a function gets coordinates relative to the box
      */
-    drawBox(x, y, width, height, color) {
+    drawBox(x: number, y: number, width: number, height: number, color: Color | ColorFunction): this {
         x = ~~x;
         y = ~~y;
         width = ~~width;
@@ -547,13 +559,14 @@ class Image {
 
     /**
      * @private
-     * @param {number} x
-     * @param {number} y
-     * @param {number} width
-     * @param {number} height
-     * @param {number} color
+     * @param x
+     * @param y
+     * @param width
+     * @param height
+     * @param color
      */
-    __fast_box__(x, y, width, height, color) {
+    /** @internal */
+    protected __fast_box__(x: number, y: number, width: number, height: number, color: Color): this {
         const left = Math.max(0, x), top = Math.max(0, y);
         const right = Math.min(this.width, x + width), bottom = Math.min(this.height, y + height);
         if (right <= left || bottom <= top) return this;
@@ -572,13 +585,12 @@ class Image {
 
     /**
      * Draws a circle around the specified center (0-based) with the specified radius
-     * @param {number} x The center x position
-     * @param {number} y The center y position
-     * @param {number} radius The circles radius
-     * @param {number|colorFunction} color The color, a function gets coordinates relative to the circle's bounding box
-     * @returns {Image}
+     * @param x The center x position
+     * @param y The center y position
+     * @param radius The circles radius
+     * @param color The color, a function gets coordinates relative to the circle's bounding box
      */
-    drawCircle(x, y, radius, color) {
+    drawCircle(x: number, y: number, radius: number, color: Color | ColorFunction): this {
         x = ~~x;
         y = ~~y;
         const radSquared = radius ** 2;
@@ -594,11 +606,10 @@ class Image {
 
     /**
      * Crops the image into a circle
-     * @param {boolean} [max=false] Whether to use the larger dimension for the size
-     * @param {number} [feathering=0] How much feathering to apply to the edges
-     * @returns {Image}
+     * @param [max=false] Whether to use the larger dimension for the size
+     * @param [feathering=0] How much feathering to apply to the edges
      */
-    cropCircle(max = false, feathering = 0) {
+    cropCircle(max = false, feathering = 0): this {
         const radius = (max ? Math.max : Math.min)(this.width, this.height) / 2;
         const radiusSquared = radius ** 2;
         const centerX = this.width / 2;
@@ -619,11 +630,10 @@ class Image {
 
     /**
      * Sets the images opacity
-     * @param {number} opacity The opacity to apply (0..1)
-     * @param {boolean} absolute Whether to scale the current opacity (false) or just set the new opacity (true)
-     * @returns {Image}
+     * @param opacity The opacity to apply (0..1)
+     * @param absolute Whether to scale the current opacity (false) or just set the new opacity (true)
      */
-    opacity(opacity, absolute = false) {
+    opacity(opacity: number, absolute = false): this {
         if (isNaN(opacity) || opacity < 0)
             throw new RangeError('Invalid opacity value');
 
@@ -634,11 +644,10 @@ class Image {
 
     /**
      * Sets the red channels saturation
-     * @param {number} saturation The saturation to apply (0..1)
-     * @param {boolean} absolute Whether to scale the current saturation (false) or just set the new saturation (true)
-     * @returns {Image}
+     * @param saturation The saturation to apply (0..1)
+     * @param absolute Whether to scale the current saturation (false) or just set the new saturation (true)
      */
-    red(saturation, absolute = false) {
+    red(saturation: number, absolute = false): this {
         if (isNaN(saturation) || saturation < 0)
             throw new RangeError('Invalid saturation value');
 
@@ -649,11 +658,10 @@ class Image {
 
     /**
      * Sets the green channels saturation
-     * @param {number} saturation The saturation to apply (0..1)
-     * @param {boolean} absolute Whether to scale the current saturation (false) or just set the new saturation (true)
-     * @returns {Image}
+     * @param saturation The saturation to apply (0..1)
+     * @param absolute Whether to scale the current saturation (false) or just set the new saturation (true)
      */
-    green(saturation, absolute = false) {
+    green(saturation: number, absolute = false): this {
         if (isNaN(saturation) || saturation < 0)
             throw new RangeError('Invalid saturation value');
 
@@ -664,11 +672,10 @@ class Image {
 
     /**
      * Sets the blue channels saturation
-     * @param {number} saturation The saturation to apply (0..1)
-     * @param {boolean} absolute Whether to scale the current saturation (false) or just set the new saturation (true)
-     * @returns {Image}
+     * @param saturation The saturation to apply (0..1)
+     * @param absolute Whether to scale the current saturation (false) or just set the new saturation (true)
      */
-    blue(saturation, absolute = false) {
+    blue(saturation: number, absolute = false): this {
         if (isNaN(saturation) || saturation < 0)
             throw new RangeError('Invalid saturation value');
 
@@ -679,55 +686,53 @@ class Image {
 
     /**
      * @private
-     * @param {number} value
-     * @param {boolean} absolute
-     * @param {number} offset
+     * @param value
+     * @param absolute
+     * @param offset
      */
-    __set_channel_value__(value, absolute, offset) {
+    /** @internal */
+    protected __set_channel_value__(value: number, absolute: boolean, offset: number): void {
         for (let i = offset; i < this.bitmap.length; i += 4)
             this.bitmap[i] = value * (absolute ? 255 : this.bitmap[i]);
     }
 
     /**
      * Sets the brightness of the image
-     * @param {number} value The lightness to apply (0..1)
-     * @param {boolean} absolute Whether to scale the current lightness (false) or just set the new lightness (true)
-     * @returns {Image}
+     * @param value The lightness to apply (0..1)
+     * @param absolute Whether to scale the current lightness (false) or just set the new lightness (true)
      */
-    lightness(value, absolute = false) {
+    lightness(value: number, absolute = false): this {
         if (isNaN(value) || value < 0)
             throw new RangeError('Invalid lightness value');
 
         return this.fill((x, y) => {
-            const [h, s, l, a] = Image.rgbaToHSLA(...this.getRGBAAt(x, y));
+            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(this.getPixelAt(x, y)));
             return Image.hslaToColor(h, s, value * (absolute ? 1 : l), a);
         });
     }
 
     /**
      * Sets the saturation of the image
-     * @param {number} value The saturation to apply (0..1)
-     * @param {boolean} absolute Whether to scale the current saturation (false) or just set the new saturation (true)
-     * @returns {Image}
+     * @param value The saturation to apply (0..1)
+     * @param absolute Whether to scale the current saturation (false) or just set the new saturation (true)
      */
-    saturation(value, absolute = false) {
+    saturation(value: number, absolute = false): this {
         if (isNaN(value) || value < 0)
             throw new RangeError('Invalid saturation value');
 
         return this.fill((x, y) => {
-            const [h, s, l, a] = Image.rgbaToHSLA(...this.getRGBAAt(x, y));
+            const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(this.getPixelAt(x, y)));
             return Image.hslaToColor(h, value * (absolute ? 1 : s), l, a);
         });
     }
 
     /**
      * Composites (overlays) the source onto this image at the specified coordinates
-     * @param {Image} source The image to place
-     * @param {number} [x=0] The x position to place the image at
-     * @param {number} [y=0] The y position to place the image at
-     * @returns {Image}
+     * @param source The image to place
+     * @param [x=0] The x position to place the image at
+     * @param [y=0] The y position to place the image at
      */
-    composite(source, x = 0, y = 0) {
+    composite(source: Image, x = 0, y = 0): this {
         x |= 0;
         y |= 0;
 
@@ -766,9 +771,8 @@ class Image {
 
     /**
      * Inverts the images colors
-     * @returns {Image}
      */
-    invert() {
+    invert(): this {
         for (const [x, y, color] of this.iterateWithColors())
             this.__set_pixel__(x, y, ((0xffffffff - color) & 0xffffff00) | (color & 0xff));
 
@@ -777,9 +781,8 @@ class Image {
 
     /**
      * Inverts the images value (lightness)
-     * @returns {Image}
      */
-    invertValue() {
+    invertValue(): this {
         for (const [x, y, color] of this.iterateWithColors()) {
             const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
             this.__set_pixel__(x, y, Image.hslaToColor(h, s, 1 - l, a));
@@ -790,9 +793,8 @@ class Image {
 
     /**
      * Inverts the images saturation
-     * @returns {Image}
      */
-    invertSaturation() {
+    invertSaturation(): this {
         for (const [x, y, color] of this.iterateWithColors()) {
             const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
             this.__set_pixel__(x, y, Image.hslaToColor(h, 1 - s, l, a));
@@ -803,9 +805,8 @@ class Image {
 
     /**
      * Inverts the images hue
-     * @returns {Image}
      */
-    invertHue() {
+    invertHue(): this {
         for (const [x, y, color] of this.iterateWithColors()) {
             const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
             this.__set_pixel__(x, y, Image.hslaToColor(1 - h, s, l, a));
@@ -816,9 +817,9 @@ class Image {
 
     /**
      * Shifts the images hue
-     * @param {number} degrees How many degrees to shift the hue by
+     * @param degrees How many degrees to shift the hue by
      */
-    hueShift(degrees) {
+    hueShift(degrees: number): this {
         for (const [x, y, color] of this.iterateWithColors()) {
             const [h, s, l, a] = Image.rgbaToHSLA(...Image.colorToRGBA(color));
             this.__set_pixel__(x, y, Image.hslaToColor(h + degrees / 360, s, l, a));
@@ -829,9 +830,9 @@ class Image {
 
     /**
      * Gets the average color of the image, weighting each pixel by its opacity
-     * @returns {number} The average color (fully opaque), black for fully transparent images
+     * @returns The average color (fully opaque), black for fully transparent images
      */
-    averageColor() {
+    averageColor(): Color {
         let r = 0, g = 0, b = 0, weight = 0;
         for (let i = 0; i < this.bitmap.length; i += 4) {
             const a = this.bitmap[i + 3];
@@ -847,13 +848,13 @@ class Image {
 
     /**
      * Gets the images dominant color
-     * @param {boolean} [ignoreBlack=true] Whether to ignore dark colors below the threshold
-     * @param {boolean} [ignoreWhite=true] Whether to ignore light colors above the threshold
-     * @param {number} [bwThreshold=0xf] The black/white threshold (0-64)
-     * @return {number} The images dominant color (fully transparent pixels are ignored)
+     * @param [ignoreBlack=true] Whether to ignore dark colors below the threshold
+     * @param [ignoreWhite=true] Whether to ignore light colors above the threshold
+     * @param [bwThreshold=0xf] The black/white threshold (0-64)
+     * @return The images dominant color (fully transparent pixels are ignored)
      */
-    dominantColor(ignoreBlack = true, ignoreWhite = true, bwThreshold = 0xf) {
-        const colorCounts = new Array(0x40000);
+    dominantColor(ignoreBlack = true, ignoreWhite = true, bwThreshold = 0xf): Color {
+        const colorCounts: number[] = new Array(0x40000);
         for (let i = 0; i < this.bitmap.length; i += 4) {
             if (this.bitmap[i + 3] === 0) continue;
             const color = this.__view__.getUint32(i, false);
@@ -888,10 +889,10 @@ class Image {
 
     /**
      * Rotates the image counterclockwise by the given amount of degrees
-     * @param {number} angle The angle to rotate the image for (in degrees)
-     * @param {boolean} resize Whether to resize the image so it fits all pixels or just ignore outlying pixels
+     * @param angle The angle to rotate the image for (in degrees)
+     * @param resize Whether to resize the image so it fits all pixels or just ignore outlying pixels
      */
-    rotate(angle, resize = true) {
+    rotate(angle: number, resize = true): this {
         angle = ((angle % 360) + 360) % 360;
         if (angle === 0) return this;
 
@@ -931,7 +932,7 @@ class Image {
                 const fx = sx - x0, fy = sy - y0;
 
                 let r = 0, g = 0, b = 0, a = 0;
-                for (const [px, py, weight] of [[x0, y0, (1 - fx) * (1 - fy)], [x0 + 1, y0, fx * (1 - fy)], [x0, y0 + 1, (1 - fx) * fy], [x0 + 1, y0 + 1, fx * fy]]) {
+                for (const [px, py, weight] of [[x0, y0, (1 - fx) * (1 - fy)], [x0 + 1, y0, fx * (1 - fy)], [x0, y0 + 1, (1 - fx) * fy], [x0 + 1, y0 + 1, fx * fy]] as Array<[number, number, number]>) {
                     if (px < 0 || py < 0 || px >= width || py >= height || weight === 0) continue;
                     const i = 4 * (py * width + px);
                     const wa = weight * s8[i + 3];
@@ -955,9 +956,9 @@ class Image {
 
     /**
      * Flips / mirrors the image horizontally or vertically
-     * @param {'horizontal' | 'vertical'} direction The direction to flip
+     * @param direction The direction to flip
      */
-    flip(direction) {
+    flip(direction: 'horizontal' | 'vertical'): this {
         const u32 = this.__u32__;
         const {width, height} = this;
 
@@ -976,10 +977,15 @@ class Image {
 
     /**
      * @private
-     * @param {Image|Frame} image
-     * @returns {Image|Frame}
+     * @param image
      */
-    __apply__(image) {
+    /** @internal the bitmap as a plain byte view */
+    protected __bytes__(): Uint8Array {
+        return new Uint8Array(this.bitmap.buffer, this.bitmap.byteOffset, this.bitmap.byteLength);
+    }
+
+    /** @internal */
+    protected __apply__(image: Image): this {
         this.__width__ = image.__width__;
         this.__height__ = image.__height__;
         this.__buffer__ = image.__buffer__;
@@ -992,11 +998,11 @@ class Image {
 
     /**
      * Creates a multi-point gradient generator
-     * @param {Object<number, number>} colors The gradient points to use (e.g. `{0: 0xff0000ff, 1: 0x00ff00ff}`)
-     * @return {(function(number): number)} The gradient generator. The function argument is the position in the gradient (0..1).
+     * @param colors The gradient points to use (e.g. `{0: 0xff0000ff, 1: 0x00ff00ff}`)
+     * @return The gradient generator. The function argument is the position in the gradient (0..1).
      */
-    static gradient(colors) {
-        const entries = Object.entries(colors).sort((a, b) => a[0] - b[0]);
+    static gradient(colors: Record<number, Color>): (position: number) => Color {
+        const entries = Object.entries(colors).sort((a, b) => Number(a[0]) - Number(b[0]));
         const positions = entries.map(e => parseFloat(e[0]));
         const values = entries.map(e => e[1]);
 
@@ -1014,7 +1020,7 @@ class Image {
 
         const minDef = Math.min(...positions);
         const maxDef = Math.max(...positions);
-        let gradients = [];
+        const gradients: Array<{ min: number, max: number, gradient: (position: number) => Color }> = [];
 
         for (let i = 0; i < positions.length; i++) {
             let minPos = positions[i - 1];
@@ -1044,10 +1050,9 @@ class Image {
 
     /**
      * Rounds the images corners
-     * @param {number} [radius=min(width,height)/4] The radius of the corners
-     * @return {Image}
+     * @param [radius=min(width,height)/4] The radius of the corners
      */
-    roundCorners(radius = Math.min(this.width, this.height) / 4) {
+    roundCorners(radius: number = Math.min(this.width, this.height) / 4): this {
         radius = Math.min(radius, this.width / 2, this.height / 2);
         const size = Math.ceil(radius);
 
@@ -1068,7 +1073,8 @@ class Image {
     /**
      * @private
      */
-    static __gradient__(startColor, endColor) {
+    /** @internal */
+    protected static __gradient__(startColor: Color, endColor: Color): (position: number) => Color {
         const sr = startColor >>> 24;
         const sg = startColor >> 16 & 0xff;
         const sb = startColor >> 8 & 0xff;
@@ -1089,10 +1095,9 @@ class Image {
 
     /**
      * Applies a fisheye (barrel distortion) effect
-     * @param {number} [radius=2] The distortion strength, higher values bulge the center more
-     * @returns {Image}
+     * @param [radius=2] The distortion strength, higher values bulge the center more
      */
-    fisheye(radius = 2) {
+    fisheye(radius = 2): this {
         const r = new Image(this.width, this.height);
 
         const w = this.width;
@@ -1125,31 +1130,33 @@ class Image {
 
     /**
      * @typedef {object} PNGMetadata
-     * @property {string} [title] The images title
-     * @property {string} [author] The images author
-     * @property {string} [description] The images description
-     * @property {string} [copyright] The images copyright info
-     * @property {string|number|Date} [creationTime=Date.now()] The images creation timestamp
-     * @property {string} [software="github.com/matmen/ImageScript vX.X.X"] The software used to create this image
-     * @property {string} [disclaimer] A disclaimer for the image
-     * @property {string} [warning] A warning for the image
-     * @property {string} [source] The images source
-     * @property {string} [comment] A comment for the image
+     * @property [title] The images title
+     * @property [author] The images author
+     * @property [description] The images description
+     * @property [copyright] The images copyright info
+     * @property [creationTime=Date.now()] The images creation timestamp
+     * @property [software="github.com/matmen/ImageScript vX.X.X"] The software used to create this image
+     * @property [disclaimer] A disclaimer for the image
+     * @property [warning] A warning for the image
+     * @property [source] The images source
+     * @property [comment] A comment for the image
      */
 
     /**
      * Encodes the image into a PNG
-     * @param {number|PNGMetadata} [compression=1] The compression level to use (0-9), or the metadata
-     * @param {PNGMetadata} [meta={}] Image metadata
-     * @return {Promise<Uint8Array>} The encoded data
+     * @param [compression=1] The compression level to use (0-9), or the metadata
+     * @param [meta={}] Image metadata
+     * @return The encoded data
      */
-    async encode(compression = 1, meta = {}) {
+    encode(compression?: number, metadata?: PNGMetadata): Promise<Uint8Array>;
+    encode(metadata?: PNGMetadata): Promise<Uint8Array>;
+    async encode(compression: number | PNGMetadata = 1, meta: PNGMetadata = {}): Promise<Uint8Array> {
         if (typeof compression === 'object' && compression !== null) {
             meta = compression;
             compression = 1;
         }
 
-        compression = Math.min(9, Math.max(0, ~~compression));
+        const level = Math.min(9, Math.max(0, ~~compression));
         const {
         title,
         author,
@@ -1163,10 +1170,10 @@ class Image {
         comment
     } = meta || {};
 
-        return png.encode(this.bitmap, {
+        return png.encode(this.__bytes__(), {
             width: this.width,
             height: this.height,
-            level: compression,
+            level,
             channels: 4,
             text: {
                 Title: title,
@@ -1174,7 +1181,7 @@ class Image {
                 Description: description,
                 Copyright: copyright,
                 'Creation Time': new Date(creationTime === undefined ? Date.now() : creationTime).toUTCString(),
-                Software: software === undefined ? `github.com/matmen/ImageScript v${version}` : software,
+                Software: software === undefined ? `github.com/matmen/ImageScript v${VERSION}` : software,
                 Disclaimer: disclaimer,
                 Warning: warning,
                 Source: source,
@@ -1185,43 +1192,41 @@ class Image {
 
     /**
      * Encodes the image into a JPEG
-     * @param {number} [quality=90] The JPEG quality to use (1-100), chroma subsampling is disabled above 90
-     * @return {Promise<Uint8Array>}
+     * @param [quality=90] The JPEG quality to use (1-100), chroma subsampling is disabled above 90
      */
-    async encodeJPEG(quality = 90) {
-        return jpeg.encode(this.bitmap, this.width, this.height, quality);
+    async encodeJPEG(quality = 90): Promise<Uint8Array> {
+        return jpeg.encode(this.__bytes__(), this.width, this.height, quality);
     }
 
     /**
      * WebP encoding was removed when ImageScript became dependency free, use PNG or JPEG instead
      * @deprecated
-     * @return {Promise<never>}
      */
-    async encodeWEBP() {
+    async encodeWEBP(): Promise<never> {
         throw new Error('WebP encoding is no longer supported, use encode() (PNG) or encodeJPEG() instead');
     }
 
     /**
      * Decodes an image (PNG, JPEG or TIFF)
-     * @param {Buffer|Uint8Array} data The binary data to decode
-     * @return {Promise<Image>} The decoded image
+     * @param data The binary data to decode
+     * @return The decoded image
      */
-    static async decode(data) {
-        let image;
+    static async decode(input: BinaryData): Promise<Image> {
+        let image: Image;
 
-        data = mem.view(data);
-        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        const data = view(input);
+        const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
-        if (ImageType.isPNG(view)) { // PNG
-            const {width, height, pixels} = png.decode(data);
+        if (ImageType.isPNG(dataView)) { // PNG
+            const {width, height, pixels} = await png.decode(data);
             image = new Image(width, height);
             image.bitmap.set(pixels);
-        } else if (ImageType.isJPEG(view)) { // JPEG
+        } else if (ImageType.isJPEG(dataView)) { // JPEG
             const {width, height, pixels} = jpeg.decode(data);
             image = new Image(width, height);
             image.bitmap.set(pixels);
-        } else if (ImageType.isTIFF(view)) { // TIFF
-            const {width, height, pixels} = tiff.decode(data);
+        } else if (ImageType.isTIFF(dataView)) { // TIFF
+            const {width, height, pixels} = await tiff.decode(data);
             image = new Image(width, height);
             image.bitmap.set(pixels);
         } else throw new Error('Unsupported image type');
@@ -1231,25 +1236,22 @@ class Image {
 
     /**
      * Scale the SVG by the given amount. For use with {@link Image.renderSVG}
-     * @return {number}
      */
-    static get SVG_MODE_SCALE() {
+    static get SVG_MODE_SCALE(): 1 {
         return 1;
     }
 
     /**
      * Scale the SVG to fit the given width. For use with {@link Image.renderSVG}
-     * @return {number}
      */
-    static get SVG_MODE_WIDTH() {
+    static get SVG_MODE_WIDTH(): 2 {
         return 2;
     }
 
     /**
      * Scale the SVG to fit the given height. For use with {@link Image.renderSVG}
-     * @return {number}
      */
-    static get SVG_MODE_HEIGHT() {
+    static get SVG_MODE_HEIGHT(): 3 {
         return 3;
     }
 
@@ -1257,21 +1259,21 @@ class Image {
      * Creates a new image from the given SVG
      * Supports shapes, paths, transforms, use/symbol, CSS styles, gradients, strokes, clip paths, masks and opacity;
      * text, images, filters and patterns are not rendered
-     * @param {string|Uint8Array} svg The SVG content
-     * @param {number} size The size to use
-     * @param {number} mode The SVG resizing mode to use (one of {@link SVG_MODE_SCALE}, {@link SVG_MODE_WIDTH}, {@link SVG_MODE_HEIGHT})
-     * @return {Promise<Image>} The rendered SVG graphic
+     * @param svg The SVG content
+     * @param size The size to use
+     * @param mode The SVG resizing mode to use (one of {@link SVG_MODE_SCALE}, {@link SVG_MODE_WIDTH}, {@link SVG_MODE_HEIGHT})
+     * @return The rendered SVG graphic
      */
-    static async renderSVG(svg, size = 1, mode = this.SVG_MODE_SCALE) {
-        if (![this.SVG_MODE_WIDTH, this.SVG_MODE_HEIGHT, this.SVG_MODE_SCALE].includes(mode))
+    static async renderSVG(svg: string | BinaryData, size = 1, mode: SVGScaleMode = Image.SVG_MODE_SCALE): Promise<Image> {
+        if (![1, 2, 3].includes(mode))
             throw new Error('Invalid SVG scaling mode');
 
-        if (mode === this.SVG_MODE_SCALE && size <= 0)
+        if (mode === Image.SVG_MODE_SCALE && size <= 0)
             throw new RangeError('SVG scale must be > 0');
-        if (mode !== this.SVG_MODE_SCALE && size < 1)
-            throw new RangeError('SVG size must be >= 1')
+        if (mode !== Image.SVG_MODE_SCALE && size < 1)
+            throw new RangeError('SVG size must be >= 1');
 
-        const {width, height, pixels} = svgRenderer.render(typeof svg === 'string' ? svg : mem.view(svg), mode, size);
+        const {width, height, pixels} = svgRenderer.render(typeof svg === 'string' ? svg : view(svg), mode, size);
         const image = new Image(width, height);
         image.bitmap.set(pixels);
 
@@ -1280,15 +1282,15 @@ class Image {
 
     /**
      * Creates a new image containing the rendered text.
-     * @param {Uint8Array} font TrueType (ttf/ttc) or OpenType (otf) font buffer to use
-     * @param {number} scale Font size to use
-     * @param {string} text Text to render
-     * @param {number} [color=0xffffffff] Text color to use
-     * @param {TextLayout} [layout] The text layout to use
-     * @return {Promise<Image>} The rendered text
+     * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use
+     * @param scale Font size to use
+     * @param text Text to render
+     * @param [color=0xffffffff] Text color to use
+     * @param [layout] The text layout to use
+     * @return The rendered text
      */
-    static async renderText(font, scale, text, color = 0xffffffff, layout = new TextLayout()) {
-        const {width, height, coverage} = textRenderer.render(mem.view(font), scale, text, layout);
+    static async renderText(font: BinaryData, scale: number, text: string, color: Color = 0xffffffff, layout: TextLayout = new TextLayout()): Promise<Image> {
+        const {width, height, coverage} = textRenderer.render(view(font), scale, text, layout);
         const [r, g, b, a] = Image.colorToRGBA(color);
 
         const image = new Image(width, height);
@@ -1305,413 +1307,3 @@ class Image {
 
 }
 
-/**
- * Represents a frame in a GIF
- * @extends Image
- */
-class Frame extends Image {
-    /**
-     * GIF frame disposal mode KEEP. For use with {@link Frame}
-     * @returns {string}
-     */
-    static get DISPOSAL_KEEP() {
-        return 'keep';
-    }
-
-    /**
-     * GIF frame disposal mode PREVIOUS. For use with {@link Frame}
-     * @returns {string}
-     */
-    static get DISPOSAL_PREVIOUS() {
-        return 'previous';
-    }
-
-    /**
-     * GIF frame disposal mode BACKGROUND. For use with {@link Frame}
-     * @returns {string}
-     */
-    static get DISPOSAL_BACKGROUND() {
-        return 'background';
-    }
-
-    static __convert_disposal_mode__(mode) {
-        if (typeof mode === 'string')
-            mode = ['any', 'keep', 'previous', 'background'].indexOf(mode);
-        if (mode < 0 || mode > 3)
-            throw new RangeError('Invalid disposal mode');
-
-        return mode;
-    }
-
-    /**
-     * Creates a new, blank frame
-     * @param {number} width
-     * @param {number} height
-     * @param {number} [duration = 100] The frames duration (in ms)
-     * @param {number} [xOffset=0] The frames offset on the x-axis
-     * @param {number} [yOffset=0] The frames offset on the y-axis
-     * @param {string|number} [disposalMode=Frame.DISPOSAL_KEEP] The frame's disposal mode ({@link Frame.DISPOSAL_KEEP}, {@link Frame.DISPOSAL_PREVIOUS} or {@link Frame.DISPOSAL_BACKGROUND})
-     * @return {Frame}
-     */
-    constructor(width, height, duration = 100, xOffset = 0, yOffset = 0, disposalMode = Frame.DISPOSAL_KEEP) {
-        if (isNaN(duration) || duration < 0)
-            throw new RangeError('Invalid frame duration');
-
-        super(width, height);
-        this.duration = duration;
-        this.xOffset = xOffset;
-        this.yOffset = yOffset;
-        this.disposalMode = disposalMode;
-    }
-
-    /**
-     * The Frame's disposal mode
-     * @returns {number}
-     */
-    get disposalMode() {
-        return this.__disposalMode__;
-    }
-
-    /**
-     * Sets the frame's disposal mode, converting it to the internal numeric value.
-     * @param {string|number} disposalMode The frame's disposal mode
-     */
-    set disposalMode(disposalMode) {
-        this.__disposalMode__ = Frame.__convert_disposal_mode__(disposalMode);
-    }
-
-    toString() {
-        return `Frame<${this.width}x${this.height}x${this.duration}ms>`;
-    }
-
-    /**
-     * Converts an Image instance to a Frame, cloning it in the process
-     * @param {Image} image The image to create the frame from
-     * @param {number} [duration = 100] The frames duration (in ms)
-     * @param {number} [xOffset=0] The frames offset on the x-axis
-     * @param {number} [yOffset=0] The frames offset on the y-axis
-     * @param {string|number} [disposalMode=Frame.DISPOSAL_KEEP] The frames disposal mode ({@link Frame.DISPOSAL_KEEP}, {@link Frame.DISPOSAL_PREVIOUS} or {@link Frame.DISPOSAL_BACKGROUND})
-     * @return {Frame}
-     */
-    static from(image, duration, xOffset, yOffset, disposalMode = Frame.DISPOSAL_KEEP) {
-        if (!(image instanceof Image))
-            throw new TypeError('Invalid image passed');
-
-        const frame = new Frame(image.width, image.height, duration, xOffset, yOffset, disposalMode);
-        frame.bitmap.set(image.bitmap);
-
-        return frame;
-    }
-
-    /**
-     * Clones the frame, including its duration, offsets and disposal mode
-     * @returns {Frame}
-     */
-    clone() {
-        return Frame.from(this, this.duration, this.xOffset, this.yOffset, this.disposalMode);
-    }
-
-    /**
-     * Resizes the frame, scaling its offsets along with it
-     * @param {number} width The new width
-     * @param {number} height The new height
-     * @param {string} [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
-     * @returns {Frame}
-     */
-    resize(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
-        const originalWidth = this.width;
-        const originalHeight = this.height;
-
-        super.resize(width, height, mode);
-
-        this.xOffset = Math.round(this.xOffset * this.width / originalWidth);
-        this.yOffset = Math.round(this.yOffset * this.height / originalHeight);
-
-        return this;
-    }
-}
-
-/**
- * Represents a GIF image as an array of frames
- * @extends Array<Frame>
- */
-class GIF extends Array {
-    /**
-     * Creates a new GIF image.
-     * @param {Frame[]} frames The frames to create the GIF from
-     * @param {number} [loopCount=-1] How often to loop the GIF for (-1 = unlimited)
-     * @property {number} loopCount How often the GIF will loop for
-     */
-    constructor(frames, loopCount = -1) {
-        super(...frames);
-
-        for (const frame of this)
-            if (!(frame instanceof Frame))
-                throw new TypeError(`Frame ${this.indexOf(frame)} is not an instance of Frame`);
-
-        if (loopCount < -1 || isNaN(loopCount))
-            throw new RangeError('Invalid loop count');
-
-        this.loopCount = loopCount;
-    }
-
-    /**
-     * The GIFs width
-     * @returns {number}
-     */
-    get width() {
-        let max = 0;
-        for (const frame of this) {
-            let width = frame.width + frame.xOffset;
-            if (max < width)
-                max = width;
-        }
-
-        return max;
-    }
-
-    /**
-     * The GIFs height
-     * @returns {number}
-     */
-    get height() {
-        let max = 0;
-        for (const frame of this) {
-            let height = frame.height + frame.yOffset;
-            if (max < height)
-                max = height;
-        }
-
-        return max;
-    }
-
-    toString() {
-        return `GIF<${this.width}x${this.height}x${this.duration}ms>`;
-    }
-
-    /**
-     * Array methods like map and filter return plain arrays
-     * @private
-     */
-    static get [Symbol.species]() {
-        return Array;
-    }
-
-    /**
-     * @returns {Generator<Frame, void, *>}
-     */
-    * [Symbol.iterator]() {
-        for (let i = 0; i < this.length; i++)
-            yield this[i];
-    }
-
-    /**
-     * Returns a new GIF containing a range of this GIFs frames (same semantics as Array.prototype.slice)
-     * @param {number} [start=0]
-     * @param {number} [end=this.length]
-     * @returns {GIF}
-     */
-    slice(start, end) {
-        return new GIF(Array.prototype.slice.call(this, start, end), this.loopCount);
-    }
-
-    /**
-     * The GIFs duration (in ms)
-     * @return {number}
-     */
-    get duration() {
-        return this.reduce((acc, frame) => acc + frame.duration, 0);
-    }
-
-    /**
-     * Encodes the image into a GIF
-     * @param {number} [quality=95] GIF quality 1-100, scales the palette size (1 = 8 colors, 50 = 55, 90 and above = 256)
-     * @return {Promise<Uint8Array>} The encoded data
-     */
-    async encode(quality = 95) {
-        const frames = [];
-
-        for (const frame of this) {
-            if (!(frame instanceof Frame)) throw new Error('GIF contains invalid frames');
-
-            frames.push({
-                x: frame.xOffset,
-                y: frame.yOffset,
-                width: frame.width,
-                height: frame.height,
-                delay: ~~(frame.duration / 10),
-                dispose: frame.disposalMode,
-                pixels: frame.bitmap
-            });
-        }
-
-        return gif.encode({width: this.width, height: this.height, loopCount: this.loopCount, frames}, quality);
-    }
-
-    /**
-     * Decodes a GIF image
-     * @param {Buffer|Uint8Array} data The binary data to decode
-     * @param {boolean} [onlyExtractFirstFrame=false] Whether to end GIF decoding after the first frame
-     * @return {Promise<GIF>} The decoded GIF
-     */
-    static async decode(data, onlyExtractFirstFrame = false) {
-        data = mem.view(data);
-        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        if (!ImageType.isGIF(view)) throw new Error('Unsupported image type');
-
-        const decoded = gif.decode(data, onlyExtractFirstFrame);
-        const frames = gif.composite(decoded).map(({pixels, delay}) => {
-            const frame = new Frame(decoded.width, decoded.height, 10 * delay, 0, 0, Frame.DISPOSAL_BACKGROUND);
-            frame.bitmap.set(pixels);
-            return frame;
-        });
-
-        return new GIF(frames, decoded.loopCount);
-    }
-
-    /**
-     * Resizes the GIF to the given dimensions, scaling every frame and its offsets proportionally.
-     * Use {@link Image.RESIZE_AUTO} as either width or height to automatically preserve the aspect ratio.
-     * @param {number} width The new width
-     * @param {number} height The new height
-     * @param {string} [mode=Image.RESIZE_NEAREST_NEIGHBOR] The resizing mode to use
-     * @returns {GIF}
-     */
-    resize(width, height, mode = Image.RESIZE_NEAREST_NEIGHBOR) {
-        const originalWidth = this.width, originalHeight = this.height;
-        if (width === Image.RESIZE_AUTO && height === Image.RESIZE_AUTO) throw new Error('RESIZE_AUTO can only be used for either width or height, not for both');
-        if (width === Image.RESIZE_AUTO) width = originalWidth / originalHeight * height;
-        if (height === Image.RESIZE_AUTO) height = originalHeight / originalWidth * width;
-
-        const sx = width / originalWidth, sy = height / originalHeight;
-        for (const frame of this) {
-            // scale both edges so adjacent frames stay aligned
-            const left = Math.round(frame.xOffset * sx), top = Math.round(frame.yOffset * sy);
-            const right = Math.round((frame.xOffset + frame.width) * sx), bottom = Math.round((frame.yOffset + frame.height) * sy);
-            Image.prototype.resize.call(frame, Math.max(1, right - left), Math.max(1, bottom - top), mode);
-            frame.xOffset = left;
-            frame.yOffset = top;
-        }
-
-        return this;
-    }
-}
-
-class TextLayout {
-    /**
-     * Layout options for {@link Image.renderText}
-     * @param {object} [options]
-     * @param {number} [options.maxWidth=Infinity] The texts max width, longer lines are wrapped
-     * @param {number} [options.maxHeight=Infinity] The texts max height, lines that don't fit are cut off
-     * @param {string} [options.wrapStyle='word'] The texts wrap style when reaching the max width (word, char)
-     * @param {string} [options.horizontalAlign='left'] The horizontal alignment of the lines (left, center, right), relative to the widest line
-     * @param {string} [options.verticalAlign='top'] Which lines to keep when cutting off at the max height (top, middle, bottom)
-     * @param {boolean} [options.wrapHardBreaks=true] Whether to force wrap at new line characters
-     */
-    constructor(options) {
-        const {maxWidth, maxHeight, wrapStyle, verticalAlign, horizontalAlign, wrapHardBreaks} = options || {};
-
-        this.maxWidth = maxWidth || Infinity;
-        if (isNaN(this.maxWidth) || this.maxWidth < 1)
-            throw new RangeError('Invalid maxWidth');
-
-        this.maxHeight = maxHeight || Infinity;
-        if (isNaN(this.maxHeight) || this.maxHeight < 1)
-            throw new RangeError('Invalid maxHeight');
-
-        this.wrapStyle = wrapStyle || 'word';
-        if (!['word', 'char'].includes(this.wrapStyle))
-            throw new RangeError('Invalid wrapStyle');
-
-        // before 3.0 the two alignment options had each other's names, accept those values too
-        const horizontal = ['left', 'center', 'right'];
-        const vertical = ['top', 'middle', 'bottom'];
-        this.horizontalAlign = 'left';
-        this.verticalAlign = 'top';
-
-        for (const value of [horizontalAlign, verticalAlign]) {
-            if (value === undefined) continue;
-            if (horizontal.includes(value)) this.horizontalAlign = value;
-            else if (vertical.includes(value)) this.verticalAlign = value;
-            else throw new RangeError(`Invalid alignment: ${value}`);
-        }
-
-        this.wrapHardBreaks = typeof wrapHardBreaks === 'undefined' ? true : wrapHardBreaks;
-        if (typeof this.wrapHardBreaks !== 'boolean')
-            throw new TypeError('Invalid wrapHardBreaks');
-    }
-}
-
-class ImageType {
-    /**
-     * Gets an images type (png, jpeg, tiff, gif)
-     * @param {Buffer|Uint8Array} data The image binary to get the type of
-     * @returns {string|null} The image type (png, jpeg, tiff, gif, null)
-     */
-    static getType(data) {
-        let view;
-        if (!ArrayBuffer.isView(data)) {
-            data = new Uint8Array(data);
-            view = new DataView(data.buffer);
-        } else {
-            data = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-            view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        }
-
-        if (this.isPNG(view)) return 'png';
-        if (this.isJPEG(view)) return 'jpeg';
-        if (this.isTIFF(view)) return 'tiff';
-        if (this.isGIF(view)) return 'gif';
-        return null;
-    }
-
-    /**
-     * @param {DataView} view
-     * @returns {boolean}
-     */
-    static isPNG(view) {
-        return view.byteLength >= 4 && view.getUint32(0, false) === MAGIC_NUMBERS.PNG;
-    }
-
-    /**
-     * @param {DataView} view
-     * @returns {boolean}
-     */
-    static isJPEG(view) {
-        return view.byteLength >= 4 && (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.JPEG;
-    }
-
-    /**
-     * @param {DataView} view
-     * @returns {boolean}
-     */
-    static isTIFF(view) {
-        if (view.byteLength < 4) return false;
-        const magic = view.getUint32(0, false);
-        return magic === MAGIC_NUMBERS.TIFF_LE || magic === MAGIC_NUMBERS.TIFF_BE || magic === MAGIC_NUMBERS.BIGTIFF_LE || magic === MAGIC_NUMBERS.BIGTIFF_BE;
-    }
-
-    /**
-     * @param {DataView} view
-     * @returns {boolean}
-     */
-    static isGIF(view) {
-        return view.byteLength >= 4 && (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.GIF;
-    }
-}
-
-/**
- * Decodes the given image binary
- * @param {Uint8Array|Buffer} data The image data
- * @param {boolean} [onlyExtractFirstFrame] Whether to end GIF decoding after the first frame
- * @returns {Promise<GIF|Image>} The decoded image
- */
-function decode(data, onlyExtractFirstFrame) {
-    const type = ImageType.getType(data);
-
-    if (type === 'gif')
-        return GIF.decode(data, onlyExtractFirstFrame);
-    return Image.decode(data);
-}
-
-module.exports = {Image, GIF, Frame, TextLayout, ImageType, decode};

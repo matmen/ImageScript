@@ -1,5 +1,5 @@
 const fs = require('fs').promises;
-const {Frame, GIF} = require('../ImageScript');
+const {Frame, GIF} = require('..');
 
 const panic = message => {
     console.error(message);

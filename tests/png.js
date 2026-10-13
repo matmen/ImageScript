@@ -1,6 +1,6 @@
 const fs = require('fs').promises;
 const crypto = require('crypto');
-const {Image} = require('../ImageScript');
+const {Image} = require('..');
 
 const panic = message => {
     console.error(message);

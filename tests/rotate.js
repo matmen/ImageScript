@@ -1,5 +1,5 @@
 const fs = require('fs').promises;
-const {Image} = require('../ImageScript');
+const {Image} = require('..');
 const panic = msg => {
     console.error(msg);
     process.exit(1);

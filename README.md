@@ -3,14 +3,13 @@
 [![Discord Server](https://img.shields.io/discord/691713541262147687.svg?label=Discord&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2&style=for-the-badge)](https://discord.gg/8hPrwAH)
 [![Documentation](https://img.shields.io/badge/Documentation-informational?style=for-the-badge)](https://imagescript.matmen.dev/)
 [![Github](https://img.shields.io/badge/Github-Repository-181717?logo=github&style=for-the-badge)](https://github.com/matmen/ImageScript)
-[![deno.land](https://shields.io/badge/deno.land-gray?logo=deno&style=for-the-badge)](https://deno.land/x/imagescript)
 [![NPM](https://nodei.co/npm/imagescript.png)](https://www.npmjs.com/package/imagescript)
 
 ---
 
 **ImageScript** is a zero-dependency alternative to common JavaScript bitmap image manipulation tools. All codecs and
-renderers are written in plain JavaScript, without WebAssembly, native binaries or npm dependencies, so it runs
-anywhere JavaScript runs.
+renderers are written in TypeScript, without WebAssembly, native binaries or npm dependencies. It requires Node.js 22.12
+or newer and works with both `import` and `require()`; type definitions are included.
 
 ---
 
@@ -39,10 +38,19 @@ anywhere JavaScript runs.
 
 ### Example
 
-Check out one of these examples:
-* **NodeJS**: [README image generation](https://github.com/matmen/ImageScript/blob/master/tests/readme.js)
-* **Deno**: [README image generation](https://github.com/matmen/ImageScript/blob/deno/tests/readme.js)
-* **Browser**: [Grayscale Conversion Example Page](https://github.com/matmen/ImageScript/blob/browser/example/index.html) (via CDN)
+```js
+import { Image } from 'imagescript';
+import { readFile, writeFile } from 'node:fs/promises';
+
+const image = await Image.decode(await readFile('input.jpg'));
+image.resize(256, Image.RESIZE_AUTO).roundCorners(16);
+await writeFile('output.png', await image.encode());
+```
+
+All coordinates are 0-based, `(0, 0)` is the top left pixel.
+
+A bigger example is the [README image generation](https://github.com/matmen/ImageScript/blob/master/tests/readme.js).
+Upgrading from 1.x? See the [changelog](CHANGELOG.md).
 
 [![Example](https://github.com/matmen/ImageScript/raw/master/tests/targets/readme.png)](https://github.com/matmen/ImageScript/blob/master/tests/readme.js)
 

@@ -1,4 +1,4 @@
-const {Image, Frame, GIF, TextLayout} = require('../ImageScript');
+const {Image, Frame, GIF, TextLayout} = require('..');
 
 const assert = (condition, message) => {
     if (condition) return;

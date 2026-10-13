@@ -1,8 +1,7 @@
-'use strict';
-const { decompress } = require('./zlib.js');
-const jpeg = require('./jpeg.js');
+import { decompressAsync } from './zlib.ts';
+import * as jpeg from './jpeg.ts';
 
-const TYPE_SIZES = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4, 16: 8, 17: 8, 18: 8 };
+const TYPE_SIZES: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4, 16: 8, 17: 8, 18: 8 };
 
 const TAGS = {
     ImageWidth: 256,
@@ -30,7 +29,7 @@ const TAGS = {
     ReferenceBlackWhite: 532
 };
 
-const COMPRESSION_NAMES = { 2: 'CCITT RLE', 3: 'CCITT fax 3', 4: 'CCITT fax 4', 6: 'old-style JPEG', 32809: 'ThunderScan', 34676: 'SGI LogLuv', 34677: 'SGI LogL' };
+const COMPRESSION_NAMES: Record<number, string> = { 2: 'CCITT RLE', 3: 'CCITT fax 3', 4: 'CCITT fax 4', 6: 'old-style JPEG', 32809: 'ThunderScan', 34676: 'SGI LogLuv', 34677: 'SGI LogL' };
 
 /**
  * Decodes the first image of a TIFF into 8-bit RGBA pixel data
@@ -40,17 +39,23 @@ const COMPRESSION_NAMES = { 2: 'CCITT RLE', 3: 'CCITT fax 3', 4: 'CCITT fax 4', 
  * @param {Uint8Array} data
  * @return {{width: number, height: number, pixels: Uint8Array}}
  */
-function decode(data) {
+type ValuesOf = (tag: number, fallback: number[]) => number[];
+
+interface SampleReader {
+    (rowOffset: number, n: number): { raw: number, value: number };
+}
+
+export async function decode(data: Uint8Array): Promise<{ width: number, height: number, pixels: Uint8Array }> {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
-    let little;
+    let little: boolean;
     if (data[0] === 0x49 && data[1] === 0x49) little = true;
     else if (data[0] === 0x4d && data[1] === 0x4d) little = false;
     else throw new Error('TIFF: invalid byte order');
 
-    const u16 = offset => view.getUint16(offset, little);
-    const u32 = offset => view.getUint32(offset, little);
-    const u64 = offset => {
+    const u16 = (offset: number): number => view.getUint16(offset, little);
+    const u32 = (offset: number): number => view.getUint32(offset, little);
+    const u64 = (offset: number): number => {
         const lo = view.getUint32(offset + (little ? 0 : 4), little);
         const hi = view.getUint32(offset + (little ? 4 : 0), little);
         return hi * 0x100000000 + lo;
@@ -86,7 +91,7 @@ function decode(data) {
         tags.set(tag, { type, count, offset });
     }
 
-    const read = (type, offset) => {
+    const read = (type: number, offset: number): number => {
         switch (type) {
             case 1: case 2: case 7: return data[offset];
             case 6: return view.getInt8(offset);
@@ -100,23 +105,28 @@ function decode(data) {
             case 12: return view.getFloat64(offset, little);
             case 16: case 18: return u64(offset);
             case 17: return Number(view.getBigInt64(offset, little));
+            default: return 0;
         }
     };
 
-    const values = (tag, fallback) => {
+    function values(tag: number): number[] | undefined;
+    function values(tag: number, fallback: number[]): number[];
+    function values(tag: number, fallback?: number[]): number[] | undefined {
         const entry = tags.get(tag);
         if (!entry) return fallback;
 
-        const result = new Array(entry.count);
+        const result: number[] = new Array(entry.count);
         const size = TYPE_SIZES[entry.type];
         for (let i = 0; i < entry.count; i++) result[i] = read(entry.type, entry.offset + i * size);
         return result;
-    };
+    }
 
-    const value = (tag, fallback) => {
+    function value(tag: number): number | undefined;
+    function value(tag: number, fallback: number): number;
+    function value(tag: number, fallback?: number): number | undefined {
         const v = values(tag);
         return v && v.length ? v[0] : fallback;
-    };
+    }
 
     const width = value(TAGS.ImageWidth);
     const height = value(TAGS.ImageLength);
@@ -140,7 +150,7 @@ function decode(data) {
     if (![0, 1, 2, 3, 5, 6].includes(photometric)) throw new Error(`TIFF: photometric interpretation ${photometric} is not supported`);
     if (sampleFormat === 3 ? bps !== 32 && bps !== 64 : bps < 1 || bps > 32) throw new Error(`TIFF: ${bps}-bit samples are not supported`);
 
-    const colorChannels = { 0: 1, 1: 1, 2: 3, 3: 1, 5: 4, 6: 3 }[photometric];
+    const colorChannels = ({ 0: 1, 1: 1, 2: 3, 3: 1, 5: 4, 6: 3 } as Record<number, number>)[photometric];
     if (samplesPerPixel < colorChannels) throw new Error('TIFF: not enough samples per pixel');
 
     // the first extra sample is alpha if it is marked as associated (1) or unassociated (2)
@@ -158,7 +168,7 @@ function decode(data) {
     const segmentsAcross = Math.ceil(width / segmentWidth);
     const segmentsDown = Math.ceil(height / segmentHeight);
     const segmentsPerPlane = segmentsAcross * segmentsDown;
-    const segment = index => {
+    const segment = (index: number): Uint8Array => {
         const offset = offsets[index];
         const count = byteCounts ? byteCounts[index] : data.length - offset;
         if (offset === undefined || offset >= data.length) throw new Error('TIFF: missing image data');
@@ -205,7 +215,7 @@ function decode(data) {
         let written = 0;
         for (let s = 0; s < segmentsPerPlane && written < units.length; s++) {
             const expected = Math.min(units.length - written, Math.ceil(segmentHeight / v) * unitRowBytes);
-            const raw = decompressSegment(segment(s), compression, expected);
+            const raw = await decompressSegment(segment(s), compression, expected);
             units.set(raw.subarray(0, expected), written);
             written += expected;
         }
@@ -226,7 +236,7 @@ function decode(data) {
             const rows = tiled ? segmentHeight : Math.min(segmentHeight, height - sy);
             const expected = rows * segmentRowBytes;
 
-            const bytes = decompressSegment(segment(plane * segmentsPerPlane + s), compression, expected);
+            const bytes = await decompressSegment(segment(plane * segmentsPerPlane + s), compression, expected);
             if (fillOrder === 2) reverseBits(bytes);
             if (predictor === 2) undoHorizontalPredictor(bytes, segmentRowBytes, rows, samplesPerRow, bps, little);
             else if (predictor === 3) undoFloatingPointPredictor(bytes, segmentRowBytes, rows, samplesPerRow, bps);
@@ -251,11 +261,11 @@ function decode(data) {
     const sampleLittle = predictor === 3 ? true : little;
     const readSample = sampleReader(raw, bps, sampleFormat, sampleLittle, sampleFormat === 3 ? floatRange(raw, bps, sampleLittle) : null);
     const sampleAt = planar
-        ? (x, y, s) => readSample(s * planeBytes + y * rowBytes, x)
-        : (x, y, s) => readSample(y * rowBytes, x * samplesPerPixel + s);
+        ? (x: number, y: number, s: number) => readSample(s * planeBytes + y * rowBytes, x)
+        : (x: number, y: number, s: number) => readSample(y * rowBytes, x * samplesPerPixel + s);
 
-    const colormap = photometric === 3 ? values(TAGS.ColorMap) : null;
-    if (photometric === 3 && (!colormap || colormap.length < 3 << bps)) throw new Error('TIFF: missing color map');
+    const colormap = photometric === 3 ? values(TAGS.ColorMap, []) : [];
+    if (photometric === 3 && colormap.length < 3 << bps) throw new Error('TIFF: missing color map');
     const ycc = photometric === 6 ? ycbcrConversion(values) : null;
 
     for (let y = 0, o = 0; y < height; y++) {
@@ -278,7 +288,7 @@ function decode(data) {
                 pixels[o] = cmykToRGB(sampleAt(x, y, 0).value, k);
                 pixels[o + 1] = cmykToRGB(sampleAt(x, y, 1).value, k);
                 pixels[o + 2] = cmykToRGB(sampleAt(x, y, 2).value, k);
-            } else ycc(sampleAt(x, y, 0).value, sampleAt(x, y, 1).value, sampleAt(x, y, 2).value, pixels, o);
+            } else (ycc as YCbCrConverter)(sampleAt(x, y, 0).value, sampleAt(x, y, 1).value, sampleAt(x, y, 2).value, pixels, o);
 
             if (alphaChannel === -1) pixels[o + 3] = 0xff;
             else {
@@ -296,12 +306,12 @@ function decode(data) {
 }
 
 // returns a function reading the n-th sample of a row as {raw, value} with value scaled to 8 bits
-function sampleReader(raw, bps, sampleFormat, little, range) {
+function sampleReader(raw: Uint8Array, bps: number, sampleFormat: number, little: boolean, range: [number, number] | null): SampleReader {
     const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
     const result = { raw: 0, value: 0 };
 
     if (sampleFormat === 3) {
-        const [min, max] = range;
+        const [min, max] = range || [0, 1];
         const scale = 255 / (max - min || 1);
 
         return (rowOffset, n) => {
@@ -360,7 +370,7 @@ function sampleReader(raw, bps, sampleFormat, little, range) {
 }
 
 // floats have no fixed range: [0, 1] and [0, 255] data is used as is, anything else is normalized to its min..max
-function floatRange(raw, bps, little) {
+function floatRange(raw: Uint8Array, bps: number, little: boolean): [number, number] {
     const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
     const size = bps / 8;
     let min = Infinity, max = -Infinity;
@@ -376,12 +386,12 @@ function floatRange(raw, bps, little) {
     return [min, max];
 }
 
-function decompressSegment(bytes, compression, expected) {
-    let out;
-    if (compression === 1) out = bytes;
-    else if (compression === 5) out = lzw(bytes, expected);
-    else if (compression === 8 || compression === 32946) out = decompress(bytes, expected);
+async function decompressSegment(bytes: Uint8Array, compression: number, expected: number): Promise<Uint8Array> {
+    let out: Uint8Array;
+    if (compression === 5) out = lzw(bytes, expected);
+    else if (compression === 8 || compression === 32946) out = await decompressAsync(bytes, expected);
     else if (compression === 32773) out = packBits(bytes, expected);
+    else out = bytes;
 
     if (out.length >= expected) return out.length === expected ? out : out.slice(0, expected);
 
@@ -391,7 +401,7 @@ function decompressSegment(bytes, compression, expected) {
     return padded;
 }
 
-function lzw(input, expected) {
+function lzw(input: Uint8Array, expected: number): Uint8Array {
     const out = new Uint8Array(expected);
     // pre-5.0 libtiff wrote LSB first codes without early change
     const compat = input[0] === 0 && (input[1] & 1) === 1;
@@ -466,7 +476,7 @@ function lzw(input, expected) {
     return out.subarray(0, Math.min(written, expected));
 }
 
-function packBits(input, expected) {
+function packBits(input: Uint8Array, expected: number): Uint8Array {
     const out = new Uint8Array(expected);
     let i = 0, o = 0;
 
@@ -488,7 +498,7 @@ function packBits(input, expected) {
     return out.subarray(0, o);
 }
 
-function reverseBits(bytes) {
+function reverseBits(bytes: Uint8Array): void {
     for (let i = 0; i < bytes.length; i++) {
         let b = bytes[i];
         b = (b & 0xf0) >> 4 | (b & 0x0f) << 4;
@@ -497,7 +507,7 @@ function reverseBits(bytes) {
     }
 }
 
-function undoHorizontalPredictor(bytes, rowBytes, rows, samplesPerPixel, bps, little) {
+function undoHorizontalPredictor(bytes: Uint8Array, rowBytes: number, rows: number, samplesPerPixel: number, bps: number, little: boolean): void {
     if (bps === 8) {
         for (let r = 0; r < rows; r++)
             for (let i = r * rowBytes + samplesPerPixel, end = (r + 1) * rowBytes; i < end; i++)
@@ -505,8 +515,8 @@ function undoHorizontalPredictor(bytes, rowBytes, rows, samplesPerPixel, bps, li
     } else if (bps === 16 || bps === 32) {
         const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
         const size = bps / 8;
-        const get = size === 2 ? o => view.getUint16(o, little) : o => view.getUint32(o, little);
-        const set = size === 2 ? (o, v) => view.setUint16(o, v, little) : (o, v) => view.setUint32(o, v >>> 0, little);
+        const get = size === 2 ? (o: number): number => view.getUint16(o, little) : (o: number): number => view.getUint32(o, little);
+        const set = size === 2 ? (o: number, v: number): void => view.setUint16(o, v, little) : (o: number, v: number): void => view.setUint32(o, v >>> 0, little);
         const stride = samplesPerPixel * size;
 
         for (let r = 0; r < rows; r++)
@@ -516,7 +526,7 @@ function undoHorizontalPredictor(bytes, rowBytes, rows, samplesPerPixel, bps, li
 }
 
 // floating point predictor: byte-wise differencing over byte planes (most significant first)
-function undoFloatingPointPredictor(bytes, rowBytes, rows, samplesPerPixel, bps) {
+function undoFloatingPointPredictor(bytes: Uint8Array, rowBytes: number, rows: number, samplesPerPixel: number, bps: number): void {
     const size = bps / 8;
     const count = rowBytes / size;
     const tmp = new Uint8Array(rowBytes);
@@ -533,7 +543,7 @@ function undoFloatingPointPredictor(bytes, rowBytes, rows, samplesPerPixel, bps)
     }
 }
 
-function copyBitsUnaligned(src, srcBit, dst, dstBit, count) {
+function copyBitsUnaligned(src: Uint8Array, srcBit: number, dst: Uint8Array, dstBit: number, count: number): void {
     for (let i = 0; i < count; i++, srcBit++, dstBit++) {
         const bit = src[srcBit >> 3] >> 7 - (srcBit & 7) & 1;
         if (bit) dst[dstBit >> 3] |= 0x80 >> (dstBit & 7);
@@ -541,19 +551,21 @@ function copyBitsUnaligned(src, srcBit, dst, dstBit, count) {
     }
 }
 
-function blitRGBA(src, sw, sh, dst, dw, dh, x0, y0) {
+function blitRGBA(src: Uint8Array, sw: number, sh: number, dst: Uint8Array, dw: number, dh: number, x0: number, y0: number): void {
     const w = Math.min(sw, dw - x0);
     for (let y = 0; y < sh && y0 + y < dh; y++)
         dst.set(src.subarray(y * sw * 4, (y * sw + w) * 4), ((y0 + y) * dw + x0) * 4);
 }
 
-function ycbcrConversion(values) {
+type YCbCrConverter = (Y: number, Cb: number, Cr: number, out: Uint8Array, o: number) => void;
+
+function ycbcrConversion(values: ValuesOf): YCbCrConverter {
     const [lr, lg, lb] = values(TAGS.YCbCrCoefficients, [0.299, 0.587, 0.114]);
     const reference = values(TAGS.ReferenceBlackWhite, [0, 255, 128, 255, 128, 255]);
 
-    const scale = (v, black, white, center) => (v - black) * (center ? 127 : 255) / (white - black || 1);
+    const scale = (v: number, black: number, white: number, center: boolean): number => (v - black) * (center ? 127 : 255) / (white - black || 1);
 
-    return (Y, Cb, Cr, out, o) => {
+    return (Y: number, Cb: number, Cr: number, out: Uint8Array, o: number): void => {
         const y = scale(Y, reference[0], reference[1], false);
         const cb = scale(Cb, reference[2], reference[3], true);
         const cr = scale(Cr, reference[4], reference[5], true);
@@ -568,7 +580,7 @@ function ycbcrConversion(values) {
     };
 }
 
-function ycbcrUnitsToRGBA(units, width, height, h, v, convert, pixels) {
+function ycbcrUnitsToRGBA(units: Uint8Array, width: number, height: number, h: number, v: number, convert: YCbCrConverter, pixels: Uint8Array): void {
     const unitsPerRow = Math.ceil(width / h);
     const unitSize = h * v + 2;
 
@@ -589,10 +601,9 @@ function ycbcrUnitsToRGBA(units, width, height, h, v, convert, pixels) {
         }
 }
 
-function cmykToRGB(c, k) {
+function cmykToRGB(c: number, k: number): number {
     const t = (255 - c) * k + 128;
     const v = 255 - (c + ((t >> 8) + t >> 8));
     return v < 0 ? 0 : v;
 }
 
-module.exports = { decode };

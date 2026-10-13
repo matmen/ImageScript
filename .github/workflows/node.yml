@@ -13,7 +13,7 @@ jobs:
 
     strategy:
       matrix:
-        version: [20.x, 22.x, 23.x, 24.x]
+        version: [22.x, 24.x, 26.x]
         os: [macos-latest, ubuntu-latest, windows-latest]
 
     steps:
@@ -22,5 +22,5 @@ jobs:
       with:
         node-version: ${{ matrix.version }}
 
+    - run: npm install
     - run: npm test
-    - run: npx --yes typescript@5.6.3 tsc -p .

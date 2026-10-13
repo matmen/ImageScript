@@ -1,4 +1,3 @@
-'use strict';
 
 // perceptual channel weights for squared color distances
 const WR = 3, WG = 4, WB = 2;
@@ -11,7 +10,33 @@ const WR = 3, WG = 4, WB = 2;
  * @param {{maxColors?: number, quality?: number}} [options] quality (1-100) scales the palette size exponentially (1 = 8 colors, 50 = 55, 90 and above = 256)
  * @return {{palette: Uint8Array, indices: Uint8Array, transparentIndex: number}} palette is packed RGB, transparentIndex is -1 if unused
  */
-function quantize(pixels, width, { maxColors = 256, quality = 95 } = {}) {
+export interface QuantizeOptions {
+    maxColors?: number;
+    quality?: number;
+}
+
+export interface Quantized {
+    /** packed RGB */
+    palette: Uint8Array;
+    indices: Uint8Array;
+    /** -1 if no pixel is transparent */
+    transparentIndex: number;
+}
+
+interface Point {
+    c: [number, number, number];
+    w: number;
+}
+
+interface Box {
+    points: Point[];
+    weight: number;
+    mean: number[];
+    axis: number;
+    error: number;
+}
+
+export function quantize(pixels: Uint8Array, width: number, { maxColors = 256, quality = 95 }: QuantizeOptions = {}): Quantized {
     const length = pixels.length >> 2;
     let hasTransparency = false;
     for (let i = 3; i < pixels.length; i += 4)
@@ -25,7 +50,7 @@ function quantize(pixels, width, { maxColors = 256, quality = 95 } = {}) {
     const colors = hasTransparency ? limit - 1 : limit;
     const exact = exactPalette(pixels, colors);
 
-    let palette, indices;
+    let palette: Uint8Array, indices: Uint8Array;
     if (exact) ({ palette, indices } = exact);
     else {
         palette = medianCut(pixels, colors, Math.ceil(quality / 25));
@@ -47,10 +72,10 @@ function quantize(pixels, width, { maxColors = 256, quality = 95 } = {}) {
 }
 
 // returns an exact palette if the opaque pixels use at most `limit` distinct colors
-function exactPalette(pixels, limit) {
+function exactPalette(pixels: Uint8Array, limit: number): { palette: Uint8Array, indices: Uint8Array } | null {
     const lookup = new Map();
     const indices = new Uint8Array(pixels.length >> 2);
-    const palette = [];
+    const palette: number[] = [];
 
     for (let i = 0, p = 0; i < pixels.length; i += 4, p++) {
         if (pixels[i + 3] < 128) continue;
@@ -74,7 +99,7 @@ function exactPalette(pixels, limit) {
 }
 
 // weighted median cut on a 15-bit histogram, followed by k-means refinement
-function medianCut(pixels, colors, iterations) {
+function medianCut(pixels: Uint8Array, colors: number, iterations: number): Uint8Array {
     const count = new Float64Array(32768);
     const sumR = new Float64Array(32768);
     const sumG = new Float64Array(32768);
@@ -91,7 +116,7 @@ function medianCut(pixels, colors, iterations) {
     }
 
     // collapse non-empty bins into weighted points (mean color + count)
-    const bins = [];
+    const bins: Point[] = [];
     for (let i = 0; i < 32768; i++)
         if (count[i]) bins.push({ c: [sumR[i] / count[i], sumG[i] / count[i], sumB[i] / count[i]], w: count[i] });
 
@@ -145,7 +170,7 @@ function medianCut(pixels, colors, iterations) {
     return Uint8Array.from(palette, Math.round);
 }
 
-function makeBox(points) {
+function makeBox(points: Point[]): Box {
     let weight = 0;
     const sum = [0, 0, 0];
     const sq = [0, 0, 0];
@@ -166,7 +191,7 @@ function makeBox(points) {
     return { points, weight, mean, axis, error: error[0] + error[1] + error[2] };
 }
 
-function nearest(palette, entries, r, g, b) {
+function nearest(palette: ArrayLike<number>, entries: number, r: number, g: number, b: number): number {
     let best = 0, bestDistance = Infinity;
 
     for (let i = 0; i < entries; i++) {
@@ -182,10 +207,10 @@ function nearest(palette, entries, r, g, b) {
 }
 
 // caches nearest palette lookups on an 18-bit color key
-function createLookup(palette, entries) {
+function createLookup(palette: Uint8Array, entries: number): (r: number, g: number, b: number) => number {
     const cache = new Int16Array(1 << 18).fill(-1);
 
-    return (r, g, b) => {
+    return (r: number, g: number, b: number): number => {
         const key = (r >> 2) << 12 | (g >> 2) << 6 | b >> 2;
         let index = cache[key];
         if (index === -1) index = cache[key] = nearest(palette, entries, r, g, b);
@@ -194,7 +219,7 @@ function createLookup(palette, entries) {
 }
 
 // serpentine floyd-steinberg error diffusion
-function ditherMap(pixels, width, palette, entries) {
+function ditherMap(pixels: Uint8Array, width: number, palette: Uint8Array, entries: number): Uint8Array {
     const height = (pixels.length >> 2) / width;
     const lookup = createLookup(palette, entries);
     const indices = new Uint8Array(pixels.length >> 2);
@@ -239,8 +264,7 @@ function ditherMap(pixels, width, palette, entries) {
     return indices;
 }
 
-function clamp(v) {
+function clamp(v: number): number {
     return v < 0 ? 0 : v > 255 ? 255 : v | 0;
 }
 
-module.exports = { quantize };

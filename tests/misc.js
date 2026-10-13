@@ -1,4 +1,4 @@
-const {Image, Frame, GIF} = require('../ImageScript');
+const {Image, Frame, GIF} = require('..');
 const panic = msg => {
     console.error(msg);
     process.exit(1);

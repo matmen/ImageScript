@@ -6,7 +6,7 @@
  */
 
 const fs = require('fs').promises;
-const {Image, TextLayout} = require('../ImageScript');
+const {Image, TextLayout} = require('..');
 
 const panic = message => {
     console.error(message);

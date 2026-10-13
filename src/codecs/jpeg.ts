@@ -1,4 +1,3 @@
-'use strict';
 
 // natural order index of the n-th zigzag coefficient
 const ZIGZAG = Int32Array.of(
@@ -8,7 +7,53 @@ const ZIGZAG = Int32Array.of(
     58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63
 );
 
-function clamp8(v) {
+type Transform = 'grey' | 'rgb' | 'ycc' | 'ycck' | 'cmyk';
+
+interface HuffmanTable {
+    /** (length << 8 | symbol) for codes up to 9 bits, 0 = slow path */
+    lookup: Uint16Array;
+    maxCode: Int32Array;
+    valueOffset: Int32Array;
+    values: Uint8Array;
+}
+
+interface Component {
+    id: number;
+    h: number;
+    v: number;
+    tq: number;
+    /** dimensions of the component's sample plane */
+    width: number;
+    height: number;
+    blocksPerLine: number;
+    blocksPerColumn: number;
+    /** blocks are allocated for whole MCUs */
+    blocksPerLineForMcu: number;
+    blocksPerColumnForMcu: number;
+    coefficients: Int16Array;
+    pred: number;
+    dcTable?: HuffmanTable;
+    acTable?: HuffmanTable;
+    quantization?: Int32Array;
+}
+
+interface Frame {
+    progressive: boolean;
+    width: number;
+    height: number;
+    components: Component[];
+    hmax: number;
+    vmax: number;
+    mcusPerLine: number;
+    mcusPerColumn: number;
+}
+
+export interface DecodeOptions {
+    /** overrides the color transform detected from JFIF/Adobe markers (used by TIFF) */
+    transform?: 'ycc' | 'rgb' | 'cmyk' | null;
+}
+
+function clamp8(v: number): number {
     return v < 0 ? 0 : v > 255 ? 255 : v;
 }
 
@@ -25,19 +70,19 @@ function clamp8(v) {
  * @param {{transform?: 'ycc'|'rgb'|'cmyk'}} [options] overrides the color transform detected from JFIF/Adobe markers (used by TIFF)
  * @return {{width: number, height: number, pixels: Uint8Array}}
  */
-function decode(data, { transform } = {}) {
+export function decode(data: Uint8Array, { transform }: DecodeOptions = {}): { width: number, height: number, pixels: Uint8Array } {
     if (data[0] !== 0xff || data[1] !== 0xd8) throw new Error('JPEG: invalid signature');
 
-    const quantizationTables = [];
-    const dcTables = [];
-    const acTables = [];
-    let frame = null;
-    let adobe = null;
+    const quantizationTables: Int32Array[] = [];
+    const dcTables: HuffmanTable[] = [];
+    const acTables: HuffmanTable[] = [];
+    let frame: Frame | null = null;
+    let adobe: { transform: number } | null = null;
     let jfif = false;
     let restartInterval = 0;
     let pos = 2;
 
-    const u16 = offset => data[offset] << 8 | data[offset + 1];
+    const u16 = (offset: number): number => data[offset] << 8 | data[offset + 1];
 
     while (pos < data.length) {
         // find the next marker, skipping fill bytes and stray data
@@ -166,39 +211,45 @@ function decode(data, { transform } = {}) {
     return { width: frame.width, height: frame.height, pixels: output(frame, adobe, jfif, transform) };
 }
 
-function createFrame(progressive, height, width, componentData) {
+function createFrame(progressive: boolean, height: number, width: number, componentData: Uint8Array): Frame {
     const count = componentData[0];
-    const components = [];
+    const sampling: Array<{ id: number, h: number, v: number, tq: number }> = [];
 
     for (let i = 0; i < count; i++) {
         const p = 1 + i * 3;
-        components.push({ id: componentData[p], h: componentData[p + 1] >> 4 || 1, v: componentData[p + 1] & 15 || 1, tq: componentData[p + 2] });
+        sampling.push({ id: componentData[p], h: componentData[p + 1] >> 4 || 1, v: componentData[p + 1] & 15 || 1, tq: componentData[p + 2] });
     }
 
-    if (!width) throw new Error('JPEG: invalid dimensions');
+    if (!width || !sampling.length) throw new Error('JPEG: invalid dimensions');
 
-    const hmax = Math.max(...components.map(c => c.h));
-    const vmax = Math.max(...components.map(c => c.v));
+    const hmax = Math.max(...sampling.map(c => c.h));
+    const vmax = Math.max(...sampling.map(c => c.v));
     const mcusPerLine = Math.ceil(width / (8 * hmax));
     const mcusPerColumn = Math.ceil(height / (8 * vmax));
 
-    for (const component of components) {
-        // dimensions of the component's sample plane
-        component.width = Math.ceil(width * component.h / hmax);
-        component.height = Math.ceil(height * component.v / vmax);
-        component.blocksPerLine = Math.ceil(component.width / 8);
-        component.blocksPerColumn = Math.ceil(component.height / 8);
-        // blocks are allocated for whole MCUs
-        component.blocksPerLineForMcu = mcusPerLine * component.h;
-        component.blocksPerColumnForMcu = mcusPerColumn * component.v;
-        component.coefficients = new Int16Array(component.blocksPerLineForMcu * component.blocksPerColumnForMcu * 64);
-        component.pred = 0;
-    }
+    const components = sampling.map((c): Component => {
+        const componentWidth = Math.ceil(width * c.h / hmax);
+        const componentHeight = Math.ceil(height * c.v / vmax);
+        const blocksPerLineForMcu = mcusPerLine * c.h;
+        const blocksPerColumnForMcu = mcusPerColumn * c.v;
+
+        return {
+            ...c,
+            width: componentWidth,
+            height: componentHeight,
+            blocksPerLine: Math.ceil(componentWidth / 8),
+            blocksPerColumn: Math.ceil(componentHeight / 8),
+            blocksPerLineForMcu,
+            blocksPerColumnForMcu,
+            coefficients: new Int16Array(blocksPerLineForMcu * blocksPerColumnForMcu * 64),
+            pred: 0
+        };
+    });
 
     return { progressive, width, height, components, hmax, vmax, mcusPerLine, mcusPerColumn };
 }
 
-function buildHuffmanTable(counts, symbols) {
+function buildHuffmanTable(counts: Uint8Array, symbols: Uint8Array): HuffmanTable {
     // fast lookup for codes up to 9 bits: (length << 8 | symbol), 0 = slow path
     const lookup = new Uint16Array(512);
     const maxCode = new Int32Array(18).fill(-1);
@@ -224,12 +275,12 @@ function buildHuffmanTable(counts, symbols) {
     return { lookup, maxCode, valueOffset, values };
 }
 
-function decodeScan(data, offset, frame, components, restartInterval, ss, se, ah, al) {
+function decodeScan(data: Uint8Array, offset: number, frame: Frame, components: Component[], restartInterval: number, ss: number, se: number, ah: number, al: number): number {
     // bit reader state
     let pos = offset;
     let buffer = 0, bits = 0;
 
-    const fill = () => {
+    const fill = (): void => {
         while (bits <= 24) {
             let byte = 0;
             if (pos < data.length) {
@@ -246,18 +297,19 @@ function decodeScan(data, offset, frame, components, restartInterval, ss, se, ah
         }
     };
 
-    const getBits = n => {
+    const getBits = (n: number): number => {
         if (bits < n) fill();
         bits -= n;
         return buffer >>> bits & (1 << n) - 1;
     };
 
-    const getBit = () => {
+    const getBit = (): number => {
         if (bits < 1) fill();
         return buffer >>> --bits & 1;
     };
 
-    const huffman = table => {
+    const huffman = (table: HuffmanTable | undefined): number => {
+        if (!table) throw new Error('JPEG: missing huffman table');
         if (bits < 16) fill();
         const entry = table.lookup[buffer >>> bits - 9 & 511];
 
@@ -277,12 +329,12 @@ function decodeScan(data, offset, frame, components, restartInterval, ss, se, ah
         return table.values[code + table.valueOffset[length]];
     };
 
-    const extend = (value, size) => value < 1 << size - 1 ? value + (-1 << size) + 1 : value;
-    const receiveExtend = size => size ? extend(getBits(size), size) : 0;
+    const extend = (value: number, size: number): number => value < 1 << size - 1 ? value + (-1 << size) + 1 : value;
+    const receiveExtend = (size: number): number => size ? extend(getBits(size), size) : 0;
 
     let eobrun = 0;
 
-    const decodeBaseline = (component, offset) => {
+    const decodeBaseline = (component: Component, offset: number): void => {
         const coefficients = component.coefficients;
         const t = huffman(component.dcTable);
         coefficients[offset] = component.pred += receiveExtend(t);
@@ -303,16 +355,16 @@ function decodeScan(data, offset, frame, components, restartInterval, ss, se, ah
         }
     };
 
-    const decodeDCFirst = (component, offset) => {
+    const decodeDCFirst = (component: Component, offset: number): void => {
         const t = huffman(component.dcTable);
         component.coefficients[offset] = (component.pred += receiveExtend(t)) * (1 << al);
     };
 
-    const decodeDCSuccessive = (component, offset) => {
+    const decodeDCSuccessive = (component: Component, offset: number): void => {
         if (getBit()) component.coefficients[offset] |= 1 << al;
     };
 
-    const decodeACFirst = (component, offset) => {
+    const decodeACFirst = (component: Component, offset: number): void => {
         if (eobrun > 0) {
             eobrun--;
             return;
@@ -340,7 +392,7 @@ function decodeScan(data, offset, frame, components, restartInterval, ss, se, ah
         }
     };
 
-    const decodeACSuccessive = (component, offset) => {
+    const decodeACSuccessive = (component: Component, offset: number): void => {
         const coefficients = component.coefficients;
         const p1 = 1 << al;
         const m1 = -1 << al;
@@ -455,7 +507,7 @@ const FIX_2_053119869 = 16819;
 const FIX_2_562915447 = 20995;
 const FIX_3_072711026 = 25172;
 
-function idct(coefficients, offset, quantization, workspace, out, outOffset, stride) {
+function idct(coefficients: Int16Array, offset: number, quantization: Int32Array, workspace: Int32Array, out: Uint8Array, outOffset: number, stride: number): void {
     const P1 = CONST_BITS - PASS1_BITS;
     const R1 = 1 << P1 - 1;
 
@@ -573,20 +625,22 @@ function idct(coefficients, offset, quantization, workspace, out, outOffset, str
 }
 
 // runs the IDCT over every block, producing the component's sample plane
-function buildPlane(component) {
+function buildPlane(component: Component): { plane: Uint8Array, stride: number } {
     const stride = component.blocksPerLineForMcu * 8;
     const plane = new Uint8Array(stride * component.blocksPerColumnForMcu * 8);
     const workspace = new Int32Array(64);
+    // components without any scan data decode to mid grey
+    const quantization = component.quantization || new Int32Array(64);
 
     for (let row = 0; row < component.blocksPerColumn; row++)
         for (let column = 0; column < component.blocksPerLine; column++)
-            idct(component.coefficients, (row * component.blocksPerLineForMcu + column) * 64, component.quantization, workspace, plane, row * 8 * stride + column * 8, stride);
+            idct(component.coefficients, (row * component.blocksPerLineForMcu + column) * 64, quantization, workspace, plane, row * 8 * stride + column * 8, stride);
 
     return { plane, stride };
 }
 
 // upsamples a component to full resolution, following libjpeg's fancy upsampling
-function upsample(component, frame) {
+function upsample(component: Component, frame: Frame): { samples: Uint8Array, stride: number } {
     const { plane, stride } = buildPlane(component);
     const hf = frame.hmax / component.h;
     const vf = frame.vmax / component.v;
@@ -672,13 +726,13 @@ for (let i = 0; i < 256; i++) {
     cbG[i] = -22554 * x + 32768;
 }
 
-function output(frame, adobe, jfif, override) {
+function output(frame: Frame, adobe: { transform: number } | null, jfif: boolean, override: DecodeOptions['transform']): Uint8Array {
     const { width, height, components } = frame;
     const planes = components.map(component => upsample(component, frame));
     const pixels = new Uint8Array(width * height * 4);
     const count = components.length;
 
-    let transform;
+    let transform: Transform;
     if (count === 1) transform = 'grey';
     else if (override && (count === 4) === (override === 'cmyk')) transform = override;
     else if (count === 3) {
@@ -741,7 +795,7 @@ function output(frame, adobe, jfif, override) {
     return pixels;
 }
 
-function cmykToRGB(c, k) {
+function cmykToRGB(c: number, k: number): number {
     const t = (255 - c) * k + 128;
     return clamp8(255 - (c + ((t >> 8) + t >> 8)));
 }
@@ -776,12 +830,12 @@ const AAN_SCALE = [1, 1.387039845, 1.306562965, 1.175875602, 1, 0.785694958, 0.5
  * @param {number} [quality=90] 1-100
  * @return {Uint8Array}
  */
-function encode(pixels, width, height, quality = 90) {
+export function encode(pixels: Uint8Array, width: number, height: number, quality = 90): Uint8Array {
     if (!width || !height || width > 0xffff || height > 0xffff) throw new RangeError('JPEG: invalid dimensions');
 
     quality = Math.min(100, Math.max(1, Math.round(quality)));
     const scale = quality < 50 ? 5000 / quality : 200 - quality * 2;
-    const scaleTable = base => base.map(v => Math.min(255, Math.max(1, Math.floor((v * scale + 50) / 100))));
+    const scaleTable = (base: number[]): number[] => base.map(v => Math.min(255, Math.max(1, Math.floor((v * scale + 50) / 100))));
     const tables = [scaleTable(LUMA_QUANTIZATION), scaleTable(CHROMA_QUANTIZATION)];
 
     // reciprocal divisors for the float AAN FDCT
@@ -823,7 +877,7 @@ function encode(pixels, width, height, quality = 90) {
     }
 
     // 2x2 box filter for subsampled chroma
-    const downsample = plane => {
+    const downsample = (plane: Float32Array): Float32Array => {
         const out = new Float32Array(W * H / 4);
         for (let y = 0, o = 0; y < H; y += 2)
             for (let x = 0; x < W; x += 2, o++) {
@@ -896,7 +950,7 @@ function encode(pixels, width, height, quality = 90) {
     writer.bytes(1, hmax << 4 | hmax, 0, 2, 0x11, 1, 3, 0x11, 1);
 
     // DHT: luma DC, luma AC, chroma DC, chroma AC
-    for (const [index, id] of [[0, 0x00], [1, 0x10], [2, 0x01], [3, 0x11]]) {
+    for (const [index, id] of [[0, 0x00], [1, 0x10], [2, 0x01], [3, 0x11]] as Array<[number, number]>) {
         const { bits, values } = huffman[index];
         const length = 19 + values.length;
         writer.bytes(0xff, 0xc4, length >> 8, length & 0xff, id);
@@ -917,7 +971,13 @@ function encode(pixels, width, height, quality = 90) {
 }
 
 // tables: 0 luma DC, 1 luma AC, 2 chroma DC, 3 chroma AC
-function encodeBlocks({ coefficients, owners, count }, symbol, bits) {
+interface Blocks {
+    coefficients: Int16Array;
+    owners: Uint8Array;
+    count: number;
+}
+
+function encodeBlocks({ coefficients, owners, count }: Blocks, symbol: (table: number, symbol: number) => void, bits: (value: number, size: number) => void): void {
     const pred = [0, 0, 0];
 
     for (let n = 0; n < count; n++) {
@@ -956,7 +1016,7 @@ function encodeBlocks({ coefficients, owners, count }, symbol, bits) {
     }
 }
 
-function magnitude(value) {
+function magnitude(value: number): number {
     value = Math.abs(value);
     let size = 0;
     while (value) {
@@ -967,7 +1027,14 @@ function magnitude(value) {
 }
 
 // libjpeg's jpeg_gen_optimal_table (ITU T.81 Annex K.2)
-function buildOptimalTable(frequencies) {
+interface OptimalTable {
+    bits: Int32Array;
+    values: number[];
+    codes: Int32Array;
+    sizes: Int32Array;
+}
+
+function buildOptimalTable(frequencies: Int32Array): OptimalTable {
     const freq = Int32Array.from(frequencies);
     const codesize = new Int32Array(257);
     const others = new Int32Array(257).fill(-1);
@@ -1045,12 +1112,12 @@ function buildOptimalTable(frequencies) {
 }
 
 // libjpeg's jpeg_fdct_float (AAN), output scaled by AAN_SCALE[row] * AAN_SCALE[col] * 8
-function fdct(d) {
+function fdct(d: Float64Array): void {
     for (let p = 0; p < 64; p += 8) fdctPass(d, p, 1);
     for (let p = 0; p < 8; p++) fdctPass(d, p, 8);
 }
 
-function fdctPass(d, o, s) {
+function fdctPass(d: Float64Array, o: number, s: number): void {
     const tmp0 = d[o] + d[o + 7 * s], tmp7 = d[o] - d[o + 7 * s];
     const tmp1 = d[o + s] + d[o + 6 * s], tmp6 = d[o + s] - d[o + 6 * s];
     const tmp2 = d[o + 2 * s] + d[o + 5 * s], tmp5 = d[o + 2 * s] - d[o + 5 * s];
@@ -1083,27 +1150,32 @@ function fdctPass(d, o, s) {
 }
 
 class BitWriter {
-    constructor(capacity) {
+    buffer: Uint8Array;
+    length: number;
+    bits: number;
+    count: number;
+
+    constructor(capacity: number) {
         this.buffer = new Uint8Array(Math.max(1024, capacity));
         this.length = 0;
         this.bits = 0;
         this.count = 0;
     }
 
-    reserve(size) {
+    reserve(size: number): void {
         if (this.length + size <= this.buffer.length) return;
         const buffer = new Uint8Array(Math.max(this.buffer.length * 2, this.length + size));
         buffer.set(this.buffer.subarray(0, this.length));
         this.buffer = buffer;
     }
 
-    bytes(...values) {
+    bytes(...values: number[]): void {
         this.reserve(values.length);
         for (const value of values) this.buffer[this.length++] = value;
     }
 
     // writes `size` bits MSB first, stuffing a zero after every 0xff byte
-    write(value, size) {
+    write(value: number, size: number): void {
         this.bits = this.bits << size | value & (1 << size) - 1;
         this.count += size;
 
@@ -1119,13 +1191,12 @@ class BitWriter {
     }
 
     // pads the last byte with ones
-    flush() {
+    flush(): void {
         if (this.count) this.write((1 << 8 - this.count) - 1, 8 - this.count);
     }
 
-    finish() {
+    finish(): Uint8Array {
         return this.buffer.slice(0, this.length);
     }
 }
 
-module.exports = { encode, decode };
