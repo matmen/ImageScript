@@ -1,12 +1,13 @@
-// checks a GitHub release before it is published to npm, run by .github/workflows/release.yml:
-// the tag matches package.json, the version is valid semver, newer than what npm has and listed in the changelog,
-// prereleases are marked as such. Prints the npm dist-tag to publish under (and writes it to GITHUB_OUTPUT)
+// checks a GitHub release before it is published to npm and JSR, run by .github/workflows/release.yml:
+// the tag matches package.json and jsr.json, the version is valid semver, newer than what npm has, not on JSR yet and
+// listed in the changelog, prereleases are marked as such. Prints the npm dist-tag to publish under (and writes it to GITHUB_OUTPUT)
 // usage: node scripts/release-check.js <tag> [prerelease flag of the GitHub release: true/false]
 const fs = require('fs');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
 const { name, version } = require('../package.json');
+const jsr = require('../jsr.json');
 const [tag = '', prereleaseFlag = 'false'] = process.argv.slice(2);
 
 const errors = [];
@@ -50,6 +51,8 @@ async function main() {
         fail(current.pre.length ? `${version} is a prerelease version, mark the GitHub release as prerelease`
             : `the GitHub release is marked as prerelease, but ${version} has no prerelease suffix (like -beta.1)`);
 
+    if (jsr.version !== version) fail(`jsr.json has version ${jsr.version}, package.json ${version} (npm run build syncs them)`);
+
     const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
     if (!changelog.split('\n').some(line => /^##\s/.test(line) && line.replace(/^##\s+v?/, '').trim().split(/\s/)[0] === version))
         fail(`CHANGELOG.md has no "## ${version}" section`);
@@ -82,6 +85,12 @@ async function main() {
         if (current.pre.length) distTag = /^[a-z]+$/i.test(current.pre[0]) ? current.pre[0].toLowerCase() : 'next';
         else if (latest && compare(current, latest) < 0) distTag = `v${current.major}-latest`;
     }
+
+    // JSR has no dist-tags, its "latest" is the newest stable version
+    const [scope, jsrName] = jsr.name.slice(1).split('/');
+    const jsrRes = await fetch(`https://api.jsr.io/scopes/${scope}/packages/${jsrName}/versions/${encodeURIComponent(version)}`);
+    if (jsrRes.ok) fail(`${jsr.name}@${version} is already published on JSR`);
+    else if (jsrRes.status !== 404) throw new Error(`JSR answered ${jsrRes.status}`);
 
     if (errors.length) {
         for (const e of errors) console.error(`::error::${e}`);

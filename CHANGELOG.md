@@ -6,6 +6,9 @@ ImageScript is now written in TypeScript and has no WebAssembly or native binari
 was rewritten, the npm package shrank from 3 MB to about 120 kB, and it installs and runs on any platform Node.js
 supports (including Alpine/musl and bundled serverless functions).
 
+On JSR, `@matmen/imagescript` is now the same package as on npm (it used to be the Deno-only 1.x with WebAssembly),
+published from the TypeScript sources with every release: `deno add jsr:@matmen/imagescript`.
+
 ### Breaking changes
 
 - **Node.js 22.13 or newer is required.** The package is ES modules only; `require('imagescript')` keeps working
