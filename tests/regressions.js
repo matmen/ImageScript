@@ -457,4 +457,16 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         }
         assert(red > 100 && white > 100, `outlined text should contain both colors (${red} red, ${white} white)`);
     }
+
+    // slice-by-16 crc32 matches zlib for every length around the 16 byte steps and for unaligned views (#12)
+    {
+        const {crc32} = await import('../dist/codecs/crc.js');
+        const data = new Uint8Array(1100).map((_, i) => i * 7919 >> 3);
+        for (const offset of [0, 1, 3])
+            for (let length = 0; length < 70; length++) {
+                const view = data.subarray(offset, offset + length);
+                assert(crc32(view) === zlib.crc32(view), `crc32: wrong for ${length} bytes at offset ${offset}`);
+            }
+        assert(crc32(data) === zlib.crc32(data), 'crc32: wrong for a long buffer');
+    }
 })();
