@@ -7,9 +7,14 @@
 
 ---
 
-**ImageScript** is a zero-dependency alternative to common JavaScript bitmap image manipulation tools. All codecs and
-renderers are written in TypeScript, without WebAssembly, native binaries or npm dependencies. It requires Node.js 22.13
-or newer and works with both `import` and `require()`; type definitions are included.
+**ImageScript** is a zero-dependency alternative to common JavaScript bitmap image manipulation tools. Every codec and
+renderer is written in TypeScript: no WebAssembly, no native binaries, no npm dependencies, no install scripts. The
+package is about 120 kB (compressed) and runs anywhere Node.js 22.13 or newer runs, including Alpine/musl, ARM and bundled
+serverless functions. It works with both `import` and `require()`, type definitions are included.
+
+```sh
+npm install imagescript
+```
 
 ---
 
@@ -18,15 +23,17 @@ or newer and works with both `import` and `require()`; type definitions are incl
 - [Decoding images](https://imagescript.matmen.dev/Image.html#.decode)
   - PNGs (grayscale, RGB, indexed colors, 1-16 bit, interlaced) with and without alpha channels
   - JPEGs (baseline and progressive; grayscale, RGB, CMYK)
-  - TIFFs (strips and tiles; uncompressed, LZW, deflate, PackBits and JPEG compressed)
-- [Decoding GIFs](https://imagescript.matmen.dev/GIF.html#.decode)
+  - TIFFs (strips and tiles; uncompressed, LZW, deflate, PackBits and JPEG compressed; BigTIFF)
+  - JPEGs and TIFFs are rotated as their Exif orientation says
+- [Decoding GIFs](https://imagescript.matmen.dev/GIF.html#.decode) with all frames, durations and disposal modes
 - [Rendering SVGs](https://imagescript.matmen.dev/Image.html#.renderSVG) (shapes, paths, gradients, strokes, clip paths,
   masks, CSS; no text, images or filters)
 - [Rendering vector fonts](https://imagescript.matmen.dev/Image.html#.renderText) (TrueType and OpenType, with kerning and outlines)
 - [Resizing](https://imagescript.matmen.dev/Image.html#resize) (bilinear, bicubic, area averaging and nearest neighbor)
 - Image manipulation functions ([crop](https://imagescript.matmen.dev/Image.html#crop)
   , [rotate](https://imagescript.matmen.dev/Image.html#rotate)
-  , [composite](https://imagescript.matmen.dev/Image.html#composite), ...)
+  , [cropCircle](https://imagescript.matmen.dev/Image.html#cropCircle)
+  , [roundCorners](https://imagescript.matmen.dev/Image.html#roundCorners), ...)
 - Filters and color adjustments ([blur](https://imagescript.matmen.dev/Image.html#blur)
   , [sharpen](https://imagescript.matmen.dev/Image.html#sharpen)
   , [brightness](https://imagescript.matmen.dev/Image.html#brightness)
@@ -34,9 +41,9 @@ or newer and works with both `import` and `require()`; type definitions are incl
 - Compositing with opacity and blend modes ([composite](https://imagescript.matmen.dev/Image.html#composite))
 - Color information functions ([averageColor](https://imagescript.matmen.dev/Image.html#averageColor)
   , [dominantColor](https://imagescript.matmen.dev/Image.html#dominantColor), ...)
-- Encoding images as [PNGs](https://imagescript.matmen.dev/Image.html#encode)
+- Encoding images as [PNGs](https://imagescript.matmen.dev/Image.html#encode) (smallest lossless color type)
   , [JPEGs](https://imagescript.matmen.dev/Image.html#encodejpeg)
-  and [GIFs](https://imagescript.matmen.dev/GIF.html#encode)
+  and animated [GIFs](https://imagescript.matmen.dev/GIF.html#encode)
 
 ---
 
@@ -51,10 +58,18 @@ image.resize(256, Image.RESIZE_AUTO).roundCorners(16);
 await writeFile('output.png', await image.encode());
 ```
 
+With CommonJS:
+
+```js
+const { Image } = require('imagescript');
+```
+
 All coordinates are 0-based, `(0, 0)` is the top left pixel.
 
 A bigger example is the [README image generation](https://github.com/matmen/ImageScript/blob/master/tests/readme.js).
-Upgrading from 1.x? See the [changelog](CHANGELOG.md).
+Upgrading from 1.x? Version 3 has breaking changes (0-based coordinates, removed WebP encoding, Node.js 22.13+, ...),
+see the [changelog](CHANGELOG.md). There is no 2.x release, the number was skipped because of the old experimental
+`imagescript/v2` API.
 
 [![Example](https://github.com/matmen/ImageScript/raw/master/tests/targets/readme.png)](https://github.com/matmen/ImageScript/blob/master/tests/readme.js)
 

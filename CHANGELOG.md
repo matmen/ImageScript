@@ -3,7 +3,7 @@
 ## 3.0.0
 
 ImageScript is now written in TypeScript and has no WebAssembly or native binaries anymore. Every codec and renderer
-was rewritten, the npm package shrank from 3 MB to about 100 kB, and it installs and runs on any platform Node.js
+was rewritten, the npm package shrank from 3 MB to about 120 kB, and it installs and runs on any platform Node.js
 supports (including Alpine/musl and bundled serverless functions).
 
 ### Breaking changes
