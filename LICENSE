@@ -10,3 +10,6 @@ mentioned licenses, but a license must be chosen.
 The corresponding license files can be found in the projects
 root directory, prefixed with LICENSE, suffixed with their
 corresponding SPDX identifier.
+
+Parts of this software are derived from third party projects under their
+own licenses (MIT, Apache-2.0 and the IJG license), see THIRD_PARTY_NOTICES.md.

@@ -76,4 +76,14 @@ see the [changelog](https://github.com/matmen/ImageScript/blob/master/CHANGELOG.
 
 ---
 
+### Credits
+
+The deflate/inflate implementation is derived from [fflate](https://github.com/101arrowz/fflate) and the CRC-32 from
+[Fast CRC32 in JavaScript](https://gist.github.com/101arrowz/e58695f7ccfdf74f60ba22018093edea), both by Arjun Barrett.
+The JPEG codec is based in part on the work of the Independent JPEG Group (libjpeg) and on
+[pdf.js](https://github.com/mozilla/pdf.js), the glyph rasterizer is translated from
+[font-rs](https://github.com/raphlinus/font-rs). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for their licenses.
+
+---
+
 If you have any additional questions, feel free to join the [discord support server](https://discord.gg/8hPrwAH).

@@ -4,6 +4,6 @@
   "license": "(AGPL-3.0-or-later OR MIT)",
   "exports": "./src/index.ts",
   "publish": {
-    "include": ["src", "README.md", "LICENSE", "LICENSE.MIT", "LICENSE.AGPL-3.0"]
+    "include": ["src", "README.md", "LICENSE", "LICENSE.MIT", "LICENSE.AGPL-3.0", "THIRD_PARTY_NOTICES.md", "licenses"]
   }
 }

@@ -1,3 +1,8 @@
+/*!
+ * Slice-by-16 CRC-32, derived from "Fast CRC32 in JavaScript" (https://gist.github.com/101arrowz/e58695f7ccfdf74f60ba22018093edea)
+ * Copyright (c) 2021 Arjun Barrett, MIT License (see THIRD_PARTY_NOTICES.md)
+ */
+
 // slice-by-16 tables: TABLE[k * 256 + n] is the CRC of byte n followed by k zero bytes
 const TABLE = new Int32Array(16 * 256);
 for (let n = 0; n < 256; n++) {
