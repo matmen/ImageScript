@@ -1,6 +1,8 @@
 import { Image, ResizeMode } from './image.ts';
 
+/** Names of the GIF frame disposal modes, see {@link Frame.disposalMode} */
 export type FrameDisposalModeName = 'any' | 'keep' | 'previous' | 'background';
+/** Ids of the GIF frame disposal modes as stored in the file (0 any, 1 keep, 2 previous, 3 background) */
 export type FrameDisposalModeId = 0 | 1 | 2 | 3;
 
 const DISPOSAL_MODES: readonly FrameDisposalModeName[] = ['any', 'keep', 'previous', 'background'];
@@ -14,7 +16,9 @@ export class Frame extends Image {
      * note that browsers play frames shorter than 20 ms with 100 ms
      */
     duration: number;
+    /** The frame's horizontal offset in the GIF */
     xOffset: number;
+    /** The frame's vertical offset in the GIF */
     yOffset: number;
     /** @internal */
     private __disposalMode__: FrameDisposalModeId = 1;
@@ -79,6 +83,7 @@ export class Frame extends Image {
         return this.__disposalMode__;
     }
 
+    /** Sets the disposal mode by name or id (0-3) */
     set disposalMode(disposalMode: FrameDisposalModeName | FrameDisposalModeId) {
         this.__disposalMode__ = Frame.__convert_disposal_mode__(disposalMode);
     }

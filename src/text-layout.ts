@@ -1,13 +1,17 @@
+/** Where lines are wrapped: between words or at any character */
 export type WrapStyle = 'word' | 'char';
+/** Alignment of the lines relative to the widest line */
 export type HorizontalAlign = 'left' | 'center' | 'right';
+/** Which lines to keep when the text is cut off at `maxHeight` */
 export type VerticalAlign = 'top' | 'middle' | 'bottom';
 
+/** Options of {@link TextLayout} */
 export interface TextLayoutOptions {
     /** Longer lines are wrapped. Default: `Infinity` */
     maxWidth?: number;
     /** Lines that don't fit are cut off. Default: `Infinity` */
     maxHeight?: number;
-    /** Default: `'word'` */
+    /** Whether to wrap between words or at any character. Default: `'word'` */
     wrapStyle?: WrapStyle;
     /**
      * Alignment of the lines relative to the widest line. Default: `'left'`
@@ -30,13 +34,20 @@ const VERTICAL: readonly string[] = ['top', 'middle', 'bottom'];
  * Layout options for {@link Image.renderText}
  */
 export class TextLayout {
+    /** Longer lines are wrapped */
     maxWidth: number;
+    /** Lines that don't fit are cut off */
     maxHeight: number;
+    /** Whether to wrap between words or at any character */
     wrapStyle: WrapStyle;
+    /** Alignment of the lines relative to the widest line */
     horizontalAlign: HorizontalAlign = 'left';
+    /** Which lines to keep when cutting off at `maxHeight` */
     verticalAlign: VerticalAlign = 'top';
+    /** Whether to break lines at newline characters */
     wrapHardBreaks: boolean;
 
+    /** @param options See {@link TextLayoutOptions} */
     constructor(options: TextLayoutOptions = {}) {
         const { maxWidth, maxHeight, wrapStyle, verticalAlign, horizontalAlign, wrapHardBreaks } = options;
 
