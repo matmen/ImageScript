@@ -1,0 +1,67 @@
+name: release
+
+# publishing a GitHub release with the tag v<version> publishes that version to npm:
+# the release is checked (tag, semver, changelog, not yet on npm), tested on every supported platform,
+# published with provenance through npm trusted publishing (no token), then the docs are deployed
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      dist-tag: ${{ steps.check.outputs.dist-tag }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24.x
+
+    - id: check
+      run: node scripts/release-check.js "$TAG" "$PRERELEASE"
+      env:
+        TAG: ${{ github.event.release.tag_name }}
+        PRERELEASE: ${{ github.event.release.prerelease }}
+
+  test:
+    needs: check
+    uses: ./.github/workflows/node.yml
+
+  publish:
+    needs: [check, test]
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/imagescript?activeTab=versions
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24.x
+        registry-url: https://registry.npmjs.org
+
+    - run: npm install
+    # prepack builds dist; trusted publishing needs npm 11.5.1 or newer, which node 24 ships
+    - run: npm publish --provenance --access public --tag "$DIST_TAG"
+      env:
+        DIST_TAG: ${{ needs.check.outputs.dist-tag }}
+
+  docs:
+    needs: [check, publish]
+    if: needs.check.outputs.dist-tag == 'latest'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml
