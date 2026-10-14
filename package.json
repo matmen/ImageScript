@@ -24,7 +24,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "docs": "node scripts/docs.js",
     "test": "npm run build && node ./tests/run.js",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "version": "node scripts/build.js && git add src/version.ts"
   },
   "repository": {
     "type": "git",
