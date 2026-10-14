@@ -1,8 +1,9 @@
 name: release
 
-# publishing a GitHub release with the tag v<version> publishes that version to npm:
-# the release is checked (tag, semver, changelog, not yet on npm), tested on every supported platform,
-# published with provenance through npm trusted publishing (no token), then the docs are deployed
+# publishing a GitHub release with the tag v<version> publishes that version to npm and JSR:
+# the release is checked (tag, semver, changelog, jsr.json, not yet on npm/JSR), tested on every supported platform,
+# published to npm with provenance through trusted publishing and to JSR through GitHub OIDC (no tokens),
+# then the docs are deployed
 on:
   release:
     types: [published]
@@ -56,6 +57,23 @@ jobs:
     - run: npm publish --provenance --access public --tag "$DIST_TAG"
       env:
         DIST_TAG: ${{ needs.check.outputs.dist-tag }}
+
+  jsr:
+    needs: publish
+    runs-on: ubuntu-latest
+    environment:
+      name: jsr
+      url: https://jsr.io/@matmen/imagescript/versions
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+    - uses: actions/checkout@v7
+    - uses: denoland/setup-deno@v2
+      with:
+        deno-version: v2.x
+    # publishes the TypeScript sources as they are, JSR authenticates the workflow through the linked repository
+    - run: deno publish
 
   docs:
     needs: [check, publish]

@@ -9,11 +9,12 @@
 
 **ImageScript** is a zero-dependency alternative to common JavaScript bitmap image manipulation tools. Every codec and
 renderer is written in TypeScript: no WebAssembly, no native binaries, no npm dependencies, no install scripts. The
-package is about 120 kB (compressed) and runs anywhere Node.js 22.13 or newer runs, including Alpine/musl, ARM and bundled
-serverless functions. It works with both `import` and `require()`, type definitions are included.
+package is about 120 kB (compressed) and runs in Node.js 22.13 or newer (including Alpine/musl, ARM and bundled
+serverless functions), Deno, Bun and browsers. It works with both `import` and `require()`, type definitions are included.
 
 ```sh
-npm install imagescript
+npm install imagescript              # Node.js, Bun and bundlers
+deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
 ```
 
 ---
