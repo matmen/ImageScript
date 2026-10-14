@@ -1,14 +1,21 @@
 name: node
 
+# tests every pushed branch, and pull requests from forks (pull requests from branches of this repository are
+# already tested by their push); release.yml runs it before publishing
 on:
   push:
-    branches: [dev, master]
+    branches: ['**']
   pull_request:
-    branches: [dev, master]
   workflow_call:
+
+# a newer push to the same branch cancels the tests of the previous one
+concurrency:
+  group: node-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
 
 jobs:
   build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ${{ matrix.os }}
     name: node ${{ matrix.version }} | ${{ matrix.os }}
 
