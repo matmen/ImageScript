@@ -11,23 +11,23 @@ import { VERSION } from './version.ts';
 import { resample, BOX, TRIANGLE, CUBIC } from './util/resample.ts';
 import { gaussianBlur, premultiply, unpremultiply } from './util/blur.ts';
 
-/**
- * Represents an image; provides utility functions
- */
 /** A color as a 32-bit RGBA integer (`0xRRGGBBAA`) */
 export type Color = number;
 
 /** Called with a pixel's (0-based) coordinates, returns its color */
 export type ColorFunction = (x: number, y: number) => Color;
 
+/** Resampling filters for {@link Image.resize} and the other scaling functions, see {@link Image.RESIZE_BILINEAR} etc. */
 export type ResizeMode = 'RESIZE_NEAREST_NEIGHBOR' | 'RESIZE_BILINEAR' | 'RESIZE_BICUBIC' | 'RESIZE_AREA';
 
+/** How {@link Image.renderSVG} scales: {@link Image.SVG_MODE_SCALE}, {@link Image.SVG_MODE_WIDTH} or {@link Image.SVG_MODE_HEIGHT} */
 export type SVGScaleMode = 1 | 2 | 3;
 
 /** Blend modes of {@link Image.composite}, named like CSS' mix-blend-mode values */
 export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'color-dodge' | 'color-burn'
     | 'hard-light' | 'soft-light' | 'difference' | 'exclusion' | 'add';
 
+/** Options of {@link Image.composite} */
 export interface CompositeOptions {
     /** Opacity of the source (0..1). Default: `1` */
     opacity?: number;
@@ -35,11 +35,13 @@ export interface CompositeOptions {
     mode?: BlendMode;
 }
 
+/** Options of {@link Image.decode} */
 export interface DecodeOptions {
     /** Whether to rotate/mirror JPEGs and TIFFs as their orientation tag (Exif) says. Default: `true` */
     applyOrientation?: boolean;
 }
 
+/** Text style options of {@link Image.renderText} */
 export interface TextStyle {
     /** Width of an outline around the glyphs in pixels. Default: `0` */
     strokeWidth?: number;
@@ -47,6 +49,7 @@ export interface TextStyle {
     strokeColor?: Color;
 }
 
+/** Options of {@link Image.cropCircle} */
 export interface CropCircleOptions {
     /** Whether to use the larger dimension for the size. Default: `false` */
     max?: boolean;
@@ -54,6 +57,7 @@ export interface CropCircleOptions {
     feathering?: number;
 }
 
+/** Options of {@link Image.dominantColor} */
 export interface DominantColorOptions {
     /** Whether to ignore dark colors (all channels below the threshold). Default: `true` */
     ignoreBlack?: boolean;
@@ -63,24 +67,40 @@ export interface DominantColorOptions {
     threshold?: number;
 }
 
+/** Options of {@link Image.rotate} */
 export interface RotateOptions {
     /** Whether to resize the image so it fits all pixels or just ignore outlying pixels. Default: `true` */
     resize?: boolean;
 }
 
+/** Text metadata written into PNGs by {@link Image.encode} */
 export interface PNGMetadata {
+    /** The image's title */
     title?: string;
+    /** The image's author */
     author?: string;
+    /** The image's description */
     description?: string;
+    /** The image's copyright info */
     copyright?: string;
+    /** The image's creation time. Default: now */
     creationTime?: string | number | Date;
+    /** The software used to create the image. Default: `'github.com/matmen/ImageScript vX.X.X'`, `''` leaves it out */
     software?: string;
+    /** A disclaimer for the image */
     disclaimer?: string;
+    /** A warning for the image */
     warning?: string;
+    /** The image's source */
     source?: string;
+    /** A comment for the image */
     comment?: string;
 }
 
+/**
+ * An RGBA image; provides the codecs and the manipulation functions. Methods that change the image modify it in place
+ * and return it, so calls can be chained
+ */
 export class Image {
     /** @internal */
     protected __width__: number;
@@ -120,6 +140,7 @@ export class Image {
         return this.__bitmap__;
     }
 
+    /** Replaces the pixel data, the array has to hold width * height * 4 bytes */
     set bitmap(bitmap: Uint8ClampedArray | Uint8Array) {
         if (!(bitmap instanceof Uint8ClampedArray || bitmap instanceof Uint8Array))
             throw new TypeError('The bitmap has to be a Uint8ClampedArray or Uint8Array');
@@ -722,10 +743,14 @@ export class Image {
 
     /**
      * Crops the image into a circle with an antialiased edge
-     * @param [max=false] Whether to use the larger dimension for the size (or the options)
-     * @param [feathering=0] Share of the radius (0..1) over which the edge fades out
+     * @param options See {@link CropCircleOptions}
      */
     cropCircle(options?: CropCircleOptions): this;
+    /**
+     * Crops the image into a circle with an antialiased edge
+     * @param max Whether to use the larger dimension for the size. Default: `false`
+     * @param feathering Share of the radius (0..1) over which the edge fades out. Default: `0`
+     */
     cropCircle(max?: boolean, feathering?: number): this;
     cropCircle(maxOrOptions: boolean | CropCircleOptions = false, featheringArgument = 0): this {
         const { max = false, feathering = 0 } = typeof maxOrOptions === 'object' && maxOrOptions !== null
@@ -849,10 +874,10 @@ export class Image {
      * @param source The image to place
      * @param [x=0] The x position to place the image at
      * @param [y=0] The y position to place the image at
-     * @param [options.opacity=1] Opacity of the source (0..1)
-     * @param [options.mode='normal'] How the colors are mixed, like CSS' mix-blend-mode
+     * @param options Opacity and blend mode, see {@link CompositeOptions}
      */
-    composite(source: Image, x = 0, y = 0, { opacity = 1, mode = 'normal' }: CompositeOptions = {}): this {
+    composite(source: Image, x = 0, y = 0, options: CompositeOptions = {}): this {
+        const { opacity = 1, mode = 'normal' } = options;
         x |= 0;
         y |= 0;
 
@@ -1180,15 +1205,20 @@ export class Image {
     }
 
     /**
-     * Gets the images dominant color: the colors are grouped into a few clusters (median cut and k-means),
+     * Gets the image's dominant color: the colors are grouped into a few clusters (median cut and k-means),
      * the average color of the largest one is returned
-     * @param [ignoreBlack=true] Whether to ignore dark colors (all channels below the threshold), or the options
-     * @param [ignoreWhite=true] Whether to ignore light colors (all channels above 255 minus the threshold)
-     * @param [bwThreshold=0xf] The black/white threshold (0-64, in steps of 4 channel values)
-     * @return The images dominant color (fully opaque); mostly transparent pixels are ignored.
+     * @param options Which colors to ignore, see {@link DominantColorOptions}
+     * @return The image's dominant color (fully opaque); mostly transparent pixels are ignored.
      *     If every pixel is ignored as black or white, the filter is dropped
      */
     dominantColor(options?: DominantColorOptions): Color;
+    /**
+     * Gets the image's dominant color, see {@link Image.dominantColor | the variant with options}
+     * @param ignoreBlack Whether to ignore dark colors (all channels below the threshold). Default: `true`
+     * @param ignoreWhite Whether to ignore light colors (all channels above 255 minus the threshold). Default: `true`
+     * @param bwThreshold The black/white threshold (0-64, in steps of 4 channel values). Default: `15`
+     * @return The image's dominant color (fully opaque)
+     */
     dominantColor(ignoreBlack?: boolean, ignoreWhite?: boolean, bwThreshold?: number): Color;
     dominantColor(ignoreBlackOrOptions: boolean | DominantColorOptions = true, ignoreWhiteArgument = true, thresholdArgument = 0xf): Color {
         const { ignoreBlack = true, ignoreWhite = true, threshold: bwThreshold = 0xf } = typeof ignoreBlackOrOptions === 'object' && ignoreBlackOrOptions !== null
@@ -1206,9 +1236,14 @@ export class Image {
     /**
      * Rotates the image counterclockwise by the given amount of degrees
      * @param angle The angle to rotate the image for (in degrees)
-     * @param [resize=true] Whether to resize the image so it fits all pixels or just ignore outlying pixels (or the options)
+     * @param options See {@link RotateOptions}
      */
     rotate(angle: number, options?: RotateOptions): this;
+    /**
+     * Rotates the image counterclockwise by the given amount of degrees
+     * @param angle The angle to rotate the image for (in degrees)
+     * @param resize Whether to resize the image so it fits all pixels or just ignore outlying pixels. Default: `true`
+     */
     rotate(angle: number, resize?: boolean): this;
     rotate(angle: number, resizeOrOptions: boolean | RotateOptions = true): this {
         const { resize = true } = typeof resizeOrOptions === 'object' && resizeOrOptions !== null ? resizeOrOptions : { resize: resizeOrOptions };
@@ -1474,31 +1509,24 @@ export class Image {
         return this.__apply__(r);
     }
 
-    /**
-     * @typedef {object} PNGMetadata
-     * @property [title] The images title
-     * @property [author] The images author
-     * @property [description] The images description
-     * @property [copyright] The images copyright info
-     * @property [creationTime=Date.now()] The images creation timestamp
-     * @property [software="github.com/matmen/ImageScript vX.X.X"] The software used to create this image
-     * @property [disclaimer] A disclaimer for the image
-     * @property [warning] A warning for the image
-     * @property [source] The images source
-     * @property [comment] A comment for the image
-     */
 
     /**
-     * Encodes the image into a PNG
-     * @param [compression=1] The compression level (0-9), or the metadata. Uses the runtime's native zlib when available
-     * @param [meta={}] Image metadata
+     * Encodes the image into a PNG, with the smallest lossless color type (a palette for up to 256 colors,
+     * greyscale or RGB, alpha only if needed). Uses the runtime's native zlib when available
+     * @param compression The compression level (0-9). Default: `1`
+     * @param metadata Text metadata to include
      * @return The encoded data
      */
     encode(compression?: number, metadata?: PNGMetadata): Promise<Uint8Array>;
+    /**
+     * Encodes the image into a PNG with compression level 1
+     * @param metadata Text metadata to include
+     * @return The encoded data
+     */
     encode(metadata?: PNGMetadata): Promise<Uint8Array>;
-    async encode(compression: number | PNGMetadata = 1, meta: PNGMetadata = {}): Promise<Uint8Array> {
+    async encode(compression: number | PNGMetadata = 1, metadata: PNGMetadata = {}): Promise<Uint8Array> {
         if (typeof compression === 'object' && compression !== null) {
-            meta = compression;
+            metadata = compression;
             compression = 1;
         }
 
@@ -1514,7 +1542,7 @@ export class Image {
         warning,
         source,
         comment
-    } = meta || {};
+    } = metadata || {};
 
         return png.encodeRGBA(this.__bytes__(), this.width, this.height, level, {
             Title: title,
@@ -1549,12 +1577,13 @@ export class Image {
 
     /**
      * Decodes an image (PNG, JPEG or TIFF)
-     * @param data The binary data to decode
-     * @param [options.applyOrientation=true] Whether to rotate/mirror JPEGs and TIFFs as their orientation tag (Exif) says,
-     *     like browsers do: photos taken with a rotated camera are stored sideways and only displayed upright
+     * @param input The binary data to decode
+     * @param options See {@link DecodeOptions}. JPEGs and TIFFs are rotated/mirrored as their orientation tag (Exif)
+     *     says by default, like browsers do: photos taken with a rotated camera are stored sideways
      * @return The decoded image
      */
-    static async decode(input: BinaryData, { applyOrientation = true }: DecodeOptions = {}): Promise<Image> {
+    static async decode(input: BinaryData, options: DecodeOptions = {}): Promise<Image> {
+        const { applyOrientation = true } = options;
         const data = view(input);
         const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
@@ -1655,11 +1684,11 @@ export class Image {
      * @param text Text to render
      * @param [color=0xffffffff] Text color to use
      * @param [layout] The text layout to use
-     * @param [style.strokeWidth=0] Width of an outline around the glyphs in pixels; the image grows by it on every side
-     * @param [style.strokeColor=0x000000ff] Color of the outline
+     * @param style Outline, see {@link TextStyle}; the image grows by the outline width on every side
      * @return The rendered text
      */
-    static async renderText(font: BinaryData, size: number, text: string, color: Color = 0xffffffff, layout: TextLayout = new TextLayout(), { strokeWidth = 0, strokeColor = 0x000000ff }: TextStyle = {}): Promise<Image> {
+    static async renderText(font: BinaryData, size: number, text: string, color: Color = 0xffffffff, layout: TextLayout = new TextLayout(), style: TextStyle = {}): Promise<Image> {
+        const { strokeWidth = 0, strokeColor = 0x000000ff } = style;
         if (isNaN(strokeWidth) || strokeWidth < 0)
             throw new RangeError('Invalid stroke width');
 

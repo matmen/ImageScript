@@ -1,0 +1,30 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": [
+    "src/index.ts"
+  ],
+  "out": "docs",
+  "name": "ImageScript",
+  "readme": "README.md",
+  "includeVersion": true,
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "sort": [
+    "kind",
+    "alphabetical"
+  ],
+  "githubPages": true,
+  "hostedBaseUrl": "https://imagescript.matmen.dev/",
+  "gitRevision": "master",
+  "navigationLinks": {
+    "GitHub": "https://github.com/matmen/ImageScript",
+    "Changelog": "https://github.com/matmen/ImageScript/blob/master/CHANGELOG.md",
+    "Discord": "https://discord.gg/8hPrwAH"
+  },
+  "validation": {
+    "notExported": true,
+    "invalidLink": true,
+    "notDocumented": true
+  },
+  "excludeExternals": true
+}

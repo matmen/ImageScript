@@ -20,30 +20,30 @@ npm install imagescript
 
 ### Features
 
-- [Decoding images](https://imagescript.matmen.dev/Image.html#.decode)
+- [Decoding images](https://imagescript.matmen.dev/classes/Image.html#decode)
   - PNGs (grayscale, RGB, indexed colors, 1-16 bit, interlaced) with and without alpha channels
   - JPEGs (baseline and progressive; grayscale, RGB, CMYK)
   - TIFFs (strips and tiles; uncompressed, LZW, deflate, PackBits and JPEG compressed; BigTIFF)
   - JPEGs and TIFFs are rotated as their Exif orientation says
-- [Decoding GIFs](https://imagescript.matmen.dev/GIF.html#.decode) with all frames, durations and disposal modes
-- [Rendering SVGs](https://imagescript.matmen.dev/Image.html#.renderSVG) (shapes, paths, gradients, strokes, clip paths,
+- [Decoding GIFs](https://imagescript.matmen.dev/classes/GIF.html#decode) with all frames, durations and disposal modes
+- [Rendering SVGs](https://imagescript.matmen.dev/classes/Image.html#rendersvg) (shapes, paths, gradients, strokes, clip paths,
   masks, CSS; no text, images or filters)
-- [Rendering vector fonts](https://imagescript.matmen.dev/Image.html#.renderText) (TrueType and OpenType, with kerning and outlines)
-- [Resizing](https://imagescript.matmen.dev/Image.html#resize) (bilinear, bicubic, area averaging and nearest neighbor)
-- Image manipulation functions ([crop](https://imagescript.matmen.dev/Image.html#crop)
-  , [rotate](https://imagescript.matmen.dev/Image.html#rotate)
-  , [cropCircle](https://imagescript.matmen.dev/Image.html#cropCircle)
-  , [roundCorners](https://imagescript.matmen.dev/Image.html#roundCorners), ...)
-- Filters and color adjustments ([blur](https://imagescript.matmen.dev/Image.html#blur)
-  , [sharpen](https://imagescript.matmen.dev/Image.html#sharpen)
-  , [brightness](https://imagescript.matmen.dev/Image.html#brightness)
-  , [hueShift](https://imagescript.matmen.dev/Image.html#hueShift), ...)
-- Compositing with opacity and blend modes ([composite](https://imagescript.matmen.dev/Image.html#composite))
-- Color information functions ([averageColor](https://imagescript.matmen.dev/Image.html#averageColor)
-  , [dominantColor](https://imagescript.matmen.dev/Image.html#dominantColor), ...)
-- Encoding images as [PNGs](https://imagescript.matmen.dev/Image.html#encode) (smallest lossless color type)
-  , [JPEGs](https://imagescript.matmen.dev/Image.html#encodejpeg)
-  and animated [GIFs](https://imagescript.matmen.dev/GIF.html#encode)
+- [Rendering vector fonts](https://imagescript.matmen.dev/classes/Image.html#rendertext) (TrueType and OpenType, with kerning and outlines)
+- [Resizing](https://imagescript.matmen.dev/classes/Image.html#resize) (bilinear, bicubic, area averaging and nearest neighbor)
+- Image manipulation functions ([crop](https://imagescript.matmen.dev/classes/Image.html#crop)
+  , [rotate](https://imagescript.matmen.dev/classes/Image.html#rotate)
+  , [cropCircle](https://imagescript.matmen.dev/classes/Image.html#cropcircle)
+  , [roundCorners](https://imagescript.matmen.dev/classes/Image.html#roundcorners), ...)
+- Filters and color adjustments ([blur](https://imagescript.matmen.dev/classes/Image.html#blur)
+  , [sharpen](https://imagescript.matmen.dev/classes/Image.html#sharpen)
+  , [brightness](https://imagescript.matmen.dev/classes/Image.html#brightness)
+  , [hueShift](https://imagescript.matmen.dev/classes/Image.html#hueshift), ...)
+- Compositing with opacity and blend modes ([composite](https://imagescript.matmen.dev/classes/Image.html#composite))
+- Color information functions ([averageColor](https://imagescript.matmen.dev/classes/Image.html#averagecolor)
+  , [dominantColor](https://imagescript.matmen.dev/classes/Image.html#dominantcolor), ...)
+- Encoding images as [PNGs](https://imagescript.matmen.dev/classes/Image.html#encode) (smallest lossless color type)
+  , [JPEGs](https://imagescript.matmen.dev/classes/Image.html#encodejpeg)
+  and animated [GIFs](https://imagescript.matmen.dev/classes/GIF.html#encode)
 
 ---
 
@@ -68,7 +68,7 @@ All coordinates are 0-based, `(0, 0)` is the top left pixel.
 
 A bigger example is the [README image generation](https://github.com/matmen/ImageScript/blob/master/tests/readme.js).
 Upgrading from 1.x? Version 3 has breaking changes (0-based coordinates, removed WebP encoding, Node.js 22.13+, ...),
-see the [changelog](CHANGELOG.md). There is no 2.x release, the number was skipped because of the old experimental
+see the [changelog](https://github.com/matmen/ImageScript/blob/master/CHANGELOG.md). There is no 2.x release, the number was skipped because of the old experimental
 `imagescript/v2` API.
 
 [![Example](https://github.com/matmen/ImageScript/raw/master/tests/targets/readme.png)](https://github.com/matmen/ImageScript/blob/master/tests/readme.js)

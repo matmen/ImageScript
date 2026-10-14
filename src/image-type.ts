@@ -1,5 +1,6 @@
 import { BinaryData, view as bytes } from './util/mem.ts';
 
+/** Image formats recognized by {@link ImageType.getType} */
 export type ImageTypeName = 'png' | 'jpeg' | 'tiff' | 'gif';
 
 const MAGIC_NUMBERS = {
@@ -19,6 +20,7 @@ function dataView(data: BinaryData): DataView {
     return new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
 }
 
+/** Detects image formats by their magic numbers */
 export class ImageType {
     /**
      * Gets an image's type from its magic number
@@ -35,16 +37,19 @@ export class ImageType {
         return null;
     }
 
+    /** Whether the data starts like a PNG */
     static isPNG(data: BinaryData): boolean {
         const view = dataView(data);
         return view.byteLength >= 4 && view.getUint32(0, false) === MAGIC_NUMBERS.PNG;
     }
 
+    /** Whether the data starts like a JPEG */
     static isJPEG(data: BinaryData): boolean {
         const view = dataView(data);
         return view.byteLength >= 4 && (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.JPEG;
     }
 
+    /** Whether the data starts like a TIFF (or BigTIFF) */
     static isTIFF(data: BinaryData): boolean {
         const view = dataView(data);
         if (view.byteLength < 4) return false;
@@ -52,6 +57,7 @@ export class ImageType {
         return magic === MAGIC_NUMBERS.TIFF_LE || magic === MAGIC_NUMBERS.TIFF_BE || magic === MAGIC_NUMBERS.BIGTIFF_LE || magic === MAGIC_NUMBERS.BIGTIFF_BE;
     }
 
+    /** Whether the data starts like a GIF */
     static isGIF(data: BinaryData): boolean {
         const view = dataView(data);
         return view.byteLength >= 4 && (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.GIF;
