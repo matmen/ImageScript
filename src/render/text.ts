@@ -1,3 +1,8 @@
+/*!
+ * The Rasterizer class is translated from font-rs (https://github.com/raphlinus/font-rs)
+ * Copyright 2015 Google Inc., Apache License 2.0 (see THIRD_PARTY_NOTICES.md and licenses/Apache-2.0.txt)
+ */
+
 import { Font, PathCommand } from './font.ts';
 
 export interface Layout {
@@ -286,8 +291,8 @@ export function rasterizeGlyph(path: PathCommand[], scale: number, offset = 0): 
 }
 
 /**
- * Signed area coverage rasterizer (the font-rs algorithm): every line segment adds its
- * area to an accumulation buffer, a prefix sum over each row yields the coverage
+ * Signed area coverage rasterizer: every line segment adds its area to an accumulation buffer,
+ * a prefix sum over each row yields the coverage
  */
 export class Rasterizer {
     width: number;

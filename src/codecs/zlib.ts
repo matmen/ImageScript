@@ -1,18 +1,7 @@
-// zlib deflate/inflate, derived from fflate (https://github.com/101arrowz/fflate)
-
-// MIT License
-
-// Copyright (c) 2020 Arjun Barrett
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
+/*!
+ * zlib deflate/inflate, derived from fflate (https://github.com/101arrowz/fflate)
+ * Copyright (c) 2020 Arjun Barrett, MIT License (see THIRD_PARTY_NOTICES.md)
+ */
 
 const u8 = Uint8Array, u16 = Uint16Array, u32 = Uint32Array;
 

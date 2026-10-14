@@ -16,6 +16,8 @@
     "LICENSE",
     "LICENSE.MIT",
     "LICENSE.AGPL-3.0",
+    "THIRD_PARTY_NOTICES.md",
+    "licenses",
     "README.md"
   ],
   "sideEffects": false,

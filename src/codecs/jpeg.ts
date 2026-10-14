@@ -1,3 +1,10 @@
+/*!
+ * JPEG codec. This software is based in part on the work of the Independent JPEG Group: the IDCT, FDCT, upsampling,
+ * color conversion, progressive refinement and optimal Huffman tables are translated from libjpeg/libjpeg-turbo
+ * (IJG license, see licenses/README.ijg). The scan decoder follows the structure of pdf.js' jpg.js
+ * (Copyright 2014 Mozilla Foundation, Apache License 2.0). See THIRD_PARTY_NOTICES.md
+ */
+
 import { orientation as exifOrientation } from './exif.ts';
 
 // natural order index of the n-th zigzag coefficient
