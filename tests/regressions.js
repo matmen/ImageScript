@@ -458,6 +458,42 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         assert(red > 100 && white > 100, `outlined text should contain both colors (${red} red, ${white} white)`);
     }
 
+    // PNGs are oriented by their eXIf chunk, ImageMagick's Exif text or XMP, in that order
+    {
+        const chunk = (type, body) => {
+            const out = Buffer.alloc(12 + body.length);
+            out.writeUInt32BE(body.length);
+            out.write(type, 4, 'latin1');
+            body.copy(out, 8);
+            out.writeUInt32BE(zlib.crc32(out.subarray(4, 8 + body.length)), 8 + body.length);
+            return out;
+        };
+        const tiff = orientation => Buffer.from([0x4d, 0x4d, 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, orientation, 0, 0, 0, 0, 0, 0, 0, 0]);
+        const xmp = orientation => `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:tiff="http://ns.adobe.com/tiff/1.0/"><tiff:Orientation>${orientation}</tiff:Orientation></rdf:Description></rdf:RDF></x:xmpmeta>`;
+        const chunks = {
+            exif: o => chunk('eXIf', tiff(o)),
+            raw: o => {
+                const data = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff(o)]);
+                return chunk('tEXt', Buffer.from(`Raw profile type exif\0\nexif\n${String(data.length).padStart(8)}\n${data.toString('hex').replace(/.{1,72}/g, '$&\n')}`, 'latin1'));
+            },
+            xmp: o => chunk('iTXt', Buffer.concat([Buffer.from('XML:com.adobe.xmp\0\x01\0\0\0', 'latin1'), zlib.deflateSync(xmp(o))])),
+        };
+
+        const source = new Image(3, 2).fill((x, y) => Image.rgbaToColor(x * 100, y * 100, 0, 255));
+        const encoded = Buffer.from(await source.encode());
+        const withChunks = (...extra) => Buffer.concat([encoded.subarray(0, encoded.length - 12), ...extra, encoded.subarray(encoded.length - 12)]);
+
+        for (const [name, make] of Object.entries(chunks)) {
+            const image = await Image.decode(withChunks(make(6)));
+            assert(image.width === 2 && image.height === 3, `PNG ${name} orientation: not rotated`);
+            assert(rgba(image, 1, 0).slice(0, 2).join() === '0,0', `PNG ${name} orientation: top left should end up top right`);
+            const stored = await Image.decode(withChunks(make(6)), {applyOrientation: false});
+            assert(stored.width === 3, `PNG ${name} orientation: applyOrientation false should keep the stored pixels`);
+        }
+        const both = await Image.decode(withChunks(chunks.xmp(6), chunks.exif(3)));
+        assert(both.width === 3 && rgba(both, 2, 1).slice(0, 2).join() === '0,0', 'PNG orientation: eXIf should win over XMP');
+    }
+
     // slice-by-16 crc32 matches zlib for every length around the 16 byte steps and for unaligned views (#12)
     {
         const {crc32} = await import('../dist/codecs/crc.js');

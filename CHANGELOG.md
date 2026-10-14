@@ -38,8 +38,9 @@ supports (including Alpine/musl and bundled serverless functions).
   greyscale or RGB, with an alpha channel only if needed. Rows of non-palette images are paeth filtered, which makes
   photos about 25% and gradients up to 95% smaller. Compression uses the runtime's native zlib when available
   (node:zlib), which is several times faster than the JS fallback.
-- **JPEGs and TIFFs are rotated/mirrored as their orientation tag (Exif) says**, like browsers display them. Photos
-  taken with a rotated camera used to come out sideways. `Image.decode(data, {applyOrientation: false})` keeps the
+- **JPEGs, TIFFs and PNGs are rotated/mirrored as their orientation tag says**, like browsers display them. Photos
+  taken with a rotated camera used to come out sideways. PNGs take it from the eXIf chunk, or without one from
+  ImageMagick's Exif text or the XMP packet (which browsers ignore). `Image.decode(data, {applyOrientation: false})` keeps the
   stored pixels.
 - **`rgbaToColor()` / `rgbToColor()` round and clamp the components** to 0..255. Out of range values used to wrap
   around (256 became 0) and fractions were truncated.

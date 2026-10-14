@@ -1,3 +1,4 @@
+import { orientation as exifOrientation } from './exif.ts';
 
 // natural order index of the n-th zigzag coefficient
 const ZIGZAG = Int32Array.of(
@@ -214,34 +215,6 @@ export function decode(data: Uint8Array, { transform }: DecodeOptions = {}): { w
 
     if (!frame) throw new Error('JPEG: missing frame header');
     return { width: frame.width, height: frame.height, pixels: output(frame, adobe, jfif, transform), orientation };
-}
-
-/**
- * Reads the orientation tag (0x0112) from the first IFD of an Exif block
- * @return the orientation (1-8), 1 if it is missing or invalid
- */
-function exifOrientation(block: Uint8Array): number {
-    // "Exif\0\0", then a TIFF header
-    if (block.length < 14 || block[0] !== 0x45 || block[1] !== 0x78 || block[2] !== 0x69 || block[3] !== 0x66 || block[4] !== 0 || block[5] !== 0) return 1;
-
-    const tiff = new DataView(block.buffer, block.byteOffset + 6, block.byteLength - 6);
-    const little = tiff.getUint16(0) === 0x4949;
-    if (!little && tiff.getUint16(0) !== 0x4d4d) return 1;
-
-    const ifd = tiff.getUint32(4, little);
-    if (ifd + 2 > tiff.byteLength) return 1;
-
-    for (let i = 0, count = tiff.getUint16(ifd, little); i < count; i++) {
-        const entry = ifd + 2 + i * 12;
-        if (entry + 12 > tiff.byteLength) break;
-        if (tiff.getUint16(entry, little) !== 0x0112) continue;
-
-        // a SHORT, stored in the first two bytes of the value field
-        const value = tiff.getUint16(entry + 8, little);
-        return value >= 1 && value <= 8 ? value : 1;
-    }
-
-    return 1;
 }
 
 function createFrame(progressive: boolean, height: number, width: number, componentData: Uint8Array): Frame {
