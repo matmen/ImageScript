@@ -60,20 +60,10 @@ jobs:
 
   jsr:
     needs: publish
-    runs-on: ubuntu-latest
-    environment:
-      name: jsr
-      url: https://jsr.io/@matmen/imagescript/versions
     permissions:
       contents: read
       id-token: write
-    steps:
-    - uses: actions/checkout@v7
-    - uses: denoland/setup-deno@v2
-      with:
-        deno-version: v2.x
-    # publishes the TypeScript sources as they are, JSR authenticates the workflow through the linked repository
-    - run: deno publish
+    uses: ./.github/workflows/jsr.yml
 
   docs:
     needs: [check, publish]

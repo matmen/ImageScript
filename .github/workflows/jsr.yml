@@ -1,0 +1,24 @@
+name: jsr
+
+# publishes the TypeScript sources to JSR (@matmen/imagescript), authenticated through GitHub OIDC (the package is
+# linked to this repository on jsr.io). release.yml runs it after npm; can also be run by hand from the Actions tab
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: jsr
+      url: https://jsr.io/@matmen/imagescript/versions
+    steps:
+    - uses: actions/checkout@v7
+    - uses: denoland/setup-deno@v2
+      with:
+        deno-version: v2.x
+    - run: deno publish
