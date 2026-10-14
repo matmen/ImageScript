@@ -1,6 +1,7 @@
 import { crc32 } from './crc.ts';
 import { concat } from '../util/mem.ts';
-import { encode as utf8 } from '../util/utf8.ts';
+import { encode as utf8, decode as utf8Decode } from '../util/utf8.ts';
+import { orientation as exifOrientation, xmpOrientation } from './exif.ts';
 import { compressAsync, decompressAsync } from './zlib.ts';
 
 const HEAD = Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10);
@@ -9,6 +10,10 @@ const PLTE = 0x504c5445;
 const tRNS = 0x74524e53;
 const IDAT = 0x49444154;
 const IEND = 0x49454e44;
+const eXIf = 0x65584966;
+const tEXt = 0x74455874;
+const zTXt = 0x7a545874;
+const iTXt = 0x69545874;
 
 const COLOR_TYPE_CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
 const CHANNELS_TO_COLOR_TYPE: Record<number, number> = { 1: 0, 2: 4, 3: 2, 4: 6 };
@@ -35,6 +40,8 @@ export interface Decoded {
     height: number;
     /** 8-bit RGBA */
     pixels: Uint8Array;
+    /** Exif orientation (1-8) */
+    orientation: number;
 }
 
 // where the pixels of an (interlacing) pass go: output offset of the pass' row y, and the step between its pixels
@@ -207,8 +214,10 @@ export async function encodeRGBA(rgba: Uint8Array, width: number, height: number
 /**
  * Decodes a PNG into 8-bit RGBA pixel data
  * Supports all color types, bit depths, tRNS transparency and adam7 interlacing
+ * The orientation comes from the eXIf chunk, or, if there is none, from the Exif text ImageMagick wrote before eXIf
+ * existed ("Raw profile type exif") or from the XMP packet
  * @param {Uint8Array} array The PNG data
- * @return {{width: number, height: number, pixels: Uint8Array}}
+ * @return {{width: number, height: number, pixels: Uint8Array, orientation: number}}
  */
 export async function decode(array: Uint8Array): Promise<Decoded> {
     const view = new DataView(array.buffer, array.byteOffset, array.byteLength);
@@ -220,6 +229,8 @@ export async function decode(array: Uint8Array): Promise<Decoded> {
     let palette: Uint8Array | null = null;
     let transparency: Uint8Array | null = null;
     const idat: Uint8Array[] = [];
+    let exif: Uint8Array | null = null;
+    const text: Array<{ type: number, chunk: Uint8Array }> = [];
 
     let offset = 8;
     while (offset + 8 <= array.length) {
@@ -255,6 +266,8 @@ export async function decode(array: Uint8Array): Promise<Decoded> {
             if (transparency) throw new Error('PNG: tRNS can only occur once in an image');
             transparency = chunk;
         } else if (type === IDAT) idat.push(chunk);
+        else if (type === eXIf) exif ??= chunk;
+        else if (type === tEXt || type === zTXt || type === iTXt) text.push({ type, chunk });
         else if (type === IEND) break;
 
         offset = end + 4;
@@ -298,7 +311,55 @@ export async function decode(array: Uint8Array): Promise<Decoded> {
         toRGBA(pixels, rowBytes, pw, ph, rgba, { row: y => ((ys + y * dy) * width + xs) * 4, step: dx * 4 });
     }
 
-    return { width, height, pixels: rgba };
+    return { width, height, pixels: rgba, orientation: exif ? exifOrientation(exif) : await textOrientation(text) };
+}
+
+const RAW_EXIF = /^Raw profile type (exif|APP1)$/;
+const XMP = 'XML:com.adobe.xmp';
+
+/**
+ * Finds the orientation in Exif or XMP text chunks
+ */
+async function textOrientation(chunks: Array<{ type: number, chunk: Uint8Array }>): Promise<number> {
+    for (const { type, chunk } of chunks) {
+        const separator = chunk.indexOf(0);
+        if (separator < 1) continue;
+        const keyword = utf8Decode(chunk.subarray(0, separator));
+        if (!RAW_EXIF.test(keyword) && keyword !== XMP) continue;
+
+        let body: Uint8Array;
+        try {
+            if (type === tEXt) body = chunk.subarray(separator + 1);
+            else if (type === zTXt) body = await decompressAsync(chunk.subarray(separator + 2), 1 << 20);
+            else {
+                // compression flag and method, then language and translated keyword (both null terminated)
+                const language = chunk.indexOf(0, separator + 3);
+                const translated = language < 0 ? -1 : chunk.indexOf(0, language + 1);
+                if (translated < 0) continue;
+                body = chunk[separator + 1] ? await decompressAsync(chunk.subarray(translated + 1), 1 << 20) : chunk.subarray(translated + 1);
+            }
+        } catch {
+            continue;
+        }
+
+        const value = utf8Decode(body);
+        const orientation = keyword === XMP ? xmpOrientation(value) : exifOrientation(hexProfile(value));
+        if (orientation !== 1) return orientation;
+    }
+
+    return 1;
+}
+
+/**
+ * Parses ImageMagick's hex encoded profiles: "\n<name>\n<length>\n<hex digits in lines>"
+ */
+function hexProfile(text: string): Uint8Array {
+    const match = /^\s*\S+\s+(\d+)\s+([\da-fA-F\s]+)/.exec(text);
+    if (!match) return new Uint8Array(0);
+    const digits = match[2].replace(/\s+/g, '');
+    const out = new Uint8Array(Math.min(+match[1], digits.length >> 1));
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(digits.substr(i * 2, 2), 16);
+    return out;
 }
 
 function unfilter(data: Uint8Array, offset: number, height: number, rowBytes: number, bpp: number): Uint8Array {

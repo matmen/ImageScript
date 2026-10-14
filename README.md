@@ -24,7 +24,7 @@ npm install imagescript
   - PNGs (grayscale, RGB, indexed colors, 1-16 bit, interlaced) with and without alpha channels
   - JPEGs (baseline and progressive; grayscale, RGB, CMYK)
   - TIFFs (strips and tiles; uncompressed, LZW, deflate, PackBits and JPEG compressed; BigTIFF)
-  - JPEGs and TIFFs are rotated as their Exif orientation says
+  - JPEGs, TIFFs and PNGs are rotated as their Exif (or, for PNGs, XMP) orientation says
 - [Decoding GIFs](https://imagescript.matmen.dev/classes/GIF.html#decode) with all frames, durations and disposal modes
 - [Rendering SVGs](https://imagescript.matmen.dev/classes/Image.html#rendersvg) (shapes, paths, gradients, strokes, clip paths,
   masks, CSS; no text, images or filters)

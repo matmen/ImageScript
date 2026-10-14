@@ -37,7 +37,7 @@ export interface CompositeOptions {
 
 /** Options of {@link Image.decode} */
 export interface DecodeOptions {
-    /** Whether to rotate/mirror JPEGs and TIFFs as their orientation tag (Exif) says. Default: `true` */
+    /** Whether to rotate/mirror JPEGs, TIFFs and PNGs as their orientation tag (Exif or XMP) says. Default: `true` */
     applyOrientation?: boolean;
 }
 
@@ -1578,8 +1578,8 @@ export class Image {
     /**
      * Decodes an image (PNG, JPEG or TIFF)
      * @param input The binary data to decode
-     * @param options See {@link DecodeOptions}. JPEGs and TIFFs are rotated/mirrored as their orientation tag (Exif)
-     *     says by default, like browsers do: photos taken with a rotated camera are stored sideways
+     * @param options See {@link DecodeOptions}. JPEGs, TIFFs and PNGs are rotated/mirrored as their orientation tag
+     *     (Exif, for PNGs also XMP) says by default: photos taken with a rotated camera are stored sideways
      * @return The decoded image
      */
     static async decode(input: BinaryData, options: DecodeOptions = {}): Promise<Image> {
