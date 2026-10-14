@@ -19,7 +19,8 @@
     "noEmitOnError": true,
     "rewriteRelativeImportExtensions": true,
     "allowImportingTsExtensions": true,
-    "noImplicitOverride": true
+    "noImplicitOverride": true,
+    "stripInternal": true
   },
   "include": [
     "src"
