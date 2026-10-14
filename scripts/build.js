@@ -13,7 +13,9 @@ const { version } = require('../package.json');
 fs.writeFileSync(path.join(root, 'src/version.ts'), `// kept in sync with package.json by scripts/build.js\nexport const VERSION = '${version}';\n`);
 
 fs.rmSync(path.join(root, 'dist'), { recursive: true, force: true });
-run(['-p', 'tsconfig.json']);
+// declarations keep the doc comments (editors show them), the JavaScript doesn't need them
+run(['-p', 'tsconfig.json', '--emitDeclarationOnly']);
+run(['-p', 'tsconfig.json', '--declaration', 'false', '--removeComments']);
 
 // declarations keep the .ts import specifiers of the sources, point them at the built files
 const rewrite = dir => {
