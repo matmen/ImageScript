@@ -2,10 +2,11 @@ import * as gifCodec from './codecs/gif.ts';
 import * as png from './codecs/png.ts';
 import * as webp from './codecs/webp.ts';
 import { BinaryData, view } from './util/mem.ts';
-import { Image, ResizeMode } from './image.ts';
+import { Image, ResizeMode, ResizeOptions } from './image.ts';
 import { Frame } from './frame.ts';
 import { ImageType } from './image-type.ts';
 import { Metadata, resolveMetadata, pngText, exifData, gifComments } from './metadata.ts';
+import { isOptions } from './util/options.ts';
 
 // loop counts: ImageScript (like GIF) counts repetitions (-1 forever, 0 play once), APNG and WebP count plays (0 forever)
 const toPlays = (loopCount: number): number => loopCount < 0 ? 0 : loopCount + 1;
@@ -20,6 +21,36 @@ function canvasFrames(width: number, height: number, frames: Array<{ pixels: Uin
     });
 }
 
+/** Options of {@link Animation} */
+export interface AnimationOptions {
+    /** How many times to repeat the animation (-1 = forever, 0 = play once). Default: `-1` */
+    loopCount?: number;
+}
+
+/** Options of {@link Animation.decode} */
+export interface AnimationDecodeOptions {
+    /** Whether to stop decoding after the first frame. Default: `false` */
+    onlyFirstFrame?: boolean;
+}
+
+/** Options of {@link Animation.encodeWebP}, and those all animation encoders have */
+export interface AnimationEncodeOptions {
+    /** Metadata to include, see {@link Metadata} */
+    metadata?: Metadata;
+}
+
+/** Options of {@link Animation.encodeGIF} */
+export interface GIFEncodeOptions extends AnimationEncodeOptions {
+    /** 1-100, scales the palette size from 8 colors (1) to 256 colors (90 and above). Default: `95` */
+    quality?: number;
+}
+
+/** Options of {@link Animation.encodeAPNG} */
+export interface APNGEncodeOptions extends AnimationEncodeOptions {
+    /** The zlib compression level (0-9), higher is smaller but slower. Default: `1` */
+    compression?: number;
+}
+
 /**
  * An animation: an array of frames that can be decoded from and encoded to GIF, APNG and WebP.
  * Array methods like map and filter return plain arrays.
@@ -31,10 +62,18 @@ export class Animation extends Array<Frame> {
     /**
      * Creates a new animation
      * @param frames The frames to create the animation from
+     * @param options See {@link AnimationOptions}
+     */
+    constructor(frames: Frame[], options?: AnimationOptions);
+    /**
+     * Creates a new animation
+     * @param frames The frames to create the animation from
      * @param loopCount How many times to repeat the animation (-1 = forever, 0 = play once)
      */
-    constructor(frames: Frame[], loopCount = -1) {
+    constructor(frames: Frame[], loopCount?: number);
+    constructor(frames: Frame[], loopCountOrOptions: number | AnimationOptions = -1) {
         super();
+        const { loopCount = -1 } = isOptions(loopCountOrOptions) ? loopCountOrOptions : { loopCount: loopCountOrOptions };
         // push instead of super(...frames), so a single frame isn't taken as a length
         for (const frame of frames) this.push(frame);
 
@@ -91,7 +130,14 @@ export class Animation extends Array<Frame> {
      * Resizes the animation to the given dimensions, scaling every frame and its offsets proportionally.
      * Use {@link Image.RESIZE_AUTO} as either width or height to automatically preserve the aspect ratio.
      */
-    resize(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
+    resize(width: number, height: number, options?: ResizeOptions): this;
+    /**
+     * Resizes the animation to the given dimensions, scaling every frame and its offsets proportionally.
+     * Use {@link Image.RESIZE_AUTO} as either width or height to automatically preserve the aspect ratio.
+     */
+    resize(width: number, height: number, mode?: ResizeMode): this;
+    resize(width: number, height: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
+        const mode = (isOptions(modeOrOptions) ? modeOrOptions.mode : modeOrOptions) ?? Image.RESIZE_BILINEAR;
         const originalWidth = this.width, originalHeight = this.height;
         if (width === Image.RESIZE_AUTO && height === Image.RESIZE_AUTO) throw new Error('RESIZE_AUTO can only be used for either width or height, not for both');
         if (width === Image.RESIZE_AUTO) width = originalWidth / originalHeight * height;
@@ -118,10 +164,16 @@ export class Animation extends Array<Frame> {
 
     /**
      * Encodes the animation as GIF
-     * @param quality 1-100, scales the palette size from 8 colors (1) to 256 colors (90 and above)
-     * @param metadata Metadata to include, see {@link Metadata}
+     * @param options See {@link GIFEncodeOptions}
      */
-    async encodeGIF(quality = 95, metadata: Metadata = {}): Promise<Uint8Array> {
+    encodeGIF(options?: GIFEncodeOptions): Promise<Uint8Array>;
+    /**
+     * Encodes the animation as GIF
+     * @param quality 1-100, scales the palette size from 8 colors (1) to 256 colors (90 and above)
+     */
+    encodeGIF(quality?: number): Promise<Uint8Array>;
+    async encodeGIF(qualityOrOptions: number | GIFEncodeOptions = 95): Promise<Uint8Array> {
+        const { quality = 95, metadata = {} } = isOptions(qualityOrOptions) ? qualityOrOptions : { quality: qualityOrOptions };
         this.__validate__();
         const frames: gifCodec.GIFFrame[] = [];
 
@@ -143,10 +195,17 @@ export class Animation extends Array<Frame> {
     /**
      * Encodes the animation as APNG (animated PNG, lossless and with full alpha). Viewers without APNG support show
      * the first frame
-     * @param compression The zlib compression level (0-9), higher is smaller but slower
-     * @param metadata Metadata to include, see {@link Metadata}
+     * @param options See {@link APNGEncodeOptions}
      */
-    async encodeAPNG(compression = 1, metadata: Metadata = {}): Promise<Uint8Array> {
+    encodeAPNG(options?: APNGEncodeOptions): Promise<Uint8Array>;
+    /**
+     * Encodes the animation as APNG (animated PNG, lossless and with full alpha). Viewers without APNG support show
+     * the first frame
+     * @param compression The zlib compression level (0-9), higher is smaller but slower
+     */
+    encodeAPNG(compression?: number): Promise<Uint8Array>;
+    async encodeAPNG(compressionOrOptions: number | APNGEncodeOptions = 1): Promise<Uint8Array> {
+        const { compression = 1, metadata = {} } = isOptions(compressionOrOptions) ? compressionOrOptions : { compression: compressionOrOptions };
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
 
@@ -155,9 +214,9 @@ export class Animation extends Array<Frame> {
 
     /**
      * Encodes the animation as lossless animated WebP
-     * @param metadata Metadata to include, see {@link Metadata}
+     * @param options See {@link AnimationEncodeOptions}
      */
-    async encodeWebP(metadata: Metadata = {}): Promise<Uint8Array> {
+    async encodeWebP({ metadata = {} }: AnimationEncodeOptions = {}): Promise<Uint8Array> {
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
         const width = this.width, height = this.height;
@@ -204,9 +263,17 @@ export class Animation extends Array<Frame> {
     /**
      * Decodes an animated GIF, APNG or WebP into fully composited frames (still images become a single frame)
      * @param input The binary data to decode
+     * @param options See {@link AnimationDecodeOptions}
+     */
+    static decode(input: BinaryData, options?: AnimationDecodeOptions): Promise<Animation>;
+    /**
+     * Decodes an animated GIF, APNG or WebP into fully composited frames (still images become a single frame)
+     * @param input The binary data to decode
      * @param onlyExtractFirstFrame Whether to stop decoding after the first frame
      */
-    static async decode(input: BinaryData, onlyExtractFirstFrame = false): Promise<Animation> {
+    static decode(input: BinaryData, onlyExtractFirstFrame?: boolean): Promise<Animation>;
+    static async decode(input: BinaryData, onlyFirstFrameOrOptions: boolean | AnimationDecodeOptions = false): Promise<Animation> {
+        const onlyExtractFirstFrame = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions.onlyFirstFrame ?? false : onlyFirstFrameOrOptions;
         const data = view(input);
         const type = ImageType.getType(data);
 

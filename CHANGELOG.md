@@ -4,8 +4,14 @@
 
 ### New
 
+- **Options objects**: every method with optional arguments takes them as an object too, e.g.
+  `image.resize(100, 100, {mode: Image.RESIZE_BICUBIC})`, `image.composite(logo, {x: 10, y: 10, opacity: 0.5})`,
+  `Image.renderText(font, 32, 'Hi', {color: 0xff0000ff, strokeWidth: 2})`, `new Frame(10, 10, {duration: 50})`,
+  `animation.encodeGIF({quality: 80})`. Options can be left out or added without counting positions; the positional
+  arguments keep working until 4.0.
 - **Metadata in every format**: `encodeJPEG()`, `encodeWebP()`, `encodeTGA()` and, for animations, `encodeGIF()`,
-  `encodeAPNG()` and `encodeWebP()` take the same metadata as `encode()` (now called `Metadata`). Each format stores
+  `encodeAPNG()` and `encodeWebP()` take the same metadata as `encode()` (now called `Metadata`), as the `metadata`
+  option: `image.encodeJPEG({quality: 80, metadata: {author: 'me'}})`. Each format stores
   the fields it has a place for: Exif and a comment for JPEG, Exif for WebP, comments for GIF, the extension area for
   TGA, text chunks for PNG and APNG. Like PNGs, all files name ImageScript and its version as the software and
   include the creation time by default; `{software: ''}` leaves the software out.

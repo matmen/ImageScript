@@ -1,8 +1,8 @@
 import { BinaryData, view } from './util/mem.ts';
 import { Frame } from './frame.ts';
 import { ImageType } from './image-type.ts';
-import { Animation } from './animation.ts';
-import { Metadata } from './metadata.ts';
+import { Animation, AnimationDecodeOptions, AnimationOptions, GIFEncodeOptions } from './animation.ts';
+import { isOptions } from './util/options.ts';
 
 /**
  * Represents a GIF image as an array of frames, an {@link Animation} whose `encode()` and `decode()` work with GIFs.
@@ -14,10 +14,11 @@ export class GIF extends Animation {
     /**
      * Creates a new GIF image
      * @param frames The frames to create the GIF from
-     * @param loopCount How many times to repeat the GIF (-1 = forever, 0 = play once)
+     * @param loopCountOrOptions How many times to repeat the GIF (-1 = forever, 0 = play once), or see
+     *     {@link AnimationOptions}
      */
-    constructor(frames: Frame[], loopCount = -1) {
-        super(frames, loopCount);
+    constructor(frames: Frame[], loopCountOrOptions?: number | AnimationOptions) {
+        super(frames, loopCountOrOptions as number);
     }
 
     override toString(): string {
@@ -26,21 +27,23 @@ export class GIF extends Animation {
 
     /**
      * Encodes the GIF
-     * @param quality 1-100, scales the palette size from 8 colors (1) to 256 colors (90 and above)
-     * @param metadata Metadata to include, see {@link Metadata}
+     * @param qualityOrOptions 1-100, scales the palette size from 8 colors (1) to 256 colors (90 and above), or
+     *     see {@link GIFEncodeOptions}
      * @deprecated Use {@link Animation.encodeGIF}
      */
-    async encode(quality = 95, metadata: Metadata = {}): Promise<Uint8Array> {
-        return this.encodeGIF(quality, metadata);
+    async encode(qualityOrOptions?: number | GIFEncodeOptions): Promise<Uint8Array> {
+        return this.encodeGIF(qualityOrOptions as number);
     }
 
     /**
      * Decodes a GIF into fully composited frames
      * @param input The binary data to decode
-     * @param onlyExtractFirstFrame Whether to end GIF decoding after the first frame
+     * @param onlyFirstFrameOrOptions Whether to end GIF decoding after the first frame, or see
+     *     {@link AnimationDecodeOptions}
      * @deprecated Use {@link Animation.decode}, which decodes APNGs too
      */
-    static override async decode(input: BinaryData, onlyExtractFirstFrame = false): Promise<GIF> {
+    static override async decode(input: BinaryData, onlyFirstFrameOrOptions: boolean | AnimationDecodeOptions = false): Promise<GIF> {
+        const onlyExtractFirstFrame = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions.onlyFirstFrame ?? false : onlyFirstFrameOrOptions;
         const data = view(input);
         if (!ImageType.isGIF(new DataView(data.buffer, data.byteOffset, data.byteLength))) throw new Error('Unsupported image type');
         return Animation.__fromGIF__(data, onlyExtractFirstFrame, GIF);
