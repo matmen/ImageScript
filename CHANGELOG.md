@@ -34,6 +34,7 @@
   computed without branches, 8-bit RGB images are converted without per-sample function calls.
 - Lossless WebP encoding is about 15% faster, with identical files: backward reference candidates that can't be
   longer are skipped, the per-channel predictor helpers are unrolled.
+- Resizing (bilinear, bicubic and area) is about 10% faster, with identical results.
 
 ### Deprecated
 
