@@ -1,9 +1,15 @@
+/*!
+ * TrueType hinting interpreter. Where the TrueType specification leaves details open, its behavior and parts of its
+ * logic follow FreeType's TrueType interpreter (src/truetype/ttinterp.c): fixed point rounding, original distances
+ * on the unscaled outline (IP, IUP, MDRP, MD), the IUP interpolation, the movement along near-perpendicular vectors
+ * and the tolerance of invalid references. Portions of this software are copyright © 2026 The FreeType Project
+ * (https://freetype.org). All rights reserved. FreeType License, see THIRD_PARTY_NOTICES.md and licenses/FTL.txt
+ */
 // TrueType hinting: an interpreter for the glyph programs (instructions) of TrueType fonts, following the TrueType
 // instruction set specification (Apple TrueType Reference Manual, Microsoft OpenType "TrueType instructions").
 // Hinting moves outline points so that stems and edges land on pixel boundaries at small sizes.
-// Coordinates are 26.6 fixed point numbers (64 = one pixel), kept as JS numbers. Where the specification leaves
-// details open (rounding of fixed point math, tolerance of invalid references, near-perpendicular vectors), this
-// behaves like FreeType's classic ("v35") interpreter, which the tests compare against point for point.
+// Coordinates are 26.6 fixed point numbers (64 = one pixel), kept as JS numbers. The tests compare the results with
+// FreeType's classic ("v35") interpreter point for point.
 import { Font, GlyfPoints, PathCommand, contourToPath } from './font.ts';
 
 class HintError extends Error { }

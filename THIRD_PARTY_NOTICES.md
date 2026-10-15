@@ -13,6 +13,7 @@ following projects, under their own licenses. Each derived file says so in its h
 | [RFC 9649](https://www.rfc-editor.org/rfc/rfc9649) (WebP Image Format) | `src/codecs/vp8l.ts` (lossless bitstream, short distance code table), `src/codecs/webp.ts` (container) | BSD-3-Clause (Revised BSD) |
 | [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386) (VP8 Data Format and Decoding Guide, with the libvpx reference decoder) | `src/codecs/vp8-tables.ts` (probability and quantizer tables), `src/codecs/vp8.ts` (decoding procedures) | BSD-3-Clause |
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | `src/codecs/vp8.ts` (YUV to RGB conversion, "fancy" chroma upsampling), `src/codecs/webp.ts` (animation frame blending) | BSD-3-Clause |
+| [FreeType](https://freetype.org) | `src/render/hinting.ts` (behavior and parts of the logic of the TrueType interpreter) | FreeType License |
 
 ## fflate, Fast CRC32 in JavaScript
 
@@ -142,3 +143,14 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSE
 WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## FreeType
+
+Portions of this software are copyright © 2026 The FreeType Project (https://freetype.org). All rights reserved.
+
+The TrueType hinting interpreter in `src/render/hinting.ts` is written after the TrueType instruction specification.
+Where the specification leaves details open, its behavior and parts of its logic follow FreeType's interpreter
+(`src/truetype/ttinterp.c`): the fixed point rounding, measuring original distances on the unscaled outline, the
+interpolation of untouched points (IUP), the handling of near-perpendicular freedom and projection vectors, and the
+tolerance of invalid references. FreeType is used under the FreeType License, included as
+[licenses/FTL.txt](licenses/FTL.txt).
