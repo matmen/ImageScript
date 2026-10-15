@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.1.0 (unreleased)
+
+### New
+
+- **APNG** decoding and encoding (#6): `Animation.decode()` reads animated PNGs (broken animations fall back to the
+  default image, like browsers do), `Animation.encodeAPNG()` writes them with full alpha. `Image.decode()` still
+  returns an APNG's default image.
+- **`Animation`**, the base class of `GIF`: an array of frames that decodes GIF and APNG (`Animation.decode()`) and
+  encodes `encodeGIF()` and `encodeAPNG()`. `GIF` keeps its API.
+
 ## 3.0.0
 
 ImageScript is now written in TypeScript and has no WebAssembly or native binaries anymore. Every codec and renderer
