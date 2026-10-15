@@ -88,6 +88,18 @@ export interface EncodeOptions {
     metadata?: Metadata;
 }
 
+/** Options of {@link Image.roundCorners} */
+export interface RoundCornersOptions {
+    /** The radius of the corners. Default: a quarter of the smaller side */
+    radius?: number;
+}
+
+/** Options of {@link Image.fisheye} */
+export interface FisheyeOptions {
+    /** The distortion strength (exponent of the radial mapping), higher values bulge the center more. Default: `2` */
+    strength?: number;
+}
+
 /** Options of {@link Image.renderSVG} */
 export interface SVGOptions {
     /** The scale, or the width or height in pixels, see `mode`. Default: `1` */
@@ -1650,9 +1662,16 @@ export class Image {
 
     /**
      * Rounds the images corners, with antialiased edges
+     * @param options See {@link RoundCornersOptions}
+     */
+    roundCorners(options?: RoundCornersOptions): this;
+    /**
+     * Rounds the images corners, with antialiased edges
      * @param [radius=min(width,height)/4] The radius of the corners
      */
-    roundCorners(radius: number = Math.min(this.width, this.height) / 4): this {
+    roundCorners(radius?: number): this;
+    roundCorners(radiusOrOptions?: number | RoundCornersOptions): this {
+        let radius = (isOptions(radiusOrOptions) ? radiusOrOptions.radius : radiusOrOptions) ?? Math.min(this.width, this.height) / 4;
         radius = Math.max(0, Math.min(radius, this.width / 2, this.height / 2));
         const size = Math.ceil(radius);
 
@@ -1696,9 +1715,16 @@ export class Image {
 
     /**
      * Applies a fisheye (barrel distortion) effect
+     * @param options See {@link FisheyeOptions}
+     */
+    fisheye(options?: FisheyeOptions): this;
+    /**
+     * Applies a fisheye (barrel distortion) effect
      * @param [strength=2] The distortion strength (exponent of the radial mapping), higher values bulge the center more
      */
-    fisheye(strength = 2): this {
+    fisheye(strength?: number): this;
+    fisheye(strengthOrOptions?: number | FisheyeOptions): this {
+        const strength = (isOptions(strengthOrOptions) ? strengthOrOptions.strength : strengthOrOptions) ?? 2;
         const r = new Image(this.width, this.height);
 
         const w = this.width;
