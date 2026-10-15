@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.1.1
+
+### Fixes
+
+- TGA encoding: run length encoded packets end with the row, as TGA 2.0 requires. Before, packets could span rows,
+  which some readers reject (Pillow fails with "buffer overrun").
+
 ## 3.1.0
 
 ### New

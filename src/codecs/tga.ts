@@ -174,8 +174,8 @@ export function encode(rgba: Uint8Array, width: number, height: number): Uint8Ar
     if (rgba.byteOffset % 4) rgba = rgba.slice(0, count * 4);
     const pixels = new Uint32Array(rgba.buffer, rgba.byteOffset, count);
 
-    // worst case: a header byte per 128 raw pixels
-    const out = new Uint8Array(18 + count * bpp + Math.ceil(count / 128) + 26);
+    // worst case: a header byte per 128 raw pixels of a row
+    const out = new Uint8Array(18 + count * bpp + height * Math.ceil(width / 128) + 26);
     out[2] = 10; // RLE truecolor
     out[12] = width & 255; out[13] = width >> 8;
     out[14] = height & 255; out[15] = height >> 8;
@@ -192,9 +192,11 @@ export function encode(rgba: Uint8Array, width: number, height: number): Uint8Ar
     };
 
     for (let i = 0; i < count;) {
-        // a run of at least two equal pixels becomes a run packet, otherwise collect raw pixels until the next run
+        // a run of at least two equal pixels becomes a run packet, otherwise collect raw pixels until the next run;
+        // packets end with the row (TGA 2.0 requires it, Pillow rejects packets across rows)
+        const end = (Math.floor(i / width) + 1) * width;
         let run = 1;
-        while (run < 128 && i + run < count && pixels[i + run] === pixels[i]) run++;
+        while (run < 128 && i + run < end && pixels[i + run] === pixels[i]) run++;
         if (run >= 2) {
             out[o++] = 128 | run - 1;
             put(i);
@@ -203,7 +205,7 @@ export function encode(rgba: Uint8Array, width: number, height: number): Uint8Ar
         }
 
         let raw = 1;
-        while (raw < 128 && i + raw < count && !(i + raw + 1 < count && pixels[i + raw] === pixels[i + raw + 1])) raw++;
+        while (raw < 128 && i + raw < end && !(i + raw + 1 < end && pixels[i + raw] === pixels[i + raw + 1])) raw++;
         out[o++] = raw - 1;
         for (let k = 0; k < raw; k++) put(i + k);
         i += raw;
