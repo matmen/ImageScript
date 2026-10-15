@@ -10,6 +10,11 @@ on:
         type: string
         default: ''
   workflow_dispatch:
+    inputs:
+      version:
+        description: version to publish (empty keeps jsr.json's)
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -34,4 +39,5 @@ jobs:
     - uses: denoland/setup-deno@v2
       with:
         deno-version: v2.x
-    - run: deno publish
+    # setting the version changes files, which deno publish otherwise refuses
+    - run: deno publish --allow-dirty

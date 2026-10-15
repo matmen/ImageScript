@@ -84,8 +84,9 @@ jobs:
 
   # regular releases commit their version to the default branch (on top of what was merged since the tag), so
   # package.json there shows the latest release; prereleases and fixes for older majors leave it alone
+  # (once npm has the release: a failing JSR publish can be repeated by hand, see jsr.yml)
   version:
-    needs: [check, publish, jsr]
+    needs: [check, publish]
     if: needs.check.outputs.dist-tag == 'latest'
     runs-on: ubuntu-latest
     permissions:
