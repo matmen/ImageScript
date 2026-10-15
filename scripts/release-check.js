@@ -1,14 +1,16 @@
-// checks a GitHub release before it is published to npm and JSR, run by .github/workflows/release.yml:
-// the tag matches package.json and jsr.json, the version is valid semver, newer than what npm has, not on JSR yet and
-// listed in the changelog, prereleases are marked as such. Prints the npm dist-tag to publish under (and writes it to GITHUB_OUTPUT)
+// checks a GitHub release before it is published to npm and JSR, run by .github/workflows/release.yml.
+// The release tag (v<version>) is the version: it has to be valid semver, newer than what npm has, not on JSR yet and
+// listed in the changelog, prereleases are marked as such. Prints the version and the npm dist-tag to publish under
+// (and writes both to GITHUB_OUTPUT); the workflow then sets the version with scripts/version.js
 // usage: node scripts/release-check.js <tag> [prerelease flag of the GitHub release: true/false]
 const fs = require('fs');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
-const { name, version } = require('../package.json');
+const { name } = require('../package.json');
 const jsr = require('../jsr.json');
 const [tag = '', prereleaseFlag = 'false'] = process.argv.slice(2);
+const version = tag.replace(/^v/, '');
 
 const errors = [];
 const fail = message => errors.push(message);
@@ -43,15 +45,12 @@ function compare(a, b) {
 
 async function main() {
     const current = parse(version);
-    if (!current) fail(`package.json version ${version} is not valid semver`);
-    if (tag !== `v${version}`) fail(`release tag ${tag || '(none)'} doesn't match package.json, expected v${version}`);
+    if (!/^v/.test(tag) || !current) fail(`release tag ${tag || '(none)'} isn't v<version> with a valid semver version (like v3.1.0)`);
 
     const prerelease = prereleaseFlag === 'true';
     if (current && prerelease !== current.pre.length > 0)
         fail(current.pre.length ? `${version} is a prerelease version, mark the GitHub release as prerelease`
             : `the GitHub release is marked as prerelease, but ${version} has no prerelease suffix (like -beta.1)`);
-
-    if (jsr.version !== version) fail(`jsr.json has version ${jsr.version}, package.json ${version} (npm run build syncs them)`);
 
     const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
     if (!changelog.split('\n').some(line => /^##\s/.test(line) && line.replace(/^##\s+v?/, '').trim().split(/\s/)[0] === version))
@@ -98,7 +97,7 @@ async function main() {
     }
 
     console.log(`${name}@${version} can be published under the dist-tag "${distTag}"`);
-    if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `dist-tag=${distTag}\n`);
+    if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\ndist-tag=${distTag}\n`);
 }
 
 if (require.main === module) main().catch(e => {

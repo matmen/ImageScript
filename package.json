@@ -27,7 +27,7 @@
     "docs": "node scripts/docs.js",
     "test": "npm run build && node ./tests/run.js",
     "prepack": "npm run build",
-    "version": "node scripts/build.js && git add src/version.ts jsr.json"
+    "version": "node scripts/version.js && git add src/version.ts jsr.json"
   },
   "repository": {
     "type": "git",

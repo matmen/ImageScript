@@ -1,9 +1,9 @@
 name: release
 
-# publishing a GitHub release with the tag v<version> publishes that version to npm and JSR:
-# the release is checked (tag, semver, changelog, jsr.json, not yet on npm/JSR), tested on every supported platform,
-# published to npm with provenance through trusted publishing and to JSR through GitHub OIDC (no tokens),
-# then the docs are deployed
+# publishing a GitHub release with the tag v<version> publishes that version to npm and JSR. The tag is the version:
+# the release is checked (semver, changelog, not yet on npm/JSR), tested on every supported platform, published with
+# the tag's version to npm (with provenance, through trusted publishing) and JSR (through GitHub OIDC, no tokens),
+# then the docs are deployed and, for regular releases, the version is committed to the default branch
 on:
   release:
     types: [published]
@@ -19,6 +19,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     outputs:
+      version: ${{ steps.check.outputs.version }}
       dist-tag: ${{ steps.check.outputs.dist-tag }}
     steps:
     - uses: actions/checkout@v7
@@ -53,17 +54,22 @@ jobs:
         registry-url: https://registry.npmjs.org
 
     - run: npm install
+    - run: node scripts/version.js "$VERSION"
+      env:
+        VERSION: ${{ needs.check.outputs.version }}
     # prepack builds dist; trusted publishing needs npm 11.5.1 or newer, which node 24 ships
     - run: npm publish --provenance --access public --tag "$DIST_TAG"
       env:
         DIST_TAG: ${{ needs.check.outputs.dist-tag }}
 
   jsr:
-    needs: publish
+    needs: [check, publish]
     permissions:
       contents: read
       id-token: write
     uses: ./.github/workflows/jsr.yml
+    with:
+      version: ${{ needs.check.outputs.version }}
 
   docs:
     needs: [check, publish]
@@ -73,3 +79,33 @@ jobs:
       pages: write
       id-token: write
     uses: ./.github/workflows/docs.yml
+    with:
+      version: ${{ needs.check.outputs.version }}
+
+  # regular releases commit their version to the default branch (on top of what was merged since the tag), so
+  # package.json there shows the latest release; prereleases and fixes for older majors leave it alone
+  version:
+    needs: [check, publish, jsr]
+    if: needs.check.outputs.dist-tag == 'latest'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        ref: ${{ github.event.repository.default_branch }}
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24.x
+    - run: node scripts/version.js "$VERSION"
+      env:
+        VERSION: ${{ needs.check.outputs.version }}
+    # pushes with GITHUB_TOKEN don't trigger other workflows
+    - run: |
+        if git diff --quiet; then echo "the default branch already has version $VERSION"; exit 0; fi
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git commit -am "release $VERSION"
+        git push
+      env:
+        VERSION: ${{ needs.check.outputs.version }}
