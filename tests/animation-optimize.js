@@ -136,6 +136,19 @@ const disc = (size, color) => new Image(size, size).fill((x, y) => {
         });
     }
 
+    // optimize: false stores the frames as they are: same animation, but no frames merged or cut
+    {
+        const dot = Frame.from(new Image(10, 10).setPixelAt(5, 5, 0xffffffff), 100);
+        const animation = new Animation([new Frame(10, 10, 40), dot, dot.clone(), new Frame(4, 4, {duration: 30, xOffset: 3, yOffset: 1}).fill(0xff0000ff)]);
+        for (const format of ['GIF', 'APNG', 'WebP']) {
+            const plain = await Animation.decode(await animation[`encode${format}`]({optimize: false}));
+            if (plain.length !== 4) panic(`optimize false: ${format} has ${plain.length} frames instead of 4`);
+            const expected = await composite(animation);
+            if (format === 'APNG' && plain.some((f, i) => f.bitmap.some((v, k) => v !== expected[i].bitmap[k]))) panic('optimize false: APNG frames differ');
+        }
+        await check('optimize false', animation);
+    }
+
     // a mostly static animation (like a screen recording) only stores what changes
     {
         const background = new Image(160, 120).fill((x, y) => Image.rgbaToColor(x * 7 ^ y * 13, x * y, y * 5, 255));
