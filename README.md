@@ -25,8 +25,9 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   - PNGs (grayscale, RGB, indexed colors, 1-16 bit, interlaced) with and without alpha channels
   - JPEGs (baseline and progressive; grayscale, RGB, CMYK)
   - TIFFs (strips and tiles; uncompressed, LZW, deflate, PackBits and JPEG compressed; BigTIFF)
-  - JPEGs, TIFFs and PNGs are rotated as their Exif (or, for PNGs, XMP) orientation says
-- [Decoding animations](https://imagescript.matmen.dev/classes/Animation.html#decode) (GIF and APNG) with all
+  - WebPs (lossy, lossless and with alpha; bit-exact with libwebp)
+  - JPEGs, TIFFs, PNGs and WebPs are rotated as their Exif (or, for PNGs, XMP) orientation says
+- [Decoding animations](https://imagescript.matmen.dev/classes/Animation.html#decode) (GIF, APNG and WebP) with all
   frames, durations and disposal modes
 - [Rendering SVGs](https://imagescript.matmen.dev/classes/Image.html#rendersvg) (shapes, paths, gradients, strokes, clip paths,
   masks, CSS; no text, images or filters)
@@ -45,8 +46,10 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   , [dominantColor](https://imagescript.matmen.dev/classes/Image.html#dominantcolor), ...)
 - Encoding images as [PNGs](https://imagescript.matmen.dev/classes/Image.html#encode) (smallest lossless color type)
   , [JPEGs](https://imagescript.matmen.dev/classes/Image.html#encodejpeg)
-- Encoding animations as [GIF](https://imagescript.matmen.dev/classes/Animation.html#encodegif) and
-  [APNG](https://imagescript.matmen.dev/classes/Animation.html#encodeapng)
+  and lossless [WebPs](https://imagescript.matmen.dev/classes/Image.html#encodewebp)
+- Encoding animations as [GIF](https://imagescript.matmen.dev/classes/Animation.html#encodegif),
+  [APNG](https://imagescript.matmen.dev/classes/Animation.html#encodeapng) and lossless
+  [WebP](https://imagescript.matmen.dev/classes/Animation.html#encodewebp)
 
 ---
 
@@ -84,7 +87,8 @@ The deflate/inflate implementation is derived from [fflate](https://github.com/1
 [Fast CRC32 in JavaScript](https://gist.github.com/101arrowz/e58695f7ccfdf74f60ba22018093edea), both by Arjun Barrett.
 The JPEG codec is based in part on the work of the Independent JPEG Group (libjpeg) and on
 [pdf.js](https://github.com/mozilla/pdf.js), the glyph rasterizer is translated from
-[font-rs](https://github.com/raphlinus/font-rs). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for their licenses.
+[font-rs](https://github.com/raphlinus/font-rs). The WebP decoder follows [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386)
+and reproduces [libwebp](https://chromium.googlesource.com/webm/libwebp)'s color conversion. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for their licenses.
 
 ---
 

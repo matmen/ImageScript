@@ -10,6 +10,8 @@ following projects, under their own licenses. Each derived file says so in its h
 | [libjpeg](https://ijg.org/) / [libjpeg-turbo](https://libjpeg-turbo.org/) by the Independent JPEG Group | `src/codecs/jpeg.ts` (IDCT, FDCT, upsampling, color conversion, progressive refinement, optimal Huffman tables) | IJG |
 | [pdf.js](https://github.com/mozilla/pdf.js) (forked from [jpgjs](https://github.com/notmasteryet/jpgjs) by notmasteryet) | `src/codecs/jpeg.ts` (structure of the scan decoder) | Apache-2.0 |
 | [font-rs](https://github.com/raphlinus/font-rs) by Raph Levien | `src/render/text.ts` (the `Rasterizer` class, also used for SVGs) | Apache-2.0 |
+| [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386) (VP8 Data Format and Decoding Guide, with the libvpx reference decoder) | `src/codecs/vp8-tables.ts` (probability and quantizer tables), `src/codecs/vp8.ts` (decoding procedures) | BSD-3-Clause |
+| [libwebp](https://chromium.googlesource.com/webm/libwebp) | `src/codecs/vp8.ts` (YUV to RGB conversion, "fancy" chroma upsampling), `src/codecs/webp.ts` (animation frame blending) | BSD-3-Clause |
 
 ## fflate, Fast CRC32 in JavaScript
 
@@ -72,3 +74,44 @@ The scan decoder of `src/codecs/jpeg.ts` follows the structure of pdf.js' `src/c
 one decode function per scan type). The `Rasterizer` class in `src/render/text.ts` is a translation of font-rs'
 `Raster` from Rust to TypeScript (`draw_line`, `draw_quad`, `accumulate`); its `cubic` method is adapted from
 `draw_quad`. The full license text is in [licenses/Apache-2.0.txt](licenses/Apache-2.0.txt).
+
+## RFC 6386, libwebp
+
+The VP8 decoder follows the procedures of RFC 6386 and its reference decoder, its constant tables are extracted from
+the RFC. To decode exactly like libwebp, the YUV to RGB conversion, the chroma upsampling and the blending of animation
+frames reproduce libwebp's integer arithmetic.
+
+```
+RFC 6386 reference decoder: Copyright (c) 2010, 2011, Google Inc. All rights reserved.
+libwebp: Copyright (c) 2010, Google Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+  * Neither the name of Google nor the names of its contributors may
+    be used to endorse or promote products derived from this software
+    without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+The RFC's reference decoder additionally comes with Google's patent grant for VP8 (RFC 6386 section 20.27).

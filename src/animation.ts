@@ -1,11 +1,12 @@
 import * as gifCodec from './codecs/gif.ts';
 import * as png from './codecs/png.ts';
+import * as webp from './codecs/webp.ts';
 import { BinaryData, view } from './util/mem.ts';
 import { Image, ResizeMode } from './image.ts';
 import { Frame } from './frame.ts';
 import { ImageType } from './image-type.ts';
 
-// loop counts: ImageScript (like GIF) counts repetitions (-1 forever, 0 play once), APNG counts plays (0 forever)
+// loop counts: ImageScript (like GIF) counts repetitions (-1 forever, 0 play once), APNG and WebP count plays (0 forever)
 const toPlays = (loopCount: number): number => loopCount < 0 ? 0 : loopCount + 1;
 const fromPlays = (plays: number): number => plays === 0 ? -1 : plays - 1;
 
@@ -19,7 +20,7 @@ function canvasFrames(width: number, height: number, frames: Array<{ pixels: Uin
 }
 
 /**
- * An animation: an array of frames that can be decoded from and encoded to GIF and APNG.
+ * An animation: an array of frames that can be decoded from and encoded to GIF, APNG and WebP.
  * Array methods like map and filter return plain arrays.
  */
 export class Animation extends Array<Frame> {
@@ -149,6 +150,37 @@ export class Animation extends Array<Frame> {
         return png.encodeAnimation(this.__apngFrames__(), this.width, this.height, toPlays(this.loopCount), compression);
     }
 
+    /**
+     * Encodes the animation as lossless animated WebP
+     */
+    async encodeWebP(): Promise<Uint8Array> {
+        this.__validate__();
+        if (!this.length) throw new Error('An animation needs at least one frame');
+        const width = this.width, height = this.height;
+
+        // WebP knows no "previous" disposal and stores offsets halved: such animations are stored as full frames
+        const fullFrames = this.some(f => f.disposalMode === 'previous' || (f.disposalMode === 'background' && (f.xOffset & 1 || f.yOffset & 1)));
+        if (fullFrames) {
+            const canvases = png.compositeAnimation({ width, height, frames: this.__apngFrames__() });
+            return webp.encodeAnimation(canvases.map(c => ({ x: 0, y: 0, width, height, duration: c.duration, dispose: true, pixels: c.pixels })), width, height, toPlays(this.loopCount));
+        }
+
+        const frames = Array.from(this, frame => {
+            let { xOffset: x, yOffset: y, width: w, height: h } = frame;
+            let pixels = new Uint8Array(frame.bitmap.buffer, frame.bitmap.byteOffset, frame.bitmap.byteLength);
+            // odd offsets: one transparent pixel more on the left/top (blending makes it invisible)
+            if (x & 1 || y & 1) {
+                const dx = x & 1, dy = y & 1;
+                const padded = new Uint8Array((w + dx) * (h + dy) * 4);
+                for (let row = 0; row < h; row++) padded.set(pixels.subarray(row * w * 4, (row + 1) * w * 4), ((row + dy) * (w + dx) + dx) * 4);
+                pixels = padded;
+                x -= dx; y -= dy; w += dx; h += dy;
+            }
+            return { x, y, width: w, height: h, duration: frame.duration, dispose: frame.disposalMode === 'background', pixels };
+        });
+        return webp.encodeAnimation(frames, width, height, toPlays(this.loopCount));
+    }
+
     /** @internal frames in the APNG codec's terms (alpha blended, disposal 0 none, 1 background, 2 previous) */
     __apngFrames__(): png.APNGFrame[] {
         const dispose = [0, 0, 2, 1];
@@ -165,7 +197,7 @@ export class Animation extends Array<Frame> {
     }
 
     /**
-     * Decodes an animated GIF or APNG into fully composited frames (still images become a single frame)
+     * Decodes an animated GIF, APNG or WebP into fully composited frames (still images become a single frame)
      * @param input The binary data to decode
      * @param onlyExtractFirstFrame Whether to stop decoding after the first frame
      */
@@ -174,6 +206,12 @@ export class Animation extends Array<Frame> {
         const type = ImageType.getType(data);
 
         if (type === 'gif') return Animation.__fromGIF__(data, onlyExtractFirstFrame, Animation);
+
+        if (type === 'webp') {
+            const decoded = webp.decodeAnimation(data, onlyExtractFirstFrame);
+            const frames = canvasFrames(decoded.width, decoded.height, webp.composite(decoded));
+            return new Animation(frames, fromPlays(decoded.loopCount));
+        }
 
         if (type === 'png') {
             const decoded = await png.decodeAnimation(data, onlyExtractFirstFrame);

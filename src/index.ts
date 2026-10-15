@@ -1,6 +1,9 @@
 import { BinaryData } from './util/mem.ts';
 import { Image } from './image.ts';
 import { GIF } from './gif.ts';
+import { Animation } from './animation.ts';
+import * as webp from './codecs/webp.ts';
+import { view } from './util/mem.ts';
 import { ImageType } from './image-type.ts';
 
 export { Image } from './image.ts';
@@ -16,13 +19,15 @@ export type { ImageTypeName } from './image-type.ts';
 export type { BinaryData } from './util/mem.ts';
 
 /**
- * Decodes any supported image: GIFs are returned as {@link GIF} (an {@link Animation}), everything else (including
- * APNGs, as their default image) as {@link Image}. {@link Animation.decode} decodes the frames of GIFs and APNGs
+ * Decodes any supported image: GIFs are returned as {@link GIF} (an {@link Animation}), animated WebPs as
+ * {@link Animation}, everything else (including APNGs, as their default image) as {@link Image}.
+ * {@link Animation.decode} decodes the frames of GIFs, APNGs and WebPs
  * @param data The image data
  * @param onlyExtractFirstFrame Whether to end animation decoding after the first frame
  */
-export function decode(data: BinaryData, onlyExtractFirstFrame = false): Promise<GIF | Image> {
+export function decode(data: BinaryData, onlyExtractFirstFrame = false): Promise<GIF | Animation | Image> {
     const type = ImageType.getType(data);
     if (type === 'gif') return GIF.decode(data, onlyExtractFirstFrame);
+    if (type === 'webp' && webp.isAnimated(view(data))) return Animation.decode(data, onlyExtractFirstFrame);
     return Image.decode(data);
 }

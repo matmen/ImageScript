@@ -1,7 +1,7 @@
 import { BinaryData, view as bytes } from './util/mem.ts';
 
 /** Image formats recognized by {@link ImageType.getType} */
-export type ImageTypeName = 'png' | 'jpeg' | 'tiff' | 'gif';
+export type ImageTypeName = 'png' | 'jpeg' | 'tiff' | 'gif' | 'webp';
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -10,7 +10,9 @@ const MAGIC_NUMBERS = {
     TIFF_BE: 0x4d4d002a,
     BIGTIFF_LE: 0x49492b00,
     BIGTIFF_BE: 0x4d4d002b,
-    GIF: 0x474946
+    GIF: 0x474946,
+    RIFF: 0x52494646,
+    WEBP: 0x57454250
 };
 
 // any binary data as a DataView (DataViews are used as is)
@@ -34,6 +36,7 @@ export class ImageType {
         if (this.isJPEG(view)) return 'jpeg';
         if (this.isTIFF(view)) return 'tiff';
         if (this.isGIF(view)) return 'gif';
+        if (this.isWebP(view)) return 'webp';
         return null;
     }
 
@@ -61,5 +64,11 @@ export class ImageType {
     static isGIF(data: BinaryData): boolean {
         const view = dataView(data);
         return view.byteLength >= 4 && (view.getUint32(0, false) >>> 8) === MAGIC_NUMBERS.GIF;
+    }
+
+    /** Whether the data starts like a WebP */
+    static isWebP(data: BinaryData): boolean {
+        const view = dataView(data);
+        return view.byteLength >= 12 && view.getUint32(0, false) === MAGIC_NUMBERS.RIFF && view.getUint32(8, false) === MAGIC_NUMBERS.WEBP;
     }
 }
