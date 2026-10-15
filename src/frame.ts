@@ -1,44 +1,44 @@
 import { Image, ResizeMode } from './image.ts';
 
-/** Names of the GIF frame disposal modes, see {@link Frame.disposalMode} */
+/** Names of the frame disposal modes, see {@link Frame.disposalMode} */
 export type FrameDisposalModeName = 'any' | 'keep' | 'previous' | 'background';
-/** Ids of the GIF frame disposal modes as stored in the file (0 any, 1 keep, 2 previous, 3 background) */
+/** Ids of the frame disposal modes, as GIFs store them (0 any, 1 keep, 2 previous, 3 background) */
 export type FrameDisposalModeId = 0 | 1 | 2 | 3;
 
 const DISPOSAL_MODES: readonly FrameDisposalModeName[] = ['any', 'keep', 'previous', 'background'];
 
 /**
- * Represents a frame in a GIF
+ * Represents a frame of an {@link Animation}
  */
 export class Frame extends Image {
     /**
-     * Milliseconds. GIFs store hundredths of a second, so this is rounded to 10 ms when encoding;
+     * Milliseconds. GIFs store hundredths of a second, so this is rounded to 10 ms when encoding a GIF;
      * note that browsers play frames shorter than 20 ms with 100 ms
      */
     duration: number;
-    /** The frame's horizontal offset in the GIF */
+    /** The frame's horizontal offset in the animation */
     xOffset: number;
-    /** The frame's vertical offset in the GIF */
+    /** The frame's vertical offset in the animation */
     yOffset: number;
     /** @internal */
     private __disposalMode__: FrameDisposalModeId = 1;
 
-    /** GIF frame disposal mode ANY: the decoder decides (in practice like KEEP). For use with {@link Frame} */
+    /** Frame disposal mode ANY: the decoder decides (in practice like KEEP). For use with {@link Frame} */
     static get DISPOSAL_ANY(): 'any' {
         return 'any';
     }
 
-    /** GIF frame disposal mode KEEP. For use with {@link Frame} */
+    /** Frame disposal mode KEEP. For use with {@link Frame} */
     static get DISPOSAL_KEEP(): 'keep' {
         return 'keep';
     }
 
-    /** GIF frame disposal mode PREVIOUS. For use with {@link Frame} */
+    /** Frame disposal mode PREVIOUS. For use with {@link Frame} */
     static get DISPOSAL_PREVIOUS(): 'previous' {
         return 'previous';
     }
 
-    /** GIF frame disposal mode BACKGROUND. For use with {@link Frame} */
+    /** Frame disposal mode BACKGROUND. For use with {@link Frame} */
     static get DISPOSAL_BACKGROUND(): 'background' {
         return 'background';
     }
