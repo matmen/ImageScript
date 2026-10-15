@@ -556,7 +556,8 @@ export function isAnimated(array: Uint8Array): boolean {
 }
 
 /**
- * Decodes an APNG into its (uncomposited) frames; a plain PNG becomes a single frame
+ * Decodes an APNG (https://wiki.mozilla.org/APNG_Specification) into its (uncomposited) frames; a plain PNG becomes
+ * a single frame
  * @return plays: 0 = forever
  */
 export async function decodeAnimation(array: Uint8Array, onlyFirstFrame = false): Promise<{ width: number, height: number, plays: number, frames: APNGFrame[] }> {
@@ -586,7 +587,8 @@ export async function decodeAnimation(array: Uint8Array, onlyFirstFrame = false)
 }
 
 /**
- * Composites APNG frames onto the canvas, as the APNG specification describes (its integer "over" operation)
+ * Composites APNG frames onto the canvas, as the APNG specification describes (the integer "over" operation of its
+ * blend_op section, https://wiki.mozilla.org/APNG_Specification)
  */
 export function compositeAnimation({ width, height, frames }: { width: number, height: number, frames: APNGFrame[] }): Array<{ pixels: Uint8Array, duration: number }> {
     const canvas = new Uint8Array(width * height * 4);
