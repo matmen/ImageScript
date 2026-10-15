@@ -4,6 +4,7 @@
  */
 
 import { Font, PathCommand } from './font.ts';
+import { Hinter } from './hinting.ts';
 
 export interface Layout {
     maxWidth: number;
@@ -26,6 +27,9 @@ export interface GlyphBitmap {
 
 interface Glyph {
     index: number;
+    /** outline and its scale to pixels (1 for hinted outlines, which are in pixels) */
+    path: PathCommand[];
+    scale: number;
     /** advance width in pixels */
     advance: number;
     /** horizontal ink extent relative to the pen position in pixels, null for glyphs without outline */
@@ -45,6 +49,7 @@ const SUBPIXELS = 4;
 
 // parsed fonts are cached per memory region, so new views of the same font data (e.g. from node Buffers) hit the cache
 const fonts = new WeakMap<ArrayBufferLike, Map<string, Font>>();
+const hinters = new WeakMap<Font, Hinter>();
 
 function loadFont(data: Uint8Array): Font {
     let regions = fonts.get(data.buffer);
@@ -65,11 +70,21 @@ function loadFont(data: Uint8Array): Font {
  * @param {number} size font size in pixels per em
  * @param {string} text
  * @param {Layout} layout
+ * @param hinting Whether to run TrueType fonts' hinting instructions, the glyphs of hinted fonts are then placed on
+ *     whole pixels (fonts without instructions render as without hinting)
  * @return {{width: number, height: number, coverage: Uint8Array}}
  */
-export function render(data: Uint8Array, size: number, text: string, layout: Layout): { width: number, height: number, coverage: Uint8Array } {
+export function render(data: Uint8Array, size: number, text: string, layout: Layout, hinting = false): { width: number, height: number, coverage: Uint8Array } {
     const font = loadFont(data);
     const scale = size / font.unitsPerEm;
+    let hinter: Hinter | null = null;
+    if (hinting && font.outlines === 'glyf') {
+        hinter = hinters.get(font) ?? null;
+        if (!hinter) hinters.set(font, hinter = new Hinter(font));
+        if (!hinter.hasInstructions) hinter = null;
+    }
+    // whole pixel placement only makes sense for hinted outlines
+    hinting = hinter !== null;
     const ascent = Math.ceil(font.ascender * scale);
     const lineHeight = Math.ceil((font.ascender - font.descender + font.lineGap) * scale);
 
@@ -78,15 +93,23 @@ export function render(data: Uint8Array, size: number, text: string, layout: Lay
         let g = glyphs.get(codepoint);
         if (!g) {
             const index = font.glyphIndex(codepoint);
-            const path = font.outline(index);
-            g = { index, advance: font.advance(index) * scale, ink: inkExtent(path, scale), bitmaps: [] };
+            const hinted = hinter && hinter.glyph(index, size);
+            if (hinted) g = { index, path: hinted.path, scale: 1, advance: hinted.advance, ink: inkExtent(hinted.path, 1), bitmaps: [] };
+            else {
+                const path = font.outline(index);
+                const advance = font.advance(index) * scale;
+                g = { index, path, scale, advance: hinting ? Math.round(advance) : advance, ink: inkExtent(path, scale), bitmaps: [] };
+            }
             glyphs.set(codepoint, g);
         }
         return g;
     };
 
     const kerning = font.kerning;
-    const kern = kerning ? (left: Glyph, right: Glyph): number => kerning(left.index, right.index) * scale : () => 0;
+    const kern = kerning ? (left: Glyph, right: Glyph): number => {
+        const k = kerning(left.index, right.index) * scale;
+        return hinting ? Math.round(k) : k;
+    } : () => 0;
     const lines = wrap(text, layout, glyph, kern);
 
     // lines that fit into maxHeight, chosen by the vertical alignment
@@ -105,8 +128,9 @@ export function render(data: Uint8Array, size: number, text: string, layout: Lay
     const coverage = new Uint8Array(width * height);
 
     visible.forEach((line, n) => {
-        const offset = layout.horizontalAlign === 'right' ? width - line.extent
+        let offset = layout.horizontalAlign === 'right' ? width - line.extent
             : layout.horizontalAlign === 'center' ? (width - line.extent) / 2 : 0;
+        if (hinting) offset = Math.round(offset);
         const baseline = ascent + n * lineHeight;
 
         for (const { x, glyph: g } of line.glyphs) {
@@ -117,7 +141,7 @@ export function render(data: Uint8Array, size: number, text: string, layout: Lay
             const pixel = Math.floor(position);
             const subpixel = Math.round((position - pixel) * SUBPIXELS);
 
-            if (g.bitmaps[subpixel] === undefined) g.bitmaps[subpixel] = rasterizeGlyph(font.outline(g.index), scale, subpixel / SUBPIXELS);
+            if (g.bitmaps[subpixel] === undefined) g.bitmaps[subpixel] = rasterizeGlyph(g.path, g.scale, subpixel / SUBPIXELS);
             const bitmap = g.bitmaps[subpixel];
             if (bitmap) blit(coverage, width, height, bitmap, pixel + bitmap.left, baseline - bitmap.top);
         }
@@ -307,6 +331,10 @@ export class Rasterizer {
 
     line(x0: number, y0: number, x1: number, y1: number): void {
         if (y0 === y1) return;
+        // outlines lie within the bitmap, but subdividing curves can land a hair outside (e.g. -1e-17 for points on the
+        // left edge, common with hinting); such segments would be dropped (their row index is negative)
+        x0 = x0 < 0 ? 0 : x0 > this.width ? this.width : x0;
+        x1 = x1 < 0 ? 0 : x1 > this.width ? this.width : x1;
 
         let dir = 1;
         if (y0 > y1) {
@@ -324,7 +352,8 @@ export class Rasterizer {
         for (let y = Math.max(0, y0 | 0); y < yEnd; y++) {
             const lineStart = y * w;
             const dy = Math.min(y + 1, y1) - Math.max(y, y0);
-            const xNext = x + dxdy * dy;
+            let xNext = x + dxdy * dy;
+            xNext = xNext < 0 ? 0 : xNext > w ? w : xNext;
             const d = dy * dir;
             const xa = x < xNext ? x : xNext, xb = x < xNext ? xNext : x;
 

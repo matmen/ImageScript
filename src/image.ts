@@ -49,6 +49,12 @@ export interface TextStyle {
     strokeWidth?: number;
     /** Color of the outline. Default: `0x000000ff` */
     strokeColor?: Color;
+    /**
+     * Whether to run the hinting instructions of TrueType fonts, which align stems and edges with the pixel grid for
+     * crisper text at small sizes (like Windows renders text); the glyphs of hinted fonts are then placed on whole
+     * pixels. Fonts without instructions (and CFF/OpenType outlines) aren't affected. Default: `true`
+     */
+    hinting?: boolean;
 }
 
 /** Options of {@link Image.cropCircle} */
@@ -1754,11 +1760,11 @@ export class Image {
      * @return The rendered text
      */
     static async renderText(font: BinaryData, size: number, text: string, color: Color = 0xffffffff, layout: TextLayout = new TextLayout(), style: TextStyle = {}): Promise<Image> {
-        const { strokeWidth = 0, strokeColor = 0x000000ff } = style;
+        const { strokeWidth = 0, strokeColor = 0x000000ff, hinting = true } = style;
         if (isNaN(strokeWidth) || strokeWidth < 0)
             throw new RangeError('Invalid stroke width');
 
-        const rendered = textRenderer.render(view(font), size, text, layout);
+        const rendered = textRenderer.render(view(font), size, text, layout, hinting);
         const [r, g, b, a] = Image.colorToRGBA(color);
 
         // the outline needs room around the glyphs
