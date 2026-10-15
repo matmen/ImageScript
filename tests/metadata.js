@@ -16,12 +16,12 @@ const latin1 = (data, text) => Buffer.from(data).includes(Buffer.from(text, 'lat
 
     const encoders = {
         png: m => image.encode(m),
-        jpeg: m => image.encodeJPEG(90, m),
-        webp: m => image.encodeWebP(m),
-        tga: m => image.encodeTGA(m),
-        gif: m => animation.encodeGIF(95, m),
-        apng: m => animation.encodeAPNG(1, m),
-        'animated webp': m => animation.encodeWebP(m)
+        jpeg: m => image.encodeJPEG({quality: 90, metadata: m}),
+        webp: m => image.encodeWebP({metadata: m}),
+        tga: m => image.encodeTGA({metadata: m}),
+        gif: m => animation.encodeGIF({metadata: m}),
+        apng: m => animation.encodeAPNG({metadata: m}),
+        'animated webp': m => animation.encodeWebP({metadata: m})
     };
 
     // every format names the software by default, '' leaves it out, and the files still decode
@@ -55,11 +55,11 @@ const latin1 = (data, text) => Buffer.from(data).includes(Buffer.from(text, 'lat
     }
 
     // GIF: comment extensions
-    if (!has(await animation.encodeGIF(95, metadata), Buffer.from([0x21, 0xfe, 9, ...Buffer.from('a comment'), 0]))) panic('gif: comment extension missing');
+    if (!has(await animation.encodeGIF({metadata}), Buffer.from([0x21, 0xfe, 9, ...Buffer.from('a comment'), 0]))) panic('gif: comment extension missing');
 
     // TGA: extension area, referenced by the footer
     {
-        const tga = Buffer.from(await image.encodeTGA({...metadata, comment: 'line 1\n' + 'x'.repeat(100)}));
+        const tga = Buffer.from(await image.encodeTGA({metadata: {...metadata, comment: 'line 1\n' + 'x'.repeat(100)}}));
         const area = tga.readUInt32LE(tga.length - 26);
         if (tga.readUInt16LE(area) !== 495) panic('tga: extension area missing');
         const field = (offset, size) => tga.subarray(area + offset, area + offset + size).toString().split('\0')[0];

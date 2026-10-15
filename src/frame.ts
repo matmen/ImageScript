@@ -1,4 +1,5 @@
-import { Image, ResizeMode } from './image.ts';
+import { Image, ResizeMode, ResizeOptions } from './image.ts';
+import { isOptions } from './util/options.ts';
 
 /** Names of the frame disposal modes, see {@link Frame.disposalMode} */
 export type FrameDisposalModeName = 'any' | 'keep' | 'previous' | 'background';
@@ -6,6 +7,18 @@ export type FrameDisposalModeName = 'any' | 'keep' | 'previous' | 'background';
 export type FrameDisposalModeId = 0 | 1 | 2 | 3;
 
 const DISPOSAL_MODES: readonly FrameDisposalModeName[] = ['any', 'keep', 'previous', 'background'];
+
+/** Options of {@link Frame} and {@link Frame.from} */
+export interface FrameOptions {
+    /** The frame's duration in milliseconds. Default: `100` */
+    duration?: number;
+    /** The frame's offset on the x-axis. Default: `0` */
+    xOffset?: number;
+    /** The frame's offset on the y-axis. Default: `0` */
+    yOffset?: number;
+    /** The frame's disposal mode, see {@link Frame.disposalMode}. Default: `'keep'` */
+    disposalMode?: FrameDisposalModeName | FrameDisposalModeId;
+}
 
 /**
  * Represents a frame of an {@link Animation}
@@ -54,20 +67,28 @@ export class Frame extends Image {
 
     /**
      * Creates a new, blank frame
+     * @param options See {@link FrameOptions}
+     */
+    constructor(width: number, height: number, options?: FrameOptions);
+    /**
+     * Creates a new, blank frame
      * @param duration The frame's duration (in ms)
      * @param xOffset The frame's offset on the x-axis
      * @param yOffset The frame's offset on the y-axis
      * @param disposalMode The frame's disposal mode
      */
-    constructor(width: number, height: number, duration = 100, xOffset = 0, yOffset = 0, disposalMode: FrameDisposalModeName | FrameDisposalModeId = Frame.DISPOSAL_KEEP) {
+    constructor(width: number, height: number, duration?: number, xOffset?: number, yOffset?: number, disposalMode?: FrameDisposalModeName | FrameDisposalModeId);
+    constructor(width: number, height: number, durationOrOptions?: number | FrameOptions, xOffset?: number, yOffset?: number, disposalMode?: FrameDisposalModeName | FrameDisposalModeId) {
+        const { duration = 100, xOffset: x = 0, yOffset: y = 0, disposalMode: disposal = Frame.DISPOSAL_KEEP } =
+            isOptions(durationOrOptions) ? durationOrOptions : { duration: durationOrOptions, xOffset, yOffset, disposalMode };
         if (isNaN(duration) || duration < 0)
             throw new RangeError('Invalid frame duration');
 
         super(width, height);
         this.duration = duration;
-        this.xOffset = xOffset;
-        this.yOffset = yOffset;
-        this.disposalMode = disposalMode;
+        this.xOffset = x;
+        this.yOffset = y;
+        this.disposalMode = disposal;
     }
 
     /** The frame's disposal mode (`'any'`, `'keep'`, `'previous'` or `'background'`); also settable by id (0-3) */
@@ -95,16 +116,24 @@ export class Frame extends Image {
     /**
      * Converts an Image instance to a Frame, cloning it in the process
      * @param image The image to create the frame from
+     * @param options See {@link FrameOptions}
+     */
+    static from(image: Image, options?: FrameOptions): Frame;
+    /**
+     * Converts an Image instance to a Frame, cloning it in the process
+     * @param image The image to create the frame from
      * @param duration The frame's duration (in ms)
      * @param xOffset The frame's offset on the x-axis
      * @param yOffset The frame's offset on the y-axis
      * @param disposalMode The frame's disposal mode
      */
-    static from(image: Image, duration?: number, xOffset?: number, yOffset?: number, disposalMode: FrameDisposalModeName | FrameDisposalModeId = Frame.DISPOSAL_KEEP): Frame {
+    static from(image: Image, duration?: number, xOffset?: number, yOffset?: number, disposalMode?: FrameDisposalModeName | FrameDisposalModeId): Frame;
+    static from(image: Image, durationOrOptions?: number | FrameOptions, xOffset?: number, yOffset?: number, disposalMode?: FrameDisposalModeName | FrameDisposalModeId): Frame {
         if (!(image instanceof Image))
             throw new TypeError('Invalid image passed');
 
-        const frame = new Frame(image.width, image.height, duration, xOffset, yOffset, disposalMode);
+        const options = isOptions(durationOrOptions) ? durationOrOptions : { duration: durationOrOptions, xOffset, yOffset, disposalMode };
+        const frame = new Frame(image.width, image.height, options);
         frame.bitmap.set(image.bitmap);
 
         return frame;
@@ -114,17 +143,17 @@ export class Frame extends Image {
      * Clones the frame, including its duration, offsets and disposal mode
      */
     override clone(): Frame {
-        return Frame.from(this, this.duration, this.xOffset, this.yOffset, this.disposalMode);
+        return Frame.from(this, { duration: this.duration, xOffset: this.xOffset, yOffset: this.yOffset, disposalMode: this.disposalMode });
     }
 
     /**
      * Resizes the frame, scaling its offsets along with it
      */
-    override resize(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
+    override resize(width: number, height: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
         const originalWidth = this.width;
         const originalHeight = this.height;
 
-        super.resize(width, height, mode);
+        super.resize(width, height, modeOrOptions as ResizeMode);
 
         this.xOffset = Math.round(this.xOffset * this.width / originalWidth);
         this.yOffset = Math.round(this.yOffset * this.height / originalHeight);

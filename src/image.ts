@@ -13,6 +13,7 @@ import { Metadata, resolveMetadata, pngText, exifData } from './metadata.ts';
 import { encode as utf8 } from './util/utf8.ts';
 import { resample, BOX, TRIANGLE, CUBIC } from './util/resample.ts';
 import { gaussianBlur, premultiply, unpremultiply } from './util/blur.ts';
+import { isOptions } from './util/options.ts';
 
 /** A color as a 32-bit RGBA integer (`0xRRGGBBAA`) */
 export type Color = number;
@@ -32,10 +33,78 @@ export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' 
 
 /** Options of {@link Image.composite} */
 export interface CompositeOptions {
+    /** The x position to place the source at, if the options are the second argument. Default: `0` */
+    x?: number;
+    /** The y position to place the source at, if the options are the second argument. Default: `0` */
+    y?: number;
     /** Opacity of the source (0..1). Default: `1` */
     opacity?: number;
     /** How the colors are mixed. Default: `'normal'` */
     mode?: BlendMode;
+}
+
+/** Options of {@link Image.scale}, {@link Image.resize}, {@link Image.contain}, {@link Image.fit} and {@link Image.cover} */
+export interface ResizeOptions {
+    /** The resizing mode. Default: {@link Image.RESIZE_BILINEAR} */
+    mode?: ResizeMode;
+}
+
+/**
+ * Options of {@link Image.opacity}, {@link Image.red}, {@link Image.green}, {@link Image.blue}, {@link Image.lightness}
+ * and {@link Image.saturation}
+ */
+export interface AdjustOptions {
+    /** Whether to set the value (true) or scale the current one (false). Default: `false` */
+    absolute?: boolean;
+}
+
+/** Options of {@link Image.sharpen} */
+export interface SharpenOptions {
+    /** How strongly to sharpen (0 does nothing). Default: `1` */
+    amount?: number;
+    /** The radius of the blur the image is compared with (larger values sharpen coarser details). Default: `1` */
+    radius?: number;
+}
+
+/** Options of {@link Image.encode} */
+export interface PNGEncodeOptions {
+    /** The compression level (0-9). Default: `1` */
+    compression?: number;
+    /** Metadata to include, see {@link Metadata} */
+    metadata?: Metadata;
+}
+
+/** Options of {@link Image.encodeJPEG} */
+export interface JPEGEncodeOptions {
+    /** The JPEG quality (1-100), chroma subsampling is disabled above 90. Default: `90` */
+    quality?: number;
+    /** Metadata to include, see {@link Metadata} */
+    metadata?: Metadata;
+}
+
+/** Options of {@link Image.encodeWebP} and {@link Image.encodeTGA} */
+export interface EncodeOptions {
+    /** Metadata to include, see {@link Metadata} */
+    metadata?: Metadata;
+}
+
+/** Options of {@link Image.renderSVG} */
+export interface SVGOptions {
+    /** The scale, or the width or height in pixels, see `mode`. Default: `1` */
+    size?: number;
+    /**
+     * What `size` is: one of {@link Image.SVG_MODE_SCALE}, {@link Image.SVG_MODE_WIDTH}, {@link Image.SVG_MODE_HEIGHT}.
+     * Default: {@link Image.SVG_MODE_SCALE}
+     */
+    mode?: SVGScaleMode;
+}
+
+/** Options of {@link Image.renderText}: the text color and layout, and its style (see {@link TextStyle}) */
+export interface TextOptions extends TextStyle {
+    /** The text color. Default: `0xffffffff` */
+    color?: Color;
+    /** The text layout. Default: `new TextLayout()` */
+    layout?: TextLayout;
 }
 
 /** Options of {@link Image.decode} */
@@ -482,10 +551,17 @@ export class Image {
     /**
      * Resizes the image by the given factor
      * @param factor The factor to resize the image with
+     * @param options See {@link ResizeOptions}
+     */
+    scale(factor: number, options?: ResizeOptions): this;
+    /**
+     * Resizes the image by the given factor
+     * @param factor The factor to resize the image with
      * @param [mode=Image.RESIZE_BILINEAR] The resizing mode to use
      */
-    scale(factor: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
-        const image = this.__scale__(factor, mode);
+    scale(factor: number, mode?: ResizeMode): this;
+    scale(factor: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
+        const image = this.__scale__(factor, resizeMode(modeOrOptions));
         return this.__apply__(image);
     }
 
@@ -501,10 +577,21 @@ export class Image {
      * Use {@link Image.RESIZE_AUTO} as either width or height to automatically preserve the aspect ratio.
      * @param width The new width
      * @param height The new height
+     * @param options See {@link ResizeOptions}
+     * @returns The resized image
+     */
+    resize(width: number, height: number, options?: ResizeOptions): this;
+    /**
+     * Resizes the image to the given dimensions.
+     * Use {@link Image.RESIZE_AUTO} as either width or height to automatically preserve the aspect ratio.
+     * @param width The new width
+     * @param height The new height
      * @param [mode=Image.RESIZE_BILINEAR] The resizing mode to use
      * @returns The resized image
      */
-    resize(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
+    resize(width: number, height: number, mode?: ResizeMode): this;
+    resize(width: number, height: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
+        const mode = resizeMode(modeOrOptions);
         const image = this.__resize__(width, height, mode);
         return this.__apply__(image);
     }
@@ -514,10 +601,21 @@ export class Image {
      * Can return an image with one axis smaller than the given bounding box.
      * @param width The width of the bounding box
      * @param height The height of the bounding box
+     * @param options See {@link ResizeOptions}
+     * @returns The resized image
+     */
+    contain(width: number, height: number, options?: ResizeOptions): this;
+    /**
+     * Resizes the image so it is contained in the given bounding box.
+     * Can return an image with one axis smaller than the given bounding box.
+     * @param width The width of the bounding box
+     * @param height The height of the bounding box
      * @param [mode=Image.RESIZE_BILINEAR] The resizing mode to use
      * @returns The resized image
      */
-    contain(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
+    contain(width: number, height: number, mode?: ResizeMode): this;
+    contain(width: number, height: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
+        const mode = resizeMode(modeOrOptions);
         width = Math.floor(width);
         height = Math.floor(height);
         // round instead of flooring the scaled size, so the limiting axis matches the box exactly
@@ -530,10 +628,21 @@ export class Image {
      * Always returns the exact dimensions of the bounding box.
      * @param width The width of the bounding box
      * @param height The height of the bounding box
+     * @param options See {@link ResizeOptions}
+     * @returns The resized image
+     */
+    fit(width: number, height: number, options?: ResizeOptions): this;
+    /**
+     * Resizes the image so it is contained in the given bounding box, placing it in the center of the given bounding box.
+     * Always returns the exact dimensions of the bounding box.
+     * @param width The width of the bounding box
+     * @param height The height of the bounding box
      * @param [mode=Image.RESIZE_BILINEAR] The resizing mode to use
      * @returns The resized image
      */
-    fit(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
+    fit(width: number, height: number, mode?: ResizeMode): this;
+    fit(width: number, height: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
+        const mode = resizeMode(modeOrOptions);
         const result = new Image(width, height);
         this.contain(width, height, mode);
         result.composite(this, (width - this.width) / 2, (height - this.height) / 2);
@@ -545,10 +654,21 @@ export class Image {
      * Always returns the exact dimensions of the bounding box.
      * @param width The width of the bounding box
      * @param height The height of the bounding box
+     * @param options See {@link ResizeOptions}
+     * @returns The resized image
+     */
+    cover(width: number, height: number, options?: ResizeOptions): this;
+    /**
+     * Resizes the image so it covers the given bounding box, cropping the overflowing edges.
+     * Always returns the exact dimensions of the bounding box.
+     * @param width The width of the bounding box
+     * @param height The height of the bounding box
      * @param [mode=Image.RESIZE_BILINEAR] The resizing mode to use
      * @returns The resized image
      */
-    cover(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): this {
+    cover(width: number, height: number, mode?: ResizeMode): this;
+    cover(width: number, height: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
+        const mode = resizeMode(modeOrOptions);
         width = Math.floor(width);
         height = Math.floor(height);
         const scale = Math.max(width / this.width, height / this.height);
@@ -779,9 +899,17 @@ export class Image {
     /**
      * Sets the images opacity
      * @param opacity The opacity to apply (0..1)
+     * @param options See {@link AdjustOptions}
+     */
+    opacity(opacity: number, options?: AdjustOptions): this;
+    /**
+     * Sets the images opacity
+     * @param opacity The opacity to apply (0..1)
      * @param absolute Whether to scale the current opacity (false) or just set the new opacity (true)
      */
-    opacity(opacity: number, absolute = false): this {
+    opacity(opacity: number, absolute?: boolean): this;
+    opacity(opacity: number, absoluteOrOptions: boolean | AdjustOptions = false): this {
+        const absolute = isOptions(absoluteOrOptions) ? absoluteOrOptions.absolute ?? false : absoluteOrOptions;
         if (isNaN(opacity) || opacity < 0)
             throw new RangeError('Invalid opacity value');
 
@@ -793,9 +921,17 @@ export class Image {
     /**
      * Scales or sets the red channel
      * @param factor The factor to multiply the channel with (>= 0, results are clamped), or the value (0..1) to set it to
+     * @param options See {@link AdjustOptions}
+     */
+    red(factor: number, options?: AdjustOptions): this;
+    /**
+     * Scales or sets the red channel
+     * @param factor The factor to multiply the channel with (>= 0, results are clamped), or the value (0..1) to set it to
      * @param absolute Whether to scale the current value (false) or set every pixel's red channel to `factor` * 255 (true)
      */
-    red(factor: number, absolute = false): this {
+    red(factor: number, absolute?: boolean): this;
+    red(factor: number, absoluteOrOptions: boolean | AdjustOptions = false): this {
+        const absolute = isOptions(absoluteOrOptions) ? absoluteOrOptions.absolute ?? false : absoluteOrOptions;
         if (isNaN(factor) || factor < 0)
             throw new RangeError('Invalid red factor');
 
@@ -807,9 +943,17 @@ export class Image {
     /**
      * Scales or sets the green channel
      * @param factor The factor to multiply the channel with (>= 0, results are clamped), or the value (0..1) to set it to
+     * @param options See {@link AdjustOptions}
+     */
+    green(factor: number, options?: AdjustOptions): this;
+    /**
+     * Scales or sets the green channel
+     * @param factor The factor to multiply the channel with (>= 0, results are clamped), or the value (0..1) to set it to
      * @param absolute Whether to scale the current value (false) or set every pixel's green channel to `factor` * 255 (true)
      */
-    green(factor: number, absolute = false): this {
+    green(factor: number, absolute?: boolean): this;
+    green(factor: number, absoluteOrOptions: boolean | AdjustOptions = false): this {
+        const absolute = isOptions(absoluteOrOptions) ? absoluteOrOptions.absolute ?? false : absoluteOrOptions;
         if (isNaN(factor) || factor < 0)
             throw new RangeError('Invalid green factor');
 
@@ -821,9 +965,17 @@ export class Image {
     /**
      * Scales or sets the blue channel
      * @param factor The factor to multiply the channel with (>= 0, results are clamped), or the value (0..1) to set it to
+     * @param options See {@link AdjustOptions}
+     */
+    blue(factor: number, options?: AdjustOptions): this;
+    /**
+     * Scales or sets the blue channel
+     * @param factor The factor to multiply the channel with (>= 0, results are clamped), or the value (0..1) to set it to
      * @param absolute Whether to scale the current value (false) or set every pixel's blue channel to `factor` * 255 (true)
      */
-    blue(factor: number, absolute = false): this {
+    blue(factor: number, absolute?: boolean): this;
+    blue(factor: number, absoluteOrOptions: boolean | AdjustOptions = false): this {
+        const absolute = isOptions(absoluteOrOptions) ? absoluteOrOptions.absolute ?? false : absoluteOrOptions;
         if (isNaN(factor) || factor < 0)
             throw new RangeError('Invalid blue factor');
 
@@ -847,9 +999,17 @@ export class Image {
     /**
      * Sets the brightness of the image
      * @param value The lightness to apply (0..1)
+     * @param options See {@link AdjustOptions}
+     */
+    lightness(value: number, options?: AdjustOptions): this;
+    /**
+     * Sets the brightness of the image
+     * @param value The lightness to apply (0..1)
      * @param absolute Whether to scale the current lightness (false) or just set the new lightness (true)
      */
-    lightness(value: number, absolute = false): this {
+    lightness(value: number, absolute?: boolean): this;
+    lightness(value: number, absoluteOrOptions: boolean | AdjustOptions = false): this {
+        const absolute = isOptions(absoluteOrOptions) ? absoluteOrOptions.absolute ?? false : absoluteOrOptions;
         if (isNaN(value) || value < 0)
             throw new RangeError('Invalid lightness value');
 
@@ -859,9 +1019,17 @@ export class Image {
     /**
      * Sets the saturation of the image
      * @param value The saturation to apply (0..1)
+     * @param options See {@link AdjustOptions}
+     */
+    saturation(value: number, options?: AdjustOptions): this;
+    /**
+     * Sets the saturation of the image
+     * @param value The saturation to apply (0..1)
      * @param absolute Whether to scale the current saturation (false) or just set the new saturation (true)
      */
-    saturation(value: number, absolute = false): this {
+    saturation(value: number, absolute?: boolean): this;
+    saturation(value: number, absoluteOrOptions: boolean | AdjustOptions = false): this {
+        const absolute = isOptions(absoluteOrOptions) ? absoluteOrOptions.absolute ?? false : absoluteOrOptions;
         if (isNaN(value) || value < 0)
             throw new RangeError('Invalid saturation value');
 
@@ -869,14 +1037,23 @@ export class Image {
     }
 
     /**
+     * Composites (overlays) the source onto this image
+     * @param source The image to place
+     * @param options Position, opacity and blend mode, see {@link CompositeOptions}
+     */
+    composite(source: Image, options?: CompositeOptions): this;
+    /**
      * Composites (overlays) the source onto this image at the specified coordinates
      * @param source The image to place
      * @param [x=0] The x position to place the image at
      * @param [y=0] The y position to place the image at
      * @param options Opacity and blend mode, see {@link CompositeOptions}
      */
-    composite(source: Image, x = 0, y = 0, options: CompositeOptions = {}): this {
+    composite(source: Image, x?: number, y?: number, options?: CompositeOptions): this;
+    composite(source: Image, xOrOptions: number | CompositeOptions = 0, yArgument = 0, optionsArgument: CompositeOptions = {}): this {
+        const options = isOptions(xOrOptions) ? xOrOptions : optionsArgument;
         const { opacity = 1, mode = 'normal' } = options;
+        let x = isOptions(xOrOptions) ? xOrOptions.x ?? 0 : xOrOptions, y = isOptions(xOrOptions) ? xOrOptions.y ?? 0 : yArgument;
         x |= 0;
         y |= 0;
 
@@ -1086,10 +1263,17 @@ export class Image {
 
     /**
      * Sharpens the image with an unsharp mask: the difference to a blurred copy is amplified
+     * @param options See {@link SharpenOptions}
+     */
+    sharpen(options?: SharpenOptions): this;
+    /**
+     * Sharpens the image with an unsharp mask: the difference to a blurred copy is amplified
      * @param [amount=1] How strongly to sharpen (0 does nothing)
      * @param [radius=1] The radius of the blur the image is compared with (larger values sharpen coarser details)
      */
-    sharpen(amount = 1, radius = 1): this {
+    sharpen(amount?: number, radius?: number): this;
+    sharpen(amountOrOptions: number | SharpenOptions = 1, radiusArgument = 1): this {
+        const { amount = 1, radius = 1 } = isOptions(amountOrOptions) ? amountOrOptions : { amount: amountOrOptions, radius: radiusArgument };
         if (isNaN(amount) || amount < 0)
             throw new RangeError('Invalid sharpen amount');
         if (isNaN(radius) || radius <= 0)
@@ -1549,6 +1733,12 @@ export class Image {
     /**
      * Encodes the image into a PNG, with the smallest lossless color type (a palette for up to 256 colors,
      * greyscale or RGB, alpha only if needed). Uses the runtime's native zlib when available
+     * @param options See {@link PNGEncodeOptions}
+     * @return The encoded data
+     */
+    encode(options?: PNGEncodeOptions): Promise<Uint8Array>;
+    /**
+     * Encodes the image into a PNG
      * @param compression The compression level (0-9). Default: `1`
      * @param metadata Metadata to include, see {@link Metadata}
      * @return The encoded data
@@ -1560,11 +1750,13 @@ export class Image {
      * @return The encoded data
      */
     encode(metadata?: Metadata): Promise<Uint8Array>;
-    async encode(compression: number | Metadata = 1, metadata: Metadata = {}): Promise<Uint8Array> {
-        if (typeof compression === 'object' && compression !== null) {
-            metadata = compression;
-            compression = 1;
-        }
+    async encode(compressionOrOptions: number | PNGEncodeOptions | Metadata = 1, metadataArgument: Metadata = {}): Promise<Uint8Array> {
+        let compression = 1, metadata = metadataArgument;
+        if (!isOptions(compressionOrOptions)) compression = compressionOrOptions;
+        // the options and the metadata have no key in common: an object with neither is empty, the same either way
+        else if ('compression' in compressionOrOptions || 'metadata' in compressionOrOptions)
+            ({ compression = 1, metadata = {} } = compressionOrOptions as PNGEncodeOptions);
+        else metadata = compressionOrOptions as Metadata;
 
         const level = Math.min(9, Math.max(0, ~~compression));
         return png.encodeRGBA(this.__bytes__(), this.width, this.height, level, pngText(resolveMetadata(metadata)));
@@ -1573,35 +1765,42 @@ export class Image {
     /**
      * Encodes the image into a PNG, an alias of {@link Image.encode}
      */
+    encodePNG(options?: PNGEncodeOptions): Promise<Uint8Array>;
     encodePNG(compression?: number, metadata?: Metadata): Promise<Uint8Array>;
     encodePNG(metadata?: Metadata): Promise<Uint8Array>;
-    encodePNG(compression?: number | Metadata, metadata?: Metadata): Promise<Uint8Array> {
-        return this.encode(compression as number, metadata);
+    encodePNG(compressionOrOptions?: number | PNGEncodeOptions | Metadata, metadata?: Metadata): Promise<Uint8Array> {
+        return this.encode(compressionOrOptions as number, metadata);
     }
 
     /**
      * Encodes the image into a JPEG
-     * @param [quality=90] The JPEG quality to use (1-100), chroma subsampling is disabled above 90
-     * @param metadata Metadata to include, see {@link Metadata}
+     * @param options See {@link JPEGEncodeOptions}
      */
-    async encodeJPEG(quality = 90, metadata: Metadata = {}): Promise<Uint8Array> {
+    encodeJPEG(options?: JPEGEncodeOptions): Promise<Uint8Array>;
+    /**
+     * Encodes the image into a JPEG
+     * @param [quality=90] The JPEG quality to use (1-100), chroma subsampling is disabled above 90
+     */
+    encodeJPEG(quality?: number): Promise<Uint8Array>;
+    async encodeJPEG(qualityOrOptions: number | JPEGEncodeOptions = 90): Promise<Uint8Array> {
+        const { quality = 90, metadata = {} } = isOptions(qualityOrOptions) ? qualityOrOptions : { quality: qualityOrOptions };
         const m = resolveMetadata(metadata);
         return jpeg.encode(this.__bytes__(), this.width, this.height, quality, { exif: exifData(m), comment: m.comment ? utf8(m.comment) : undefined });
     }
 
     /**
      * Encodes the image as lossless WebP (usually 20-30% smaller than PNG, but slower to encode)
-     * @param metadata Metadata to include, see {@link Metadata}
+     * @param options See {@link EncodeOptions}
      */
-    async encodeWebP(metadata: Metadata = {}): Promise<Uint8Array> {
+    async encodeWebP({ metadata = {} }: EncodeOptions = {}): Promise<Uint8Array> {
         return webp.encode(this.__bytes__(), this.width, this.height, exifData(resolveMetadata(metadata)));
     }
 
     /**
      * Encodes the image as run length encoded TGA (32 bit, or 24 bit if the image is opaque)
-     * @param metadata Metadata to include, see {@link Metadata}
+     * @param options See {@link EncodeOptions}
      */
-    async encodeTGA(metadata: Metadata = {}): Promise<Uint8Array> {
+    async encodeTGA({ metadata = {} }: EncodeOptions = {}): Promise<Uint8Array> {
         const { author, comment, creationTime: time, software } = resolveMetadata(metadata);
         return tga.encode(this.__bytes__(), this.width, this.height, { author, comment, time, software });
     }
@@ -1693,11 +1892,20 @@ export class Image {
      * Supports shapes, paths, transforms, use/symbol, CSS styles, gradients, strokes, clip paths, masks and opacity;
      * text, images, filters and patterns are not rendered
      * @param svg The SVG content
+     * @param options See {@link SVGOptions}
+     * @return The rendered SVG graphic
+     */
+    static renderSVG(svg: string | BinaryData, options?: SVGOptions): Promise<Image>;
+    /**
+     * Creates a new image from the given SVG
+     * @param svg The SVG content
      * @param size The size to use
      * @param mode The SVG resizing mode to use (one of {@link SVG_MODE_SCALE}, {@link SVG_MODE_WIDTH}, {@link SVG_MODE_HEIGHT})
      * @return The rendered SVG graphic
      */
-    static async renderSVG(svg: string | BinaryData, size = 1, mode: SVGScaleMode = Image.SVG_MODE_SCALE): Promise<Image> {
+    static renderSVG(svg: string | BinaryData, size?: number, mode?: SVGScaleMode): Promise<Image>;
+    static async renderSVG(svg: string | BinaryData, sizeOrOptions: number | SVGOptions = 1, modeArgument: SVGScaleMode = Image.SVG_MODE_SCALE): Promise<Image> {
+        const { size = 1, mode = Image.SVG_MODE_SCALE } = isOptions(sizeOrOptions) ? sizeOrOptions : { size: sizeOrOptions, mode: modeArgument };
         if (![1, 2, 3].includes(mode))
             throw new Error('Invalid SVG scaling mode');
 
@@ -1718,13 +1926,25 @@ export class Image {
      * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use
      * @param size Font size in pixels (per em)
      * @param text Text to render
+     * @param options Color, layout and style, see {@link TextOptions}; the image grows by the outline width on every
+     *     side
+     * @return The rendered text
+     */
+    static renderText(font: BinaryData, size: number, text: string, options?: TextOptions): Promise<Image>;
+    /**
+     * Creates a new image containing the rendered text.
+     * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use
+     * @param size Font size in pixels (per em)
+     * @param text Text to render
      * @param [color=0xffffffff] Text color to use
      * @param [layout] The text layout to use
      * @param style Outline, see {@link TextStyle}; the image grows by the outline width on every side
      * @return The rendered text
      */
-    static async renderText(font: BinaryData, size: number, text: string, color: Color = 0xffffffff, layout: TextLayout = new TextLayout(), style: TextStyle = {}): Promise<Image> {
-        const { strokeWidth = 0, strokeColor = 0x000000ff, hinting = true } = style;
+    static renderText(font: BinaryData, size: number, text: string, color?: Color, layout?: TextLayout, style?: TextStyle): Promise<Image>;
+    static async renderText(font: BinaryData, size: number, text: string, colorOrOptions: Color | TextOptions = 0xffffffff, layoutArgument?: TextLayout, styleArgument: TextStyle = {}): Promise<Image> {
+        const options: TextOptions = isOptions(colorOrOptions) ? colorOrOptions : { ...styleArgument, color: colorOrOptions, layout: layoutArgument };
+        const { color = 0xffffffff, layout = new TextLayout(), strokeWidth = 0, strokeColor = 0x000000ff, hinting = true } = options;
         if (isNaN(strokeWidth) || strokeWidth < 0)
             throw new RangeError('Invalid stroke width');
 
@@ -1817,6 +2037,11 @@ function hue2rgb(p: number, q: number, t: number): number {
     if (t < 1 / 2) return q;
     if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
     return p;
+}
+
+// the resize mode of a positional argument or options object
+function resizeMode(modeOrOptions?: ResizeMode | ResizeOptions): ResizeMode {
+    return (isOptions(modeOrOptions) ? modeOrOptions.mode : modeOrOptions) ?? Image.RESIZE_BILINEAR;
 }
 
 // separable blend functions of normalized channel values (W3C Compositing and Blending Level 1)
