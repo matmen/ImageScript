@@ -64,10 +64,13 @@ export function encode({ width, height, loopCount = -1, frames }: Omit<GIFData, 
         writeSubBlocks(out, comment);
     }
 
-    for (const frame of frames) {
-        // frames that restore the background have a transparent index: decoders like Pillow and ffmpeg restore to
-        // it (browsers to transparent), otherwise to the background color
-        const { palette, indices, transparentIndex } = quantize(frame.pixels, frame.width, { quality, transparent: frame.dispose === 3 });
+    // frames that restore the background have a transparent index: decoders like Pillow and ffmpeg restore to it
+    // (browsers to transparent), otherwise to the background color. So does the first frame then: Pillow decides by it
+    // whether the animation has transparency at all
+    const restores = frames.some(frame => frame.dispose === 3);
+    for (const [i, frame] of frames.entries()) {
+        const transparent = frame.dispose === 3 || (i === 0 && restores);
+        const { palette, indices, transparentIndex } = quantize(frame.pixels, frame.width, { quality, transparent });
         const entries = palette.length / 3;
         const bits = Math.max(1, Math.ceil(Math.log2(entries)));
 
