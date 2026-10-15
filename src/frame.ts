@@ -1,4 +1,4 @@
-import { Image, ResizeMode, ResizeOptions } from './image.ts';
+import { Image, ResizeMode, ResizeOptions, Color, TrimOptions } from './image.ts';
 import { isOptions } from './util/options.ts';
 
 /** Names of the frame disposal modes, see {@link Frame.disposalMode} */
@@ -144,6 +144,19 @@ export class Frame extends Image {
      */
     override clone(): Frame {
         return Frame.from(this, { duration: this.duration, xOffset: this.xOffset, yOffset: this.yOffset, disposalMode: this.disposalMode });
+    }
+
+    /**
+     * Removes borders of one color, moving the frame's offsets so the remaining pixels stay in place
+     * @param color The border color, by default the color of the top left pixel
+     * @param options See {@link TrimOptions}
+     */
+    override trim(color?: Color, options: TrimOptions = {}): this {
+        const bounds = this.__trim_bounds__(color, options);
+        if (!bounds) return this;
+        this.xOffset += bounds[0];
+        this.yOffset += bounds[1];
+        return this.__apply__(this.__crop__(...bounds));
     }
 
     /**

@@ -163,6 +163,15 @@ export interface RotateOptions {
     resize?: boolean;
 }
 
+/** Options of {@link Image.trim} */
+export interface TrimOptions {
+    /**
+     * How far (0-1) a pixel's channels may be from the color for it to be trimmed, e.g. for JPEG artifacts or
+     * antialiasing. Default: `0`
+     */
+    tolerance?: number;
+}
+
 /** Options of {@link Image.colorToAlpha} */
 export interface ColorToAlphaOptions {
     /** Pixels at most this far from the color (0-1) become fully transparent. Default: 0 */
@@ -753,6 +762,56 @@ export class Image {
             throw new RangeError('Crop region does not overlap the image');
 
         return this.__apply__(this.__crop__(left, top, right - left, bottom - top));
+    }
+
+    /**
+     * Removes borders of one color, e.g. the empty space around rendered text or around a logo on a solid background.
+     * Frames keep their position: their offsets move by the trimmed amount. An image that only has the color stays
+     * unchanged
+     * @param color The border color, by default the color of the top left pixel. Fully transparent pixels count as the
+     *     same color whatever their RGB values
+     * @param options See {@link TrimOptions}
+     */
+    trim(color?: Color, options: TrimOptions = {}): this {
+        const bounds = this.__trim_bounds__(color, options);
+        return bounds ? this.__apply__(this.__crop__(...bounds)) : this;
+    }
+
+    /**
+     * The area that remains after trimming as [x, y, width, height], null if nothing would remain
+     * @internal
+     */
+    protected __trim_bounds__(color: Color | undefined, { tolerance = 0 }: TrimOptions): [number, number, number, number] | null {
+        if (!(tolerance >= 0 && tolerance <= 1)) throw new RangeError('Invalid tolerance, it has to be between 0 and 1');
+
+        const bitmap = this.bitmap;
+        const { width, height } = this;
+        const c = color === undefined ? [bitmap[0], bitmap[1], bitmap[2], bitmap[3]] : [color >>> 24, color >> 16 & 255, color >> 8 & 255, color & 255];
+        const limit = tolerance * 255;
+        const matches = (x: number, y: number): boolean => {
+            const i = (y * width + x) * 4;
+            if (Math.abs(bitmap[i + 3] - c[3]) > limit) return false;
+            // transparent pixels have no color
+            if (bitmap[i + 3] === 0 && c[3] === 0) return true;
+            return Math.abs(bitmap[i] - c[0]) <= limit && Math.abs(bitmap[i + 1] - c[1]) <= limit && Math.abs(bitmap[i + 2] - c[2]) <= limit;
+        };
+        const rowMatches = (y: number): boolean => {
+            for (let x = 0; x < width; x++) if (!matches(x, y)) return false;
+            return true;
+        };
+        const columnMatches = (x: number, top: number, bottom: number): boolean => {
+            for (let y = top; y < bottom; y++) if (!matches(x, y)) return false;
+            return true;
+        };
+
+        let top = 0, bottom = height;
+        while (top < height && rowMatches(top)) top++;
+        if (top === height) return null;
+        while (rowMatches(bottom - 1)) bottom--;
+        let left = 0, right = width;
+        while (columnMatches(left, top, bottom)) left++;
+        while (columnMatches(right - 1, top, bottom)) right--;
+        return [left, top, right - left, bottom - top];
     }
 
     /**
