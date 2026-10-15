@@ -1,6 +1,7 @@
 import * as png from './codecs/png.ts';
 import * as jpeg from './codecs/jpeg.ts';
 import * as tiff from './codecs/tiff.ts';
+import * as webp from './codecs/webp.ts';
 import * as quantize from './codecs/quantize.ts';
 import * as textRenderer from './render/text.ts';
 import * as svgRenderer from './render/svg.ts';
@@ -37,7 +38,7 @@ export interface CompositeOptions {
 
 /** Options of {@link Image.decode} */
 export interface DecodeOptions {
-    /** Whether to rotate/mirror JPEGs, TIFFs and PNGs as their orientation tag (Exif or XMP) says. Default: `true` */
+    /** Whether to rotate/mirror JPEGs, TIFFs, PNGs and WebPs as their orientation tag (Exif or XMP) says. Default: `true` */
     applyOrientation?: boolean;
 }
 
@@ -1576,7 +1577,15 @@ export class Image {
     }
 
     /**
-     * Decodes an image (PNG, JPEG or TIFF)
+     * Encodes the image as lossless WebP (usually 20-30% smaller than PNG, but slower to encode)
+     */
+    async encodeWebP(): Promise<Uint8Array> {
+        return webp.encode(this.__bytes__(), this.width, this.height);
+    }
+
+    /**
+     * Decodes an image (PNG, JPEG, TIFF or WebP). For APNGs this is the default image; animated WebPs and GIFs have
+     * no single image, decode those with {@link Animation.decode}
      * @param input The binary data to decode
      * @param options See {@link DecodeOptions}. JPEGs, TIFFs and PNGs are rotated/mirrored as their orientation tag
      *     (Exif, for PNGs also XMP) says by default: photos taken with a rotated camera are stored sideways
@@ -1591,7 +1600,10 @@ export class Image {
         if (ImageType.isPNG(dataView)) decoded = await png.decode(data);
         else if (ImageType.isJPEG(dataView)) decoded = jpeg.decode(data);
         else if (ImageType.isTIFF(dataView)) decoded = await tiff.decode(data);
-        else throw new Error('Unsupported image type');
+        else if (ImageType.isWebP(dataView)) {
+            if (webp.isAnimated(data)) throw new Error('Animated WebPs have to be decoded with Animation.decode()');
+            decoded = webp.decode(data);
+        } else throw new Error('Unsupported image type');
 
         const image = new Image(decoded.width, decoded.height);
         image.bitmap.set(decoded.pixels);

@@ -4,15 +4,20 @@
 
 ### New
 
+- **WebP decoding**: lossy, lossless, with alpha and animated (#19, #20). Still images decode with `Image.decode()`,
+  animated ones with `Animation.decode()`. The output is bit-exact with libwebp (checked against libwebp's test
+  vectors and their reference checksums).
+- **WebP encoding** (lossless): `Image.encodeWebP()`, typically 20-30% smaller than PNG.
 - **APNG** decoding and encoding (#6): `Animation.decode()` reads animated PNGs (broken animations fall back to the
   default image, like browsers do), `Animation.encodeAPNG()` writes them with full alpha. `Image.decode()` still
   returns an APNG's default image.
-- **`Animation`**, the base class of `GIF`: an array of frames that decodes GIF and APNG (`Animation.decode()`) and
-  encodes `encodeGIF()` and `encodeAPNG()`. `GIF` keeps its API.
+- **`Animation`**, the base class of `GIF`: an array of frames that decodes GIF, APNG and WebP
+  (`Animation.decode()`) and encodes `encodeGIF()`, `encodeAPNG()` and `encodeWebP()`. `GIF` keeps its API.
+- `decode()` returns animated WebPs as `Animation`; `ImageType` recognizes WebP (`isWebP()`, `getType() === 'webp'`).
 
 ### Deprecated
 
-- **`GIF`**: use `Animation`, which works the same and also handles APNG (`new GIF(frames).encode()` becomes
+- **`GIF`**: use `Animation`, which works the same and also handles APNG and WebP (`new GIF(frames).encode()` becomes
   `new Animation(frames).encodeGIF()`, `GIF.decode()` becomes `Animation.decode()`). `GIF` will be removed in 4.0.
 
 ## 3.0.0

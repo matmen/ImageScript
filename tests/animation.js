@@ -31,7 +31,7 @@ const square = (color, w, h) => new Image(w, h).fill((x, y) => (x + y) % 5 === 0
         ], 2);
         const reference = expected(animation);
 
-        for (const format of ['APNG']) {
+        for (const format of ['APNG', 'WebP']) {
             const bytes = await animation[`encode${format}`]();
             const back = await Animation.decode(bytes);
             if (back.length !== 4 || back.loopCount !== 2) panic(`${format}: wrong frame or loop count`);
@@ -58,7 +58,7 @@ const square = (color, w, h) => new Image(w, h).fill((x, y) => (x + y) % 5 === 0
     // loop counts: -1 forever, 0 once, n repeats
     for (const loopCount of [-1, 0, 5]) {
         const two = new Animation([Frame.from(still), Frame.from(still)], loopCount);
-        for (const format of ['APNG', 'GIF'])
+        for (const format of ['APNG', 'WebP', 'GIF'])
             if ((await Animation.decode(await two[`encode${format}`]())).loopCount !== loopCount) panic(`${format}: loop count ${loopCount} not kept`);
     }
 })();
