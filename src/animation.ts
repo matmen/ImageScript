@@ -5,6 +5,7 @@ import { BinaryData, view } from './util/mem.ts';
 import { Image, ResizeMode, ResizeOptions } from './image.ts';
 import { Frame } from './frame.ts';
 import { ImageType } from './image-type.ts';
+import { optimize, OptimizeOptions, OptimizedFrame } from './util/optimize.ts';
 import { Metadata, resolveMetadata, pngText, exifData, gifComments } from './metadata.ts';
 import { isOptions } from './util/options.ts';
 
@@ -163,44 +164,47 @@ export class Animation extends Array<Frame> {
     }
 
     /**
-     * Encodes the animation as GIF
+     * Encodes the animation as GIF. Like all encoders, it stores each frame as the area that changed since the frame
+     * before and merges identical frames, so the file decodes to what the animation shows, but not necessarily to the
+     * same frames. Semi-transparent pixels become opaque or transparent after the frames are composited
      * @param options See {@link GIFEncodeOptions}
      */
     encodeGIF(options?: GIFEncodeOptions): Promise<Uint8Array>;
     /**
-     * Encodes the animation as GIF
+     * Encodes the animation as GIF. Like all encoders, it stores each frame as the area that changed since the frame
+     * before and merges identical frames, so the file decodes to what the animation shows, but not necessarily to the
+     * same frames. Semi-transparent pixels become opaque or transparent after the frames are composited
      * @param quality 1-100, scales the palette size from 8 colors (1) to 256 colors (90 and above)
      */
     encodeGIF(quality?: number): Promise<Uint8Array>;
     async encodeGIF(qualityOrOptions: number | GIFEncodeOptions = 95): Promise<Uint8Array> {
         const { quality = 95, metadata = {} } = isOptions(qualityOrOptions) ? qualityOrOptions : { quality: qualityOrOptions };
         this.__validate__();
-        const frames: gifCodec.GIFFrame[] = [];
-
-        for (const frame of this)
-            frames.push({
-                x: frame.xOffset,
-                y: frame.yOffset,
-                width: frame.width,
-                height: frame.height,
-                // gifs store centiseconds; rounding keeps e.g. 16 ms (60 fps) from becoming 10 ms
-                delay: Math.round(frame.duration / 10),
-                dispose: frame.__disposal_id__,
-                pixels: new Uint8Array(frame.bitmap.buffer, frame.bitmap.byteOffset, frame.bitmap.byteLength)
-            });
+        const frames = this.__optimized__({ replace: false, even: false }).map(f => ({
+            x: f.x,
+            y: f.y,
+            width: f.width,
+            height: f.height,
+            // gifs store centiseconds; rounding keeps e.g. 16 ms (60 fps) from becoming 10 ms
+            delay: Math.round(f.duration / 10),
+            dispose: f.dispose ? 3 : 1,
+            pixels: f.pixels
+        }));
 
         return gifCodec.encode({ width: this.width, height: this.height, loopCount: this.loopCount, frames }, quality, gifComments(resolveMetadata(metadata)));
     }
 
     /**
      * Encodes the animation as APNG (animated PNG, lossless and with full alpha). Viewers without APNG support show
-     * the first frame
+     * the first frame. Each frame is stored as the area that changed since the frame before, identical frames are
+     * merged: the file shows exactly the same animation, but doesn't necessarily decode to the same frames
      * @param options See {@link APNGEncodeOptions}
      */
     encodeAPNG(options?: APNGEncodeOptions): Promise<Uint8Array>;
     /**
      * Encodes the animation as APNG (animated PNG, lossless and with full alpha). Viewers without APNG support show
-     * the first frame
+     * the first frame. Each frame is stored as the area that changed since the frame before, identical frames are
+     * merged: the file shows exactly the same animation, but doesn't necessarily decode to the same frames
      * @param compression The zlib compression level (0-9), higher is smaller but slower
      */
     encodeAPNG(compression?: number): Promise<Uint8Array>;
@@ -209,40 +213,31 @@ export class Animation extends Array<Frame> {
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
 
-        return png.encodeAnimation(this.__apngFrames__(), this.width, this.height, toPlays(this.loopCount), compression, pngText(resolveMetadata(metadata)));
+        const frames = this.__optimized__({ replace: true, even: false }).map(f => ({ ...f, dispose: f.dispose ? 1 : 0 }));
+        return png.encodeAnimation(frames, this.width, this.height, toPlays(this.loopCount), compression, pngText(resolveMetadata(metadata)));
     }
 
     /**
-     * Encodes the animation as lossless animated WebP
+     * Encodes the animation as lossless animated WebP. Each frame is stored as the area that changed since the frame
+     * before, identical frames are merged: the file shows exactly the same animation, but doesn't necessarily decode
+     * to the same frames
      * @param options See {@link AnimationEncodeOptions}
      */
     async encodeWebP({ metadata = {} }: AnimationEncodeOptions = {}): Promise<Uint8Array> {
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
-        const width = this.width, height = this.height;
-        const exif = exifData(resolveMetadata(metadata));
 
-        // WebP knows no "previous" disposal and stores offsets halved: such animations are stored as full frames
-        const fullFrames = this.some(f => f.disposalMode === 'previous' || (f.disposalMode === 'background' && (f.xOffset & 1 || f.yOffset & 1)));
-        if (fullFrames) {
-            const canvases = png.compositeAnimation({ width, height, frames: this.__apngFrames__() });
-            return webp.encodeAnimation(canvases.map(c => ({ x: 0, y: 0, width, height, duration: c.duration, dispose: true, pixels: c.pixels })), width, height, toPlays(this.loopCount), exif);
-        }
+        const frames = this.__optimized__({ replace: true, even: true });
+        return webp.encodeAnimation(frames, this.width, this.height, toPlays(this.loopCount), exifData(resolveMetadata(metadata)));
+    }
 
-        const frames = Array.from(this, frame => {
-            let { xOffset: x, yOffset: y, width: w, height: h } = frame;
-            let pixels = new Uint8Array(frame.bitmap.buffer, frame.bitmap.byteOffset, frame.bitmap.byteLength);
-            // odd offsets: one transparent pixel more on the left/top (blending makes it invisible)
-            if (x & 1 || y & 1) {
-                const dx = x & 1, dy = y & 1;
-                const padded = new Uint8Array((w + dx) * (h + dy) * 4);
-                for (let row = 0; row < h; row++) padded.set(pixels.subarray(row * w * 4, (row + 1) * w * 4), ((row + dy) * (w + dx) + dx) * 4);
-                pixels = padded;
-                x -= dx; y -= dy; w += dx; h += dy;
-            }
-            return { x, y, width: w, height: h, duration: frame.duration, dispose: frame.disposalMode === 'background', pixels };
-        });
-        return webp.encodeAnimation(frames, width, height, toPlays(this.loopCount), exif);
+    /**
+     * The frames as the encoders store them: each frame only covers what changed since the one before (see
+     * util/optimize.ts)
+     * @internal
+     */
+    __optimized__(options: OptimizeOptions): OptimizedFrame[] {
+        return optimize(this.__apngFrames__(), this.width, this.height, options);
     }
 
     /** @internal frames in the APNG codec's terms (alpha blended, disposal 0 none, 1 background, 2 previous) */

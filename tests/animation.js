@@ -57,7 +57,8 @@ const square = (color, w, h) => new Image(w, h).fill((x, y) => (x + y) % 5 === 0
 
     // loop counts: -1 forever, 0 once, n repeats
     for (const loopCount of [-1, 0, 5]) {
-        const two = new Animation([Frame.from(still), Frame.from(still)], loopCount);
+        // (different frames: identical ones are merged, and a single frame has no loop count)
+        const two = new Animation([Frame.from(still), Frame.from(still.clone().invert())], loopCount);
         for (const format of ['APNG', 'WebP', 'GIF'])
             if ((await Animation.decode(await two[`encode${format}`]())).loopCount !== loopCount) panic(`${format}: loop count ${loopCount} not kept`);
     }

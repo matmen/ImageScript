@@ -13,6 +13,8 @@ const WR = 3, WG = 4, WB = 2;
 export interface QuantizeOptions {
     maxColors?: number;
     quality?: number;
+    /** whether to have a transparent index even if no pixel is transparent */
+    transparent?: boolean;
 }
 
 export interface Quantized {
@@ -59,9 +61,9 @@ interface Box {
     error: number;
 }
 
-export function quantize(pixels: Uint8Array, width: number, { maxColors = 256, quality = 95 }: QuantizeOptions = {}): Quantized {
+export function quantize(pixels: Uint8Array, width: number, { maxColors = 256, quality = 95, transparent = false }: QuantizeOptions = {}): Quantized {
     const length = pixels.length >> 2;
-    let hasTransparency = false;
+    let hasTransparency = transparent;
     for (let i = 3; i < pixels.length; i += 4)
         if (pixels[i] < 128) {
             hasTransparency = true;

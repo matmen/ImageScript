@@ -327,7 +327,9 @@ export interface WebPEncodeFrame {
     duration: number;
     /** whether the frame's area is cleared after it was shown */
     dispose: boolean;
-    /** RGBA, alpha blended onto the canvas */
+    /** whether the frame is alpha blended onto the canvas, otherwise it replaces its area. Default: true */
+    blend?: boolean;
+    /** RGBA */
     pixels: Uint8Array;
 }
 
@@ -361,7 +363,7 @@ export function encodeAnimation(frames: WebPEncodeFrame[], width: number, height
         set24(header, 6, f.width - 1);
         set24(header, 9, f.height - 1);
         set24(header, 12, Math.min(0xffffff, Math.max(0, Math.round(f.duration))));
-        header[15] = f.dispose ? 1 : 0; // blending (bit 1 unset) and disposal
+        header[15] = (f.blend === false ? 2 : 0) | (f.dispose ? 1 : 0); // no blending, disposal
         const body = new Uint8Array(16 + bitstream.length);
         body.set(header);
         body.set(bitstream, 16);

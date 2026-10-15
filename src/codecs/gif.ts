@@ -65,7 +65,9 @@ export function encode({ width, height, loopCount = -1, frames }: Omit<GIFData, 
     }
 
     for (const frame of frames) {
-        const { palette, indices, transparentIndex } = quantize(frame.pixels, frame.width, { quality });
+        // frames that restore the background have a transparent index: decoders like Pillow and ffmpeg restore to
+        // it (browsers to transparent), otherwise to the background color
+        const { palette, indices, transparentIndex } = quantize(frame.pixels, frame.width, { quality, transparent: frame.dispose === 3 });
         const entries = palette.length / 3;
         const bits = Math.max(1, Math.ceil(Math.log2(entries)));
 
