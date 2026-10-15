@@ -1,9 +1,17 @@
 {
   "name": "@matmen/imagescript",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "license": "MIT",
   "exports": "./src/index.ts",
   "publish": {
-    "include": ["src", "README.md", "LICENSE", "LICENSE.MIT", "LICENSE.AGPL-3.0", "THIRD_PARTY_NOTICES.md", "licenses"]
+    "include": [
+      "src",
+      "README.md",
+      "LICENSE",
+      "LICENSE.MIT",
+      "LICENSE.AGPL-3.0",
+      "THIRD_PARTY_NOTICES.md",
+      "licenses"
+    ]
   }
 }
