@@ -4,6 +4,11 @@ name: jsr
 # linked to this repository on jsr.io). release.yml runs it after npm; can also be run by hand from the Actions tab
 on:
   workflow_call:
+    inputs:
+      version:
+        description: version to publish (release.yml passes the released one; empty keeps jsr.json's)
+        type: string
+        default: ''
   workflow_dispatch:
 
 permissions:
@@ -18,6 +23,14 @@ jobs:
       url: https://jsr.io/@matmen/imagescript/versions
     steps:
     - uses: actions/checkout@v7
+    - if: inputs.version != ''
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24.x
+    - if: inputs.version != ''
+      run: node scripts/version.js "$VERSION"
+      env:
+        VERSION: ${{ inputs.version }}
     - uses: denoland/setup-deno@v2
       with:
         deno-version: v2.x

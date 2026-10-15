@@ -4,6 +4,11 @@ name: docs
 # npm, so the site documents what is on npm; can also be run by hand from the Actions tab
 on:
   workflow_call:
+    inputs:
+      version:
+        description: version to document (release.yml passes the released one; empty keeps package.json's)
+        type: string
+        default: ''
   workflow_dispatch:
 
 permissions:
@@ -25,6 +30,10 @@ jobs:
         node-version: 24.x
 
     - run: npm install
+    - if: inputs.version != ''
+      run: node scripts/version.js "$VERSION"
+      env:
+        VERSION: ${{ inputs.version }}
     - run: npm run docs
 
     - uses: actions/configure-pages@v6
