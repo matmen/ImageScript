@@ -55,12 +55,23 @@ const rgba = (image, x, y) => image.getRGBAAt(x, y).join();
     for (const image of [
         new Image(50, 7).fill((x, y) => Image.rgbaToColor(x * 5, y * 30, (x >> 2) * 40, x % 3 ? 255 : 100)),
         new Image(300, 2).fill(0x336699ff),
-        new Image(1, 1).fill(0x00000000)
+        new Image(1, 1).fill(0x00000000),
+        // a header per pixel: one pixel rows, alternating
+        new Image(1, 300).fill((x, y) => y & 1 ? 0xffffffff : 0x000000ff)
     ]) {
         const encoded = await image.encodeTGA();
         if (ImageType.getType(encoded) !== 'tga') panic('encoded TGA not recognized');
         const back = await Image.decode(encoded);
         if (!Buffer.from(back.bitmap).equals(Buffer.from(image.bitmap))) panic(`TGA: ${image.width}x${image.height} didn't round trip`);
+
+        // packets don't cross rows
+        const bpp = encoded[16] / 8;
+        for (let o = 18, pixel = 0; pixel < image.width * image.height;) {
+            const n = (encoded[o] & 127) + 1;
+            if (Math.floor(pixel / image.width) !== Math.floor((pixel + n - 1) / image.width)) panic(`TGA: ${image.width}x${image.height} has a packet across rows`);
+            o += 1 + (encoded[o] & 128 ? bpp : n * bpp);
+            pixel += n;
+        }
     }
     const opaque = await new Image(4, 4).fill(0xff0000ff).encodeTGA();
     if (opaque[16] !== 24) panic('TGA: opaque images should be stored with 24 bits');
