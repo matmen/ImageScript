@@ -341,34 +341,29 @@ function decodeImage(reader: BitReader, width: number, height: number, isMain: b
 const average2 = (a: number, b: number): number => (((a ^ b) & 0xfefefefe) >>> 1) + (a & b) >>> 0;
 
 // per channel (a + b - c) clamped to 0..255
+const clamp255 = (v: number): number => v < 0 ? 0 : v > 255 ? 255 : v;
+
 function clampAddSubtractFull(a: number, b: number, c: number): number {
-    let out = 0;
-    for (let shift = 0; shift < 32; shift += 8) {
-        const v = (a >>> shift & 255) + (b >>> shift & 255) - (c >>> shift & 255);
-        out |= (v < 0 ? 0 : v > 255 ? 255 : v) << shift;
-    }
-    return out >>> 0;
+    return (clamp255((a & 255) + (b & 255) - (c & 255))
+        | clamp255((a >>> 8 & 255) + (b >>> 8 & 255) - (c >>> 8 & 255)) << 8
+        | clamp255((a >>> 16 & 255) + (b >>> 16 & 255) - (c >>> 16 & 255)) << 16
+        | clamp255((a >>> 24) + (b >>> 24) - (c >>> 24)) << 24) >>> 0;
 }
 
 // per channel a + (a - b) / 2 clamped to 0..255 (C division, truncating)
 function clampAddSubtractHalf(a: number, b: number): number {
-    let out = 0;
-    for (let shift = 0; shift < 32; shift += 8) {
-        const ac = a >>> shift & 255, d = ac - (b >>> shift & 255);
-        const v = ac + (d / 2 | 0);
-        out |= (v < 0 ? 0 : v > 255 ? 255 : v) << shift;
-    }
-    return out >>> 0;
+    const a0 = a & 255, a1 = a >>> 8 & 255, a2 = a >>> 16 & 255, a3 = a >>> 24;
+    return (clamp255(a0 + ((a0 - (b & 255)) / 2 | 0))
+        | clamp255(a1 + ((a1 - (b >>> 8 & 255)) / 2 | 0)) << 8
+        | clamp255(a2 + ((a2 - (b >>> 16 & 255)) / 2 | 0)) << 16
+        | clamp255(a3 + ((a3 - (b >>> 24)) / 2 | 0)) << 24) >>> 0;
 }
 
 function select(l: number, t: number, tl: number): number {
-    let pl = 0, pt = 0;
-    for (let shift = 0; shift < 32; shift += 8) {
-        const lc = l >>> shift & 255, tc = t >>> shift & 255, tlc = tl >>> shift & 255;
-        // distance of the estimate (l + t - tl) to l and to t
-        pl += Math.abs(tc - tlc);
-        pt += Math.abs(lc - tlc);
-    }
+    const tl0 = tl & 255, tl1 = tl >>> 8 & 255, tl2 = tl >>> 16 & 255, tl3 = tl >>> 24;
+    // distance of the estimate (l + t - tl) to l and to t
+    const pl = Math.abs((t & 255) - tl0) + Math.abs((t >>> 8 & 255) - tl1) + Math.abs((t >>> 16 & 255) - tl2) + Math.abs((t >>> 24) - tl3);
+    const pt = Math.abs((l & 255) - tl0) + Math.abs((l >>> 8 & 255) - tl1) + Math.abs((l >>> 16 & 255) - tl2) + Math.abs((l >>> 24) - tl3);
     return pl < pt ? l : t;
 }
 
@@ -807,13 +802,19 @@ function tokenize(pixels: Uint32Array, width: number, cacheBits: number): Stream
         let bestLength = 0, bestDistance = 0;
 
         // the pixel to the left and the one above are the cheapest references
-        for (const d of [1, width]) {
-            if (d > i) continue;
-            const l = matchLength(i, i - d);
-            if (l > bestLength) { bestLength = l; bestDistance = d; }
+        if (i >= 1) {
+            const l = matchLength(i, i - 1);
+            if (l > bestLength) { bestLength = l; bestDistance = 1; }
+        }
+        if (width <= i) {
+            const l = matchLength(i, i - width);
+            if (l > bestLength) { bestLength = l; bestDistance = width; }
         }
         if (i + 1 < n && bestLength < MAX_LENGTH) {
             for (let j = head[hash(i)], k = 0; j >= 0 && k < CHAIN && i - j <= WINDOW; j = chain[j], k++) {
+                // the chain goes from near to far: a candidate no closer than the best one only wins by being
+                // longer, which it can't be if it differs right after the best length
+                if (i - j >= bestDistance && (i + bestLength >= n || pixels[j + bestLength] !== pixels[i + bestLength])) continue;
                 const l = matchLength(i, j);
                 // longer, or as long and closer
                 if (l > bestLength || l === bestLength && l > 0 && i - j < bestDistance) { bestLength = l; bestDistance = i - j; }
@@ -902,12 +903,8 @@ const subPixels = (a: number, b: number): number => ((a | 0x00ff00ff) - (b & 0xf
 
 // cost estimate of a residual: sum of the channels' distances to zero (as signed bytes)
 function residualCost(r: number): number {
-    let cost = 0;
-    for (let shift = 0; shift < 32; shift += 8) {
-        const c = r >>> shift & 255;
-        cost += c < 128 ? c : 256 - c;
-    }
-    return cost;
+    const c0 = r & 255, c1 = r >>> 8 & 255, c2 = r >>> 16 & 255, c3 = r >>> 24;
+    return (c0 < 128 ? c0 : 256 - c0) + (c1 < 128 ? c1 : 256 - c1) + (c2 < 128 ? c2 : 256 - c2) + (c3 < 128 ? c3 : 256 - c3);
 }
 
 /**
