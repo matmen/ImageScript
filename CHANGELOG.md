@@ -1,11 +1,27 @@
 # Changelog
 
-## 3.1.1
+## 3.2.0
+
+### New
+
+- **Metadata in every format**: `encodeJPEG()`, `encodeWebP()`, `encodeTGA()` and, for animations, `encodeGIF()`,
+  `encodeAPNG()` and `encodeWebP()` take the same metadata as `encode()` (now called `Metadata`). Each format stores
+  the fields it has a place for: Exif and a comment for JPEG, Exif for WebP, comments for GIF, the extension area for
+  TGA, text chunks for PNG and APNG. Like PNGs, all files name ImageScript and its version as the software and
+  include the creation time by default; `{software: ''}` leaves the software out.
+
+### Deprecated
+
+- **`PNGMetadata`**: renamed to `Metadata`, the old name stays an alias until 4.0.
 
 ### Fixes
 
 - TGA encoding: run length encoded packets end with the row, as TGA 2.0 requires. Before, packets could span rows,
   which some readers reject (Pillow fails with "buffer overrun").
+- PNG text metadata: text that isn't Latin-1 (like `©` is, but `Ⓒ` or emoji aren't) is written into `iTXt` chunks as
+  UTF-8 instead of `tEXt`, where readers showed it garbled; text chunks come before the image data, where all readers
+  look for them.
+- An invalid `creationTime` throws a `RangeError` instead of writing "Invalid Date".
 
 ## 3.1.0
 
