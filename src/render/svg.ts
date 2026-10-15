@@ -1010,6 +1010,11 @@ class Layer {
     width: number;
     height: number;
     data: Float32Array;
+    // the rectangle painted so far (everything outside is transparent), so compositing and conversion skip the rest
+    x0 = Infinity;
+    y0 = Infinity;
+    x1 = -Infinity;
+    y1 = -Infinity;
 
     constructor(width: number, height: number) {
         this.width = width;
@@ -1017,10 +1022,18 @@ class Layer {
         this.data = new Float32Array(width * height * 4);
     }
 
+    extend(x0: number, y0: number, x1: number, y1: number): void {
+        this.x0 = Math.min(this.x0, x0);
+        this.y0 = Math.min(this.y0, y0);
+        this.x1 = Math.max(this.x1, x1);
+        this.y1 = Math.max(this.y1, y1);
+    }
+
     // composites a paint through a coverage mask (source over)
     fill({ x0, y0, w, h, data }: Coverage, paint: Paint): void {
         const d = this.data;
         const solid = paint.solid;
+        this.extend(x0, y0, x0 + w, y0 + h);
 
         for (let y = 0; y < h; y++) {
             let i = ((y0 + y) * this.width + x0) * 4;
@@ -1064,18 +1077,23 @@ class Layer {
     }
 
     composite(layer: Layer, opacity: number, mask: Float32Array | null): void {
-        const s = layer.data, d = this.data;
-        for (let p = 0, i = 0; p < this.width * this.height; p++, i += 4) {
-            if (s[i + 3] <= 0) continue;
-            const f = mask ? opacity * mask[p] : opacity;
-            if (f <= 0) continue;
+        if (layer.x1 <= layer.x0) return;
+        this.extend(layer.x0, layer.y0, layer.x1, layer.y1);
 
-            const a = s[i + 3] * f;
-            const inv = 1 - a;
-            d[i] = s[i] * f + d[i] * inv;
-            d[i + 1] = s[i + 1] * f + d[i + 1] * inv;
-            d[i + 2] = s[i + 2] * f + d[i + 2] * inv;
-            d[i + 3] = a + d[i + 3] * inv;
+        const s = layer.data, d = this.data;
+        for (let y = layer.y0; y < layer.y1; y++) {
+            for (let p = y * this.width + layer.x0, end = y * this.width + layer.x1, i = p * 4; p < end; p++, i += 4) {
+                if (s[i + 3] <= 0) continue;
+                const f = mask ? opacity * mask[p] : opacity;
+                if (f <= 0) continue;
+
+                const a = s[i + 3] * f;
+                const inv = 1 - a;
+                d[i] = s[i] * f + d[i] * inv;
+                d[i + 1] = s[i + 1] * f + d[i + 1] * inv;
+                d[i + 2] = s[i + 2] * f + d[i + 2] * inv;
+                d[i + 3] = a + d[i + 3] * inv;
+            }
         }
     }
 
@@ -1083,15 +1101,17 @@ class Layer {
         // clamped arrays round and clamp on assignment
         const out = new Uint8ClampedArray(this.width * this.height * 4);
         const d = this.data;
-        for (let i = 0; i < d.length; i += 4) {
-            const a = d[i + 3];
-            if (a <= 0) continue;
+        for (let y = this.y0; y < this.y1; y++) {
+            for (let i = (y * this.width + this.x0) * 4, end = (y * this.width + this.x1) * 4; i < end; i += 4) {
+                const a = d[i + 3];
+                if (a <= 0) continue;
 
-            const f = a >= 1 ? 255 : 255 / a;
-            out[i] = d[i] * f;
-            out[i + 1] = d[i + 1] * f;
-            out[i + 2] = d[i + 2] * f;
-            out[i + 3] = a * 255;
+                const f = a >= 1 ? 255 : 255 / a;
+                out[i] = d[i] * f;
+                out[i + 1] = d[i + 1] * f;
+                out[i + 2] = d[i + 2] * f;
+                out[i + 3] = a * 255;
+            }
         }
         return new Uint8Array(out.buffer);
     }
