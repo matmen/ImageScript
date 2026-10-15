@@ -1,4 +1,8 @@
-// WebP lossless (VP8L) bitstream, as specified in RFC 9649 section 3 onwards
+/*!
+ * WebP lossless (VP8L) bitstream, as specified in RFC 9649 ("WebP Image Format") section 3 onwards, including its
+ * table of short distance codes. Copyright (c) 2024 IETF Trust and the persons identified as the document authors,
+ * Revised BSD License (see THIRD_PARTY_NOTICES.md)
+ */
 
 /** decoded VP8L image: ARGB pixels (0xAARRGGBB) */
 export interface VP8LImage {
