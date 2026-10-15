@@ -35,7 +35,6 @@
 - Text rendering: glyph outlines touching the left edge of their bitmap could come out inverted (a rasterizer
   rounding issue); hinting made it common
 
-
 ## 3.0.0
 
 ImageScript is now written in TypeScript and has no WebAssembly or native binaries anymore. Every codec and renderer
