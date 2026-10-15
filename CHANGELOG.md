@@ -11,9 +11,10 @@
   arguments keep working until 4.0.
 - **Smaller animations**: `encodeGIF()`, `encodeAPNG()` and `encodeWebP()` store each frame as the area that changed
   since the frame before, with unchanged pixels transparent where that compresses better, and merge identical
-  frames. Re-encoding decoded animations (which have every frame as a full image) typically gives files a third of
-  the size, mostly static ones (like screen recordings) a tenth or less; encoding is about as fast as before. APNGs
-  and WebPs show exactly the same animation as before, but don't decode to the same frames anymore.
+  frames. Re-encoding 762 decoded animations (which have every frame as a full image) took 51% (GIF), 63% (APNG) and
+  54% (WebP) of the bytes in total; the less moves, the smaller a file gets, ones where everything moves stay about
+  the same. Large animations encode faster, small ones up to about twice as slow. The files show the same animation as
+  before, but don't decode to the same frames anymore: `{optimize: false}` stores the frames as they are.
 - **Metadata in every format**: `encodeJPEG()`, `encodeWebP()`, `encodeTGA()` and, for animations, `encodeGIF()`,
   `encodeAPNG()` and `encodeWebP()` take the same metadata as `encode()` (now called `Metadata`), as the `metadata`
   option: `image.encodeJPEG({quality: 80, metadata: {author: 'me'}})`. Each format stores
