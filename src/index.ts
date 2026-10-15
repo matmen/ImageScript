@@ -7,7 +7,7 @@ import { view } from './util/mem.ts';
 import { ImageType } from './image-type.ts';
 
 export { Image } from './image.ts';
-export type { Color, ColorFunction, ResizeMode, SVGScaleMode, PNGMetadata, TextStyle, DecodeOptions, CompositeOptions, BlendMode, CropCircleOptions, DominantColorOptions, RotateOptions } from './image.ts';
+export type { Color, ColorFunction, ResizeMode, SVGScaleMode, PNGMetadata, TextStyle, DecodeOptions, CompositeOptions, BlendMode, CropCircleOptions, DominantColorOptions, RotateOptions, ColorToAlphaOptions } from './image.ts';
 export { Frame } from './frame.ts';
 export type { FrameDisposalModeName, FrameDisposalModeId } from './frame.ts';
 export { GIF } from './gif.ts';

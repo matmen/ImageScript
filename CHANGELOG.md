@@ -17,6 +17,8 @@
 - **TGA** decoding and encoding (#21): color mapped, truecolor and greyscale, uncompressed and run length encoded, all
   four origins. `Image.decode()` recognizes TGAs by their header (they have no magic number), `encodeTGA()` writes
   run length encoded 24/32 bit files.
+- **`colorToAlpha(color, options)`** (#39): makes a color transparent like GIMP's "Color to Alpha", antialiased edges
+  become translucent instead of keeping a fringe of the removed color. Without a color, the top left pixel's is used.
 
 ### Deprecated
 
