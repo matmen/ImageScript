@@ -85,6 +85,13 @@ see the [changelog](https://github.com/matmen/ImageScript/blob/master/CHANGELOG.
 
 ---
 
+### Benchmarks
+
+[bench/](bench/README.md) compares ImageScript to Jimp, image-js, Photon, sharp and @napi-rs/canvas: speed of decoding,
+encoding, image operations and rendering, encoded file sizes and install sizes. It runs for every release.
+
+---
+
 ### Credits
 
 The deflate/inflate implementation is derived from [fflate](https://github.com/101arrowz/fflate) and the CRC-32 from

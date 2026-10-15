@@ -1,0 +1,19 @@
+{
+  "name": "imagescript-bench",
+  "private": true,
+  "description": "ImageScript compared to other image libraries for Node.js",
+  "type": "module",
+  "scripts": {
+    "bench": "node run.js && node installs.js && node report.js"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "1.0.11",
+    "@silvia-odwyer/photon-node": "0.3.4",
+    "image-js": "1.7.1",
+    "imagescript": "3.1.0",
+    "imagescript-v1": "npm:imagescript@1.3.1",
+    "jimp": "1.6.1",
+    "sharp": "0.35.5",
+    "tinybench": "6.2.2"
+  }
+}

@@ -1,0 +1,68 @@
+name: bench
+
+# runs the library comparison in bench/ and commits the results (results.json, installs.json, charts, README) to the
+# default branch. release.yml runs it after a regular release reached npm, measuring the released version; can also
+# be run by hand from the Actions tab, measuring the version bench/package.json has (or the one given)
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: ImageScript version to measure (release.yml passes the released one)
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      version:
+        description: ImageScript version to measure (empty keeps bench/package.json's)
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bench
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        ref: ${{ github.event.repository.default_branch }}
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24.x
+
+    - run: npm ci --no-audit --no-fund
+    # a version that was just published can take a moment to show up on the registry
+    - if: inputs.version != ''
+      run: |
+        for attempt in 1 2 3 4 5; do
+          npm install --save-exact --no-audit --no-fund "imagescript@$VERSION" && exit 0
+          sleep 30
+        done
+        exit 1
+      env:
+        VERSION: ${{ inputs.version }}
+
+    - run: node run.js
+    - run: node installs.js
+    - run: node report.js
+
+    # pushes with GITHUB_TOKEN don't trigger other workflows; rebases onto anything pushed meanwhile
+    - run: |
+        git add -A .
+        if git diff --cached --quiet; then echo "nothing changed"; exit 0; fi
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git commit -m "benchmark ImageScript $(node -p "require('./node_modules/imagescript/package.json').version")"
+        for attempt in 1 2 3; do
+          git push && exit 0
+          git pull --rebase
+        done
+        exit 1
