@@ -59,8 +59,11 @@ export interface APNGEncodeOptions extends AnimationEncodeOptions {
 }
 
 /**
- * An animation: an array of frames that can be decoded from and encoded to GIF, APNG and WebP.
- * Array methods like map and filter return plain arrays.
+ * An animation: frames ({@link Animation.frames}) that can be decoded from and encoded to GIF, APNG and WebP.
+ *
+ * The animation itself is an array of its frames too (`animation[0]`, `animation.map(...)`), which is deprecated: in 4.0
+ * it won't extend `Array` anymore, use {@link Animation.frames} instead. Array methods like map and filter return
+ * plain arrays.
  */
 export class Animation extends Array<Frame> {
     /** How many times to repeat the animation (-1 = forever, 0 = play once) */
@@ -99,6 +102,24 @@ export class Animation extends Array<Frame> {
         return Array;
     }
 
+    /**
+     * The animation's frames: an array that changes the animation when it's changed (e.g. `push()`, `splice()`, or
+     * setting an index), and can be replaced as a whole
+     */
+    get frames(): Frame[] {
+        return this;
+    }
+
+    /** Replaces the animation's frames */
+    set frames(frames: Frame[]) {
+        frames = Array.from(frames);
+        frames.forEach((frame, i) => {
+            if (!(frame instanceof Frame)) throw new TypeError(`Frame ${i} is not an instance of Frame`);
+        });
+        this.length = 0;
+        for (const frame of frames) this.push(frame);
+    }
+
     /** The animation's width */
     get width(): number {
         let max = 0;
@@ -127,6 +148,8 @@ export class Animation extends Array<Frame> {
     /**
      * Returns a new animation of the same class containing a range of this one's frames
      * (same semantics as Array.prototype.slice)
+     * @deprecated Use `new Animation(animation.frames.slice(start, end), animation.loopCount)`: in 4.0 animations
+     *     aren't arrays anymore
      */
     override slice(start?: number, end?: number): this {
         const Class = this.constructor as new (frames: Frame[], loopCount: number) => this;

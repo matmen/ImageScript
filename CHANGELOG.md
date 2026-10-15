@@ -15,6 +15,8 @@
   54% (WebP) of the bytes in total; the less moves, the smaller a file gets, ones where everything moves stay about
   the same. Large animations encode faster, small ones up to about twice as slow. The files show the same animation as
   before, but don't decode to the same frames anymore: `{optimize: false}` stores the frames as they are.
+- **`Animation.frames`**: the frames of an animation as an array, to use instead of the animation itself (see
+  Deprecated). Changing it (`push()`, `splice()`, …) changes the animation, and it can be replaced as a whole.
 - **Metadata in every format**: `encodeJPEG()`, `encodeWebP()`, `encodeTGA()` and, for animations, `encodeGIF()`,
   `encodeAPNG()` and `encodeWebP()` take the same metadata as `encode()` (now called `Metadata`), as the `metadata`
   option: `image.encodeJPEG({quality: 80, metadata: {author: 'me'}})`. Each format stores
@@ -24,6 +26,10 @@
 
 ### Deprecated
 
+- **Animations as arrays**: `Animation` (and `GIF`) extend `Array`, so `animation[0]`, `animation.length` and
+  `animation.map()` work on the frames. In 4.0 they won't extend `Array` anymore, which makes array methods
+  unambiguous (`map()` can return anything, so it can't return an animation): use `animation.frames`, an array of
+  the frames that changes the animation when it's changed.
 - **`PNGMetadata`**: renamed to `Metadata`, the old name stays an alias until 4.0.
 
 ### Fixes

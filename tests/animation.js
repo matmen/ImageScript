@@ -55,6 +55,20 @@ const square = (color, w, h) => new Image(w, h).fill((x, y) => (x + y) % 5 === 0
     if (!(gif instanceof Animation) || gif.length !== 1) panic('Animation.decode should decode GIFs');
     if (!(gif.slice(0, 1) instanceof Animation)) panic('slice should keep the class');
 
+    // frames: the animation's frames, changing them changes the animation
+    {
+        const animation = new Animation([Frame.from(still)]);
+        if (animation.frames.length !== 1 || animation.frames[0] !== animation[0]) panic('frames should hold the frames');
+        animation.frames.push(Frame.from(still, 50));
+        if (animation.length !== 2 || animation.duration !== 150) panic('frames.push should add a frame');
+        if (!Array.isArray(animation.frames.map(f => f.duration))) panic('frames.map should return an array');
+        animation.frames = animation.frames.filter(f => f.duration === 50);
+        if (animation.length !== 1 || animation[0].duration !== 50) panic('setting frames should replace them');
+        let threw = false;
+        try { animation.frames = [still]; } catch { threw = true; }
+        if (!threw || animation.length !== 1) panic('frames should only take frames');
+    }
+
     // loop counts: -1 forever, 0 once, n repeats
     for (const loopCount of [-1, 0, 5]) {
         // (different frames: identical ones are merged, and a single frame has no loop count)
