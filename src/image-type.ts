@@ -25,6 +25,9 @@ function dataView(data: BinaryData): DataView {
 
 /** Detects image formats by their magic numbers */
 export class ImageType {
+    // only static methods
+    private constructor() {}
+
     /**
      * Gets an image's type from its magic number
      * @param data The image binary to get the type of
