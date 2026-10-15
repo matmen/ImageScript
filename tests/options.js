@@ -31,6 +31,10 @@ const same = (name, a, b) => {
     same('composite', tile().composite(logo, 5, 7, {opacity: 0.5, mode: 'multiply'}), tile().composite(logo, {x: 5, y: 7, opacity: 0.5, mode: 'multiply'}));
     same('composite default', tile().composite(logo), tile().composite(logo, {}));
     same('sharpen', tile().sharpen(2, 3), tile().sharpen({amount: 2, radius: 3}));
+    same('roundCorners', tile().roundCorners(9), tile().roundCorners({radius: 9}));
+    same('roundCorners default', tile().roundCorners(), tile().roundCorners({}));
+    same('fisheye', tile().fisheye(3), tile().fisheye({strength: 3}));
+    same('fisheye default', tile().fisheye(), tile().fisheye({}));
 
     // encoders: decoded, since the metadata has a creation time
     const pixelsOf = async data => (await Image.decode(data)).bitmap;
