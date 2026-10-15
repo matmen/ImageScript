@@ -23,6 +23,9 @@
   the fields it has a place for: Exif and a comment for JPEG, Exif for WebP, comments for GIF, the extension area for
   TGA, text chunks for PNG and APNG. Like PNGs, all files name ImageScript and its version as the software and
   include the creation time by default; `{software: ''}` leaves the software out.
+- **`trim(color, options)`**: removes borders of one color, like the empty space around rendered text or a solid
+  background around a logo. Without a color, the top left pixel's is used; `tolerance` also trims near colors (e.g.
+  JPEG artifacts). Frames keep their position.
 
 ### Performance
 
