@@ -16,8 +16,8 @@ export type { ImageTypeName } from './image-type.ts';
 export type { BinaryData } from './util/mem.ts';
 
 /**
- * Decodes any supported image: GIFs are returned as {@link GIF}, everything else (including APNGs, as their default
- * image) as {@link Image}. {@link Animation.decode} decodes the frames of APNGs
+ * Decodes any supported image: GIFs are returned as {@link GIF} (an {@link Animation}), everything else (including
+ * APNGs, as their default image) as {@link Image}. {@link Animation.decode} decodes the frames of GIFs and APNGs
  * @param data The image data
  * @param onlyExtractFirstFrame Whether to end animation decoding after the first frame
  */

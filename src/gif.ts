@@ -6,6 +6,8 @@ import { Animation } from './animation.ts';
 /**
  * Represents a GIF image as an array of frames, an {@link Animation} whose `encode()` and `decode()` work with GIFs.
  * Array methods like map and filter return plain arrays.
+ * @deprecated Use {@link Animation}, which works the same and also handles APNG: `new Animation(frames, loopCount)`,
+ *     {@link Animation.decode} and {@link Animation.encodeGIF}. `GIF` will be removed in 4.0
  */
 export class GIF extends Animation {
     /**
@@ -24,6 +26,7 @@ export class GIF extends Animation {
     /**
      * Encodes the GIF
      * @param quality 1-100, scales the palette size from 8 colors (1) to 256 colors (90 and above)
+     * @deprecated Use {@link Animation.encodeGIF}
      */
     async encode(quality = 95): Promise<Uint8Array> {
         return this.encodeGIF(quality);
@@ -33,6 +36,7 @@ export class GIF extends Animation {
      * Decodes a GIF into fully composited frames
      * @param input The binary data to decode
      * @param onlyExtractFirstFrame Whether to end GIF decoding after the first frame
+     * @deprecated Use {@link Animation.decode}, which decodes APNGs too
      */
     static override async decode(input: BinaryData, onlyExtractFirstFrame = false): Promise<GIF> {
         const data = view(input);

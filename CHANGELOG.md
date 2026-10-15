@@ -10,6 +10,11 @@
 - **`Animation`**, the base class of `GIF`: an array of frames that decodes GIF and APNG (`Animation.decode()`) and
   encodes `encodeGIF()` and `encodeAPNG()`. `GIF` keeps its API.
 
+### Deprecated
+
+- **`GIF`**: use `Animation`, which works the same and also handles APNG (`new GIF(frames).encode()` becomes
+  `new Animation(frames).encodeGIF()`, `GIF.decode()` becomes `Animation.decode()`). `GIF` will be removed in 4.0.
+
 ## 3.0.0
 
 ImageScript is now written in TypeScript and has no WebAssembly or native binaries anymore. Every codec and renderer
