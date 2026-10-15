@@ -180,7 +180,7 @@ export class Animation extends Array<Frame> {
     async encodeGIF(qualityOrOptions: number | GIFEncodeOptions = 95): Promise<Uint8Array> {
         const { quality = 95, metadata = {} } = isOptions(qualityOrOptions) ? qualityOrOptions : { quality: qualityOrOptions };
         this.__validate__();
-        const frames = this.__optimized__({ replace: false, even: false }).map(f => ({
+        const frames = this.__optimized__({ replace: false, even: false, alpha: 'frame' }).map(f => ({
             x: f.x,
             y: f.y,
             width: f.width,
@@ -213,7 +213,7 @@ export class Animation extends Array<Frame> {
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
 
-        const frames = this.__optimized__({ replace: true, even: false }).map(f => ({ ...f, dispose: f.dispose ? 1 : 0 }));
+        const frames = this.__optimized__({ replace: true, even: false, alpha: frames => png.alphaCost(frames.map(f => f.pixels)) }).map(f => ({ ...f, dispose: f.dispose ? 1 : 0 }));
         return png.encodeAnimation(frames, this.width, this.height, toPlays(this.loopCount), compression, pngText(resolveMetadata(metadata)));
     }
 
@@ -227,7 +227,7 @@ export class Animation extends Array<Frame> {
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
 
-        const frames = this.__optimized__({ replace: true, even: true });
+        const frames = this.__optimized__({ replace: true, even: true, alpha: 'frame' });
         return webp.encodeAnimation(frames, this.width, this.height, toPlays(this.loopCount), exifData(resolveMetadata(metadata)));
     }
 

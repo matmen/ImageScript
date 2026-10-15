@@ -87,6 +87,13 @@ const disc = (size, color) => new Image(size, size).fill((x, y) => {
         new Frame(1, 1, 100, 29, 29).fill(0xffffffff)
     ]));
 
+    // a frame that only clears: GIF can't blend pixels to transparent, the frame before clears its area instead
+    await check('cleared frame', new Animation([
+        Frame.from(new Image(12, 12).drawBox(2, 2, 6, 6, 0xff0000ff), 100, 0, 0, 'background'),
+        new Frame(12, 12, 100),
+        Frame.from(new Image(12, 12).drawBox(4, 4, 6, 6, 0x00ff00ff), 100)
+    ]));
+
     // an empty first frame, and identical frames, which become one with their durations added up (the empty last
     // frame doesn't clear the canvas, so it shows the same too)
     {
@@ -95,6 +102,20 @@ const disc = (size, color) => new Image(size, size).fill((x, y) => {
         await check('empty and identical frames', animation);
         const decoded = await Animation.decode(await animation.encodeAPNG());
         if (decoded.length !== 2 || decoded[0].duration !== 40 || decoded[1].duration !== 255) panic(`identical frames: ${decoded.length} frames, durations ${Array.from(decoded, f => f.duration)}`);
+    }
+
+    // an opaque animation whose frames are smaller sparse, but not by enough to pay for an alpha channel in every APNG
+    // frame: they're filled in again
+    {
+        const background = new Image(40, 20).fill((x, y) => Image.rgbaToColor(y * 6, 100, 200 - y * 4, 255));
+        const animation = new Animation(Array.from({length: 6}, (_, i) => Frame.from(background.clone()
+            .drawBox(1, 1, 6, 6, Image.rgbaToColor(255, i * 40, 0, 255))
+            .drawBox(32, 13, 6, 6, Image.rgbaToColor(0, 255, i * 40, 255)), 100)));
+        await check('opaque animation', animation);
+        // with transparency for free, the frames are sparse; with an alpha channel that costs as much as RGBA instead of RGB
+        // (APNG), they're filled in
+        if (!animation.__optimized__({replace: true, even: false, alpha: () => 1}).slice(1).every(f => f.blend)) panic('opaque animation: expected sparse frames');
+        if (animation.__optimized__({replace: true, even: false, alpha: () => 4 / 3}).some(f => f.blend)) panic('opaque animation: frames weren\'t filled in');
     }
 
     // a mostly static animation (like a screen recording) only stores what changes

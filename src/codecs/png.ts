@@ -155,6 +155,35 @@ interface PixelFormat {
  * Picks the smallest lossless format that fits all the given RGBA images: a palette for up to 256 colors,
  * otherwise greyscale or RGB, with alpha only if a pixel isn't opaque
  */
+/**
+ * How much more an opaque image costs per pixel with transparent pixels than without them, given the pixel formats
+ * (palette, grey or truecolor) both get: e.g. 4/3 for RGBA instead of RGB, 4 for RGBA instead of a palette when the
+ * transparent pixels are the 257th color, 2 for 8 instead of 4 bit palette indices when they're the 17th
+ * @param images RGBA, only the transparent pixels aren't opaque
+ */
+export function alphaCost(images: Uint8Array[]): number {
+    let grey = true;
+    const colors = new Set<number>();
+    for (const rgba of images) {
+        const pixels = new Uint32Array(rgba.buffer, rgba.byteOffset, rgba.length >> 2);
+        let previous = -1;
+        for (let i = 0; i < pixels.length; i++) {
+            const value = pixels[i];
+            if (value === previous) continue;
+            previous = value;
+            const o = i * 4;
+            if (rgba[o + 3] === 0) continue;
+            if (rgba[o] !== rgba[o + 1] || rgba[o] !== rgba[o + 2]) grey = false;
+            if (colors.size <= 256) colors.add(value);
+        }
+    }
+    // bytes per pixel: palette 1/8 to 1 (by its bit depth), grey 1 (with alpha 2), truecolor 3 (with alpha 4)
+    const palette = (entries: number): number => (entries <= 2 ? 1 : entries <= 4 ? 2 : entries <= 16 ? 4 : 8) / 8;
+    const transparent = colors.size < 256 ? palette(colors.size + 1) : grey ? 2 : 4;
+    const opaque = colors.size <= 256 ? palette(colors.size) : grey ? 1 : 3;
+    return transparent / opaque;
+}
+
 function pixelFormat(images: Uint8Array[]): PixelFormat {
     let opaque = true, grey = true;
 
