@@ -1,3 +1,5 @@
+import { encode as utf8 } from '../util/utf8.ts';
+
 // Truevision TGA: color mapped, truecolor and greyscale images, uncompressed or run length encoded
 
 const SIGNATURE = 'TRUEVISION-XFILE.\0';
@@ -164,7 +166,47 @@ export function decode(d: Uint8Array): { width: number, height: number, pixels: 
 /**
  * Encodes RGBA pixels into a run length encoded TGA (32 bit with alpha, 24 bit if opaque), top left origin
  */
-export function encode(rgba: Uint8Array, width: number, height: number): Uint8Array {
+export interface Extension {
+    author?: string;
+    /** up to four lines of 80 bytes */
+    comment?: string;
+    time?: Date;
+    software?: string;
+}
+
+// UTF-8, split into pieces of whole characters of at most `max` bytes
+function pieces(value: string, max: number): Uint8Array[] {
+    const bytes = utf8(value);
+    const out: Uint8Array[] = [];
+    for (let start = 0; start < bytes.length;) {
+        let end = Math.min(bytes.length, start + max);
+        while (end < bytes.length && end > start && (bytes[end] & 0xc0) === 0x80) end--;
+        out.push(bytes.subarray(start, end));
+        start = end;
+    }
+    return out;
+}
+
+// the TGA 2.0 extension area (495 bytes), text fields are NUL terminated
+function extensionArea({ author, comment, time, software }: Extension, alpha: boolean): Uint8Array {
+    const area = new Uint8Array(495);
+    const view = new DataView(area.buffer);
+    view.setUint16(0, 495, true);
+    if (author) area.set(pieces(author, 40)[0], 2);
+    if (comment) {
+        // four lines of 80 bytes, longer lines wrap
+        const lines = comment.split(/\r?\n/).flatMap(line => line ? pieces(line, 80) : [new Uint8Array(0)]).slice(0, 4);
+        lines.forEach((line, i) => area.set(line, 43 + i * 81));
+    }
+    if (time) [time.getUTCMonth() + 1, time.getUTCDate(), time.getUTCFullYear(), time.getUTCHours(), time.getUTCMinutes(), time.getUTCSeconds()]
+        .forEach((v, i) => view.setUint16(367 + i * 2, v, true));
+    if (software) area.set(pieces(software, 40)[0], 426);
+    area[469] = 0x20; // no software version letter
+    area[494] = alpha ? 3 : 0; // attributes type: useful alpha or none
+    return area;
+}
+
+export function encode(rgba: Uint8Array, width: number, height: number, extension?: Extension): Uint8Array {
     if (width < 1 || height < 1 || width > 65535 || height > 65535) throw new RangeError('TGA: dimensions must be 1-65535');
 
     let opaque = true;
@@ -174,8 +216,8 @@ export function encode(rgba: Uint8Array, width: number, height: number): Uint8Ar
     if (rgba.byteOffset % 4) rgba = rgba.slice(0, count * 4);
     const pixels = new Uint32Array(rgba.buffer, rgba.byteOffset, count);
 
-    // worst case: a header byte per 128 raw pixels of a row
-    const out = new Uint8Array(18 + count * bpp + height * Math.ceil(width / 128) + 26);
+    // worst case: a header byte per 128 raw pixels of a row, the extension area and the footer
+    const out = new Uint8Array(18 + count * bpp + height * Math.ceil(width / 128) + 495 + 26);
     out[2] = 10; // RLE truecolor
     out[12] = width & 255; out[13] = width >> 8;
     out[14] = height & 255; out[15] = height >> 8;
@@ -211,7 +253,14 @@ export function encode(rgba: Uint8Array, width: number, height: number): Uint8Ar
         i += raw;
     }
 
-    // TGA 2.0 footer without extension and developer areas, it makes the file recognizable
+    // TGA 2.0 footer (without developer area), it makes the file recognizable
+    let extensionOffset = 0;
+    if (extension && (extension.author || extension.comment || extension.time || extension.software)) {
+        extensionOffset = o;
+        out.set(extensionArea(extension, bpp === 4), o);
+        o += 495;
+    }
+    out[o] = extensionOffset & 255; out[o + 1] = extensionOffset >> 8 & 255; out[o + 2] = extensionOffset >> 16 & 255; out[o + 3] = extensionOffset >>> 24;
     o += 8;
     for (let i = 0; i < SIGNATURE.length; i++) out[o++] = SIGNATURE.charCodeAt(i);
     return out.slice(0, o);

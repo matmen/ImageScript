@@ -40,7 +40,10 @@ interface GraphicControl {
  * @param {number} [quality=95] 1-100, scales the palette size (1 = 8 colors, 50 = 55, 90 and above = 256)
  * @return {Uint8Array}
  */
-export function encode({ width, height, loopCount = -1, frames }: Omit<GIFData, 'loopCount'> & { loopCount?: number }, quality = 95): Uint8Array {
+/**
+ * @param comments written as comment extensions
+ */
+export function encode({ width, height, loopCount = -1, frames }: Omit<GIFData, 'loopCount'> & { loopCount?: number }, quality = 95, comments: Uint8Array[] = []): Uint8Array {
     const out = new ByteWriter();
 
     out.bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61); // GIF89a
@@ -54,6 +57,11 @@ export function encode({ width, height, loopCount = -1, frames }: Omit<GIFData, 
         out.bytes(0x03, 0x01);
         out.u16(loopCount === -1 ? 0 : loopCount);
         out.bytes(0x00);
+    }
+
+    for (const comment of comments) {
+        out.bytes(0x21, 0xfe);
+        writeSubBlocks(out, comment);
     }
 
     for (const frame of frames) {

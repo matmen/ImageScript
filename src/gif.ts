@@ -2,6 +2,7 @@ import { BinaryData, view } from './util/mem.ts';
 import { Frame } from './frame.ts';
 import { ImageType } from './image-type.ts';
 import { Animation } from './animation.ts';
+import { Metadata } from './metadata.ts';
 
 /**
  * Represents a GIF image as an array of frames, an {@link Animation} whose `encode()` and `decode()` work with GIFs.
@@ -26,10 +27,11 @@ export class GIF extends Animation {
     /**
      * Encodes the GIF
      * @param quality 1-100, scales the palette size from 8 colors (1) to 256 colors (90 and above)
+     * @param metadata Metadata to include, see {@link Metadata}
      * @deprecated Use {@link Animation.encodeGIF}
      */
-    async encode(quality = 95): Promise<Uint8Array> {
-        return this.encodeGIF(quality);
+    async encode(quality = 95, metadata: Metadata = {}): Promise<Uint8Array> {
+        return this.encodeGIF(quality, metadata);
     }
 
     /**

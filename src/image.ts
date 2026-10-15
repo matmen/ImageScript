@@ -9,7 +9,8 @@ import * as svgRenderer from './render/svg.ts';
 import { BinaryData, view } from './util/mem.ts';
 import { ImageType } from './image-type.ts';
 import { TextLayout } from './text-layout.ts';
-import { VERSION } from './version.ts';
+import { Metadata, resolveMetadata, pngText, exifData } from './metadata.ts';
+import { encode as utf8 } from './util/utf8.ts';
 import { resample, BOX, TRIANGLE, CUBIC } from './util/resample.ts';
 import { gaussianBlur, premultiply, unpremultiply } from './util/blur.ts';
 
@@ -89,29 +90,11 @@ export interface ColorToAlphaOptions {
     opacityThreshold?: number;
 }
 
-/** Text metadata written into PNGs by {@link Image.encode} */
-export interface PNGMetadata {
-    /** The image's title */
-    title?: string;
-    /** The image's author */
-    author?: string;
-    /** The image's description */
-    description?: string;
-    /** The image's copyright info */
-    copyright?: string;
-    /** The image's creation time. Default: now */
-    creationTime?: string | number | Date;
-    /** The software used to create the image. Default: `'github.com/matmen/ImageScript vX.X.X'`, `''` leaves it out */
-    software?: string;
-    /** A disclaimer for the image */
-    disclaimer?: string;
-    /** A warning for the image */
-    warning?: string;
-    /** The image's source */
-    source?: string;
-    /** A comment for the image */
-    comment?: string;
-}
+/**
+ * Text metadata written into PNGs
+ * @deprecated Use {@link Metadata}, which all encoders take
+ */
+export type PNGMetadata = Metadata;
 
 /**
  * An RGBA image; provides the codecs and the manipulation functions. Methods that change the image modify it in place
@@ -1567,79 +1550,60 @@ export class Image {
      * Encodes the image into a PNG, with the smallest lossless color type (a palette for up to 256 colors,
      * greyscale or RGB, alpha only if needed). Uses the runtime's native zlib when available
      * @param compression The compression level (0-9). Default: `1`
-     * @param metadata Text metadata to include
+     * @param metadata Metadata to include, see {@link Metadata}
      * @return The encoded data
      */
-    encode(compression?: number, metadata?: PNGMetadata): Promise<Uint8Array>;
+    encode(compression?: number, metadata?: Metadata): Promise<Uint8Array>;
     /**
      * Encodes the image into a PNG with compression level 1
-     * @param metadata Text metadata to include
+     * @param metadata Metadata to include, see {@link Metadata}
      * @return The encoded data
      */
-    encode(metadata?: PNGMetadata): Promise<Uint8Array>;
-    async encode(compression: number | PNGMetadata = 1, metadata: PNGMetadata = {}): Promise<Uint8Array> {
+    encode(metadata?: Metadata): Promise<Uint8Array>;
+    async encode(compression: number | Metadata = 1, metadata: Metadata = {}): Promise<Uint8Array> {
         if (typeof compression === 'object' && compression !== null) {
             metadata = compression;
             compression = 1;
         }
 
         const level = Math.min(9, Math.max(0, ~~compression));
-        const {
-        title,
-        author,
-        description,
-        copyright,
-        creationTime,
-        software,
-        disclaimer,
-        warning,
-        source,
-        comment
-    } = metadata || {};
-
-        return png.encodeRGBA(this.__bytes__(), this.width, this.height, level, {
-            Title: title,
-            Author: author,
-            Description: description,
-            Copyright: copyright,
-            'Creation Time': new Date(creationTime === undefined ? Date.now() : creationTime).toUTCString(),
-            Software: software === undefined ? `github.com/matmen/ImageScript v${VERSION}` : software,
-            Disclaimer: disclaimer,
-            Warning: warning,
-            Source: source,
-            Comment: comment
-        });
+        return png.encodeRGBA(this.__bytes__(), this.width, this.height, level, pngText(resolveMetadata(metadata)));
     }
 
     /**
      * Encodes the image into a PNG, an alias of {@link Image.encode}
      */
-    encodePNG(compression?: number, metadata?: PNGMetadata): Promise<Uint8Array>;
-    encodePNG(metadata?: PNGMetadata): Promise<Uint8Array>;
-    encodePNG(compression?: number | PNGMetadata, metadata?: PNGMetadata): Promise<Uint8Array> {
+    encodePNG(compression?: number, metadata?: Metadata): Promise<Uint8Array>;
+    encodePNG(metadata?: Metadata): Promise<Uint8Array>;
+    encodePNG(compression?: number | Metadata, metadata?: Metadata): Promise<Uint8Array> {
         return this.encode(compression as number, metadata);
     }
 
     /**
      * Encodes the image into a JPEG
      * @param [quality=90] The JPEG quality to use (1-100), chroma subsampling is disabled above 90
+     * @param metadata Metadata to include, see {@link Metadata}
      */
-    async encodeJPEG(quality = 90): Promise<Uint8Array> {
-        return jpeg.encode(this.__bytes__(), this.width, this.height, quality);
+    async encodeJPEG(quality = 90, metadata: Metadata = {}): Promise<Uint8Array> {
+        const m = resolveMetadata(metadata);
+        return jpeg.encode(this.__bytes__(), this.width, this.height, quality, { exif: exifData(m), comment: m.comment ? utf8(m.comment) : undefined });
     }
 
     /**
      * Encodes the image as lossless WebP (usually 20-30% smaller than PNG, but slower to encode)
+     * @param metadata Metadata to include, see {@link Metadata}
      */
-    async encodeWebP(): Promise<Uint8Array> {
-        return webp.encode(this.__bytes__(), this.width, this.height);
+    async encodeWebP(metadata: Metadata = {}): Promise<Uint8Array> {
+        return webp.encode(this.__bytes__(), this.width, this.height, exifData(resolveMetadata(metadata)));
     }
 
     /**
      * Encodes the image as run length encoded TGA (32 bit, or 24 bit if the image is opaque)
+     * @param metadata Metadata to include, see {@link Metadata}
      */
-    async encodeTGA(): Promise<Uint8Array> {
-        return tga.encode(this.__bytes__(), this.width, this.height);
+    async encodeTGA(metadata: Metadata = {}): Promise<Uint8Array> {
+        const { author, comment, creationTime: time, software } = resolveMetadata(metadata);
+        return tga.encode(this.__bytes__(), this.width, this.height, { author, comment, time, software });
     }
 
     /**
