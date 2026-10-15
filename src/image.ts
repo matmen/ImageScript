@@ -1181,7 +1181,9 @@ export class Image {
     /**
      * Makes a color transparent, like GIMP's "Color to Alpha": the color is removed from every pixel and replaced by
      * transparency, so pixels that are partly the color (e.g. antialiased edges against a background) become
-     * semi-transparent instead of keeping a fringe of it
+     * semi-transparent instead of keeping a fringe of it.
+     * The color is removed everywhere in the image, not only from a connected background: removing a white
+     * background also makes white areas inside the subject (e.g. eyes in a logo) transparent
      * @param color The color to remove, by default the color of the top left pixel (e.g. a background)
      * @param options See {@link ColorToAlphaOptions}
      */
