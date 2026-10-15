@@ -494,6 +494,20 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         assert(both.width === 3 && rgba(both, 2, 1).slice(0, 2).join() === '0,0', 'PNG orientation: eXIf should win over XMP');
     }
 
+    // colorToAlpha removes the color, so compositing the result over that color gives the original back (#39)
+    {
+        const image = new Image(40, 40).fill(0xffffffff).drawCircle(20, 20, 12, 0xff0000ff);
+        const cut = image.clone().colorToAlpha();
+        assert(cut.getPixelAt(0, 0) === 0xffffff00, 'colorToAlpha: the background should become transparent');
+        assert(cut.getPixelAt(20, 20) === 0xff0000ff, 'colorToAlpha: other colors should stay opaque');
+        const back = new Image(40, 40).fill(0xffffffff).composite(cut);
+        assert(Buffer.from(back.bitmap).equals(Buffer.from(image.bitmap)), 'colorToAlpha: compositing over the color should give the original');
+        const edge = cut.getRGBAAt(32, 20);
+        assert(edge[3] > 0 && edge[3] < 255 && edge[0] === 255 && edge[1] === 0, 'colorToAlpha: antialiased edges should become translucent red');
+        const loose = image.clone().colorToAlpha(0xffffffff, {transparencyThreshold: 0.5});
+        assert(loose.getRGBAAt(32, 20)[3] < edge[3], 'colorToAlpha: the threshold should make more of the edge transparent');
+    }
+
     // slice-by-16 crc32 matches zlib for every length around the 16 byte steps and for unaligned views (#12)
     {
         const {crc32} = await import('../dist/codecs/crc.js');

@@ -75,6 +75,14 @@ export interface RotateOptions {
     resize?: boolean;
 }
 
+/** Options of {@link Image.colorToAlpha} */
+export interface ColorToAlphaOptions {
+    /** Pixels at most this far from the color (0-1) become fully transparent. Default: 0 */
+    transparencyThreshold?: number;
+    /** Pixels at least this far from the color (0-1) stay fully opaque. Default: 1 */
+    opacityThreshold?: number;
+}
+
 /** Text metadata written into PNGs by {@link Image.encode} */
 export interface PNGMetadata {
     /** The image's title */
@@ -1167,6 +1175,41 @@ export class Image {
             bitmap[i + 1] = 0.349 * r + 0.686 * g + 0.168 * b;
             bitmap[i + 2] = 0.272 * r + 0.534 * g + 0.131 * b;
         }
+        return this;
+    }
+
+    /**
+     * Makes a color transparent, like GIMP's "Color to Alpha": the color is removed from every pixel and replaced by
+     * transparency, so pixels that are partly the color (e.g. antialiased edges against a background) become
+     * semi-transparent instead of keeping a fringe of it
+     * @param color The color to remove, by default the color of the top left pixel (e.g. a background)
+     * @param options See {@link ColorToAlphaOptions}
+     */
+    colorToAlpha(color?: Color, options: ColorToAlphaOptions = {}): this {
+        const { transparencyThreshold = 0, opacityThreshold = 1 } = options;
+        if (!(transparencyThreshold >= 0 && opacityThreshold <= 1 && transparencyThreshold < opacityThreshold))
+            throw new RangeError('Invalid thresholds, they have to satisfy 0 <= transparencyThreshold < opacityThreshold <= 1');
+
+        const bitmap = this.bitmap;
+        const c = color === undefined ? [bitmap[0], bitmap[1], bitmap[2]] : [color >>> 24, color >> 16 & 255, color >> 8 & 255];
+
+        for (let i = 0; i < bitmap.length; i += 4) {
+            // how far the pixel is from the color: the alpha it needs to be "pixel = alpha * X + (1 - alpha) * color"
+            let distance = 0;
+            for (let k = 0; k < 3; k++) {
+                const d = bitmap[i + k] - c[k];
+                const a = d > 0 ? d / (255 - c[k]) : d < 0 ? -d / c[k] : 0;
+                if (a > distance) distance = a;
+            }
+
+            const alpha = distance <= transparencyThreshold ? 0 : distance >= opacityThreshold ? 1
+                : (distance - transparencyThreshold) / (opacityThreshold - transparencyThreshold);
+
+            // unmix the color, so it looks the same over the removed color
+            if (alpha > 0) for (let k = 0; k < 3; k++) bitmap[i + k] = Math.round((bitmap[i + k] - c[k]) / alpha + c[k]);
+            bitmap[i + 3] = Math.round(bitmap[i + 3] * alpha);
+        }
+
         return this;
     }
 
