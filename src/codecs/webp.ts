@@ -2,7 +2,8 @@
  * WebP container. Animation frames are blended with libwebp's integer arithmetic (Copyright (c) 2010 Google Inc., BSD
  * license, see THIRD_PARTY_NOTICES.md)
  */
-// RIFF container (RFC 9649): simple lossy/lossless files, extended files with alpha and animation
+// RIFF container (RFC 9649, https://www.rfc-editor.org/rfc/rfc9649): simple lossy/lossless files, extended files with
+// alpha and animation
 import * as vp8l from './vp8l.ts';
 import * as vp8 from './vp8.ts';
 import { orientation as exifOrientation } from './exif.ts';

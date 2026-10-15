@@ -87,7 +87,7 @@ The deflate/inflate implementation is derived from [fflate](https://github.com/1
 [Fast CRC32 in JavaScript](https://gist.github.com/101arrowz/e58695f7ccfdf74f60ba22018093edea), both by Arjun Barrett.
 The JPEG codec is based in part on the work of the Independent JPEG Group (libjpeg) and on
 [pdf.js](https://github.com/mozilla/pdf.js), the glyph rasterizer is translated from
-[font-rs](https://github.com/raphlinus/font-rs). The WebP decoder follows [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386)
+[font-rs](https://github.com/raphlinus/font-rs). The WebP codecs follow [RFC 9649](https://www.rfc-editor.org/rfc/rfc9649) and [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386)
 and reproduces [libwebp](https://chromium.googlesource.com/webm/libwebp)'s color conversion. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for their licenses.
 
 ---
