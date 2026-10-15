@@ -30,6 +30,8 @@
   strings are written without bounds checks unless they run past the image.
 - SVG rendering is about 15-20% faster, with identical results: groups with opacity, clip paths, masks and nested
   viewports are composited only where they painted.
+- PNG decoding is about 25% faster and encoding about 10% faster, with identical results: the paeth filter is
+  computed without branches, 8-bit RGB images are converted without per-sample function calls.
 
 ### Deprecated
 

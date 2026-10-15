@@ -125,7 +125,9 @@ function filter(data: Uint8Array, rowBytes: number, height: number, bpp: number)
         for (let i = bpp; i < rowBytes; i++) {
             const a = data[row + i - bpp], b = data[row + i - rowBytes], c = data[row + i - rowBytes - bpp];
             const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
-            out[o + i] = data[row + i] - (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
+            // the predictor without branches, see unfilter
+            const notA = (pb - pa | pc - pa) >> 31, takeC = (pc - pb) >> 31;
+            out[o + i] = data[row + i] - (a ^ (a ^ b ^ (b ^ c) & takeC) & notA);
         }
     }
 
@@ -191,7 +193,7 @@ function pixelFormat(images: Uint8Array[]): PixelFormat {
 
     // collect up to 257 distinct colors, runs of equal pixels are skipped cheaply
     let colors: Map<number, number> | null = new Map();
-    for (const rgba of images) {
+    scan: for (const rgba of images) {
         const pixels = new Uint32Array(rgba.buffer, rgba.byteOffset, rgba.length >> 2);
         let previous = -1;
         for (let i = 0; i < pixels.length; i++) {
@@ -206,6 +208,8 @@ function pixelFormat(images: Uint8Array[]): PixelFormat {
                 if (colors.size === 256) colors = null;
                 else colors.set(value, colors.size);
             }
+            // nothing left to find out: RGBA it is
+            if (!colors && !opaque && !grey) break scan;
         }
     }
 
@@ -253,16 +257,18 @@ function pixelFormat(images: Uint8Array[]): PixelFormat {
             if (channels === 4) return rgba;
             const count = width * height;
             const data = new Uint8Array(count * channels);
-            for (let i = 0, o = 0; i < count; i++) {
-                const s = i * 4;
-                if (grey) data[o++] = rgba[s];
-                else {
-                    data[o++] = rgba[s];
-                    data[o++] = rgba[s + 1];
-                    data[o++] = rgba[s + 2];
+            if (channels === 3) {
+                for (let s = 0, o = 0; o < data.length; s += 4, o += 3) {
+                    data[o] = rgba[s];
+                    data[o + 1] = rgba[s + 1];
+                    data[o + 2] = rgba[s + 2];
                 }
-                if (!opaque) data[o++] = rgba[s + 3];
-            }
+            } else if (channels === 2) {
+                for (let s = 0, o = 0; o < data.length; s += 4, o += 2) {
+                    data[o] = rgba[s];
+                    data[o + 1] = rgba[s + 3];
+                }
+            } else for (let s = 0, o = 0; o < data.length; s += 4, o++) data[o] = rgba[s];
             return data;
         }
     };
@@ -747,7 +753,9 @@ function unfilter(data: Uint8Array, offset: number, height: number, rowBytes: nu
                 for (let i = row + bpp; i < row + rowBytes; i++) {
                     const a = out[i - bpp], b = out[i - rowBytes], c = out[i - rowBytes - bpp];
                     const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
-                    out[i] = data[src + i] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
+                    // without branches (photos make them unpredictable): all ones when a loses to b or c, when c beats b
+                    const notA = (pb - pa | pc - pa) >> 31, takeC = (pc - pb) >> 31;
+                    out[i] = data[src + i] + (a ^ (a ^ b ^ (b ^ c) & takeC) & notA);
                 }
             }
         } else throw new Error(`PNG: invalid filter type ${filter}`);
@@ -824,6 +832,22 @@ function createConverter(colorType: number, depth: number, palette: Uint8Array |
             ? [transparency[0] << 8 | transparency[1], transparency[2] << 8 | transparency[3], transparency[4] << 8 | transparency[5]].map(v => v & maxValue)
             : null;
 
+        // 8-bit samples are bytes that need no scaling, read directly (the most common kind of opaque PNG)
+        if (depth === 8) {
+            const [kr, kg, kb] = key || [-1, -1, -1];
+            return (pixels, rowBytes, w, h, out, place) => {
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0, s = y * rowBytes, o = place.row(y), step = place.step; x < w; x++, s += 3, o += step) {
+                        const r = pixels[s], g = pixels[s + 1], b = pixels[s + 2];
+                        out[o] = r;
+                        out[o + 1] = g;
+                        out[o + 2] = b;
+                        out[o + 3] = r === kr && g === kg && b === kb ? 0 : 0xff;
+                    }
+                }
+            };
+        }
+
         return (pixels, rowBytes, w, h, out, place) => {
             for (let y = 0; y < h; y++) {
                 const row = pixels.subarray(y * rowBytes, (y + 1) * rowBytes);
@@ -861,9 +885,14 @@ function createConverter(colorType: number, depth: number, palette: Uint8Array |
             // non-interlaced 8-bit RGBA maps 1:1 onto the output
             if (place.step === 4 && w * 4 === rowBytes && place.row(0) === 0 && place.row(1) === rowBytes) return out.set(pixels);
 
-            for (let y = 0; y < h; y++)
-                for (let x = 0, o = place.row(y); x < w; x++, o += place.step)
-                    out.set(pixels.subarray(y * rowBytes + x * 4, y * rowBytes + x * 4 + 4), o);
+            for (let y = 0; y < h; y++) {
+                for (let x = 0, s = y * rowBytes, o = place.row(y), step = place.step; x < w; x++, s += 4, o += step) {
+                    out[o] = pixels[s];
+                    out[o + 1] = pixels[s + 1];
+                    out[o + 2] = pixels[s + 2];
+                    out[o + 3] = pixels[s + 3];
+                }
+            }
         };
     }
 
