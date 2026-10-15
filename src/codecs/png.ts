@@ -23,7 +23,7 @@ const CHANNELS_TO_COLOR_TYPE: Record<number, number> = { 1: 0, 2: 4, 3: 2, 4: 6 
 const VALID_DEPTHS: Record<number, number[]> = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
 
 export interface EncodeOptions {
-    /** tEXt chunks, empty values are skipped */
+    /** text chunks, empty values are skipped */
     text?: Record<string, string | undefined>;
     width: number;
     height: number;
@@ -83,16 +83,25 @@ export async function encode(data: Uint8Array, { text, width, height, channels, 
     const chunks = [chunk(IHDR, header)];
     if (palette) chunks.push(chunk(PLTE, palette));
     if (transparency) chunks.push(chunk(tRNS, transparency));
+    chunks.push(...textChunks(text));
     chunks.push(chunk(IDAT, await compressAsync(filtered, level)));
-
-    for (const key in text) {
-        const value = text[key];
-        if (!value) continue;
-        chunks.push(chunk(0x74455874, concat([utf8(key), [0], utf8(value)])));
-    }
 
     chunks.push(chunk(IEND, new Uint8Array(0)));
     return concat([HEAD, ...chunks]);
+}
+
+// text chunks (before the image data, where all readers find them), empty values are skipped: tEXt holds Latin-1,
+// other text goes into an (uncompressed) iTXt as UTF-8
+function textChunks(text: EncodeOptions['text']): Uint8Array[] {
+    const chunks: Uint8Array[] = [];
+    const latin1 = (s: string): number[] => Array.from(s, c => c.charCodeAt(0));
+    for (const key in text) {
+        const value = text[key];
+        if (!value) continue;
+        if (/^[\x00-\xff]*$/.test(value)) chunks.push(chunk(tEXt, concat([latin1(key), [0], latin1(value)])));
+        else chunks.push(chunk(iTXt, concat([latin1(key), [0, 0, 0, 0, 0], utf8(value)])));
+    }
+    return chunks;
 }
 
 /**
@@ -272,8 +281,9 @@ export interface APNGEncodeFrame {
  * Encodes frames into an APNG. Frames are alpha blended onto the canvas ("over"); the first frame is also the
  * default image that viewers without APNG support show
  * @param plays How often to play the animation, 0 = forever
+ * @param text tEXt chunks, empty values are skipped
  */
-export async function encodeAnimation(frames: APNGEncodeFrame[], width: number, height: number, plays: number, level: number): Promise<Uint8Array> {
+export async function encodeAnimation(frames: APNGEncodeFrame[], width: number, height: number, plays: number, level: number, text?: EncodeOptions['text']): Promise<Uint8Array> {
     if (!frames.length) throw new Error('PNG: an animation needs at least one frame');
 
     // the default image has to cover the whole canvas: pad the first frame if needed
@@ -310,6 +320,7 @@ export async function encodeAnimation(frames: APNGEncodeFrame[], width: number, 
     const chunks = [chunk(IHDR, header), chunk(acTL, actl)];
     if (palette) chunks.push(chunk(PLTE, palette));
     if (transparency) chunks.push(chunk(tRNS, transparency));
+    chunks.push(...textChunks(text));
 
     let sequence = 0;
     for (let i = 0; i < frames.length; i++) {

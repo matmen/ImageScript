@@ -6,6 +6,7 @@
  */
 
 import { orientation as exifOrientation } from './exif.ts';
+import { concat } from '../util/mem.ts';
 
 // natural order index of the n-th zigzag coefficient
 const ZIGZAG = Int32Array.of(
@@ -843,7 +844,14 @@ const AAN_SCALE = [1, 1.387039845, 1.306562965, 1.175875602, 1, 0.785694958, 0.5
  * @param {number} [quality=90] 1-100
  * @return {Uint8Array}
  */
-export function encode(pixels: Uint8Array, width: number, height: number, quality = 90): Uint8Array {
+export interface EncodeMetadata {
+    /** Exif data (a TIFF header and IFDs), written as APP1 */
+    exif?: Uint8Array;
+    /** written as comment (COM) */
+    comment?: Uint8Array;
+}
+
+export function encode(pixels: Uint8Array, width: number, height: number, quality = 90, { exif, comment }: EncodeMetadata = {}): Uint8Array {
     if (!width || !height || width > 0xffff || height > 0xffff) throw new RangeError('JPEG: invalid dimensions');
 
     quality = Math.min(100, Math.max(1, Math.round(quality)));
@@ -950,6 +958,14 @@ export function encode(pixels: Uint8Array, width: number, height: number, qualit
     writer.bytes(0xff, 0xd8);
     // JFIF APP0
     writer.bytes(0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00);
+    // segments hold up to 65533 bytes
+    const segment = (marker: number, body: ArrayLike<number>): void => {
+        if (body.length > 65533) throw new RangeError('JPEG: metadata too large');
+        writer.bytes(0xff, marker, body.length + 2 >> 8, body.length + 2 & 255);
+        for (let i = 0; i < body.length; i++) writer.bytes(body[i]);
+    };
+    if (exif) segment(0xe1, concat([[0x45, 0x78, 0x69, 0x66, 0, 0], exif]));
+    if (comment) segment(0xfe, comment);
 
     // DQT
     writer.bytes(0xff, 0xdb, 0x00, 0x84);

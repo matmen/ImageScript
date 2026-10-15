@@ -17,6 +17,7 @@ export type { TextLayoutOptions, WrapStyle, HorizontalAlign, VerticalAlign } fro
 export { ImageType } from './image-type.ts';
 export type { ImageTypeName } from './image-type.ts';
 export type { BinaryData } from './util/mem.ts';
+export type { Metadata } from './metadata.ts';
 
 /**
  * Decodes any supported image: GIFs are returned as {@link GIF} (an {@link Animation}), animated WebPs as

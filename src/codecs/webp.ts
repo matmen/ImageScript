@@ -298,11 +298,24 @@ function toARGB(rgba: Uint8Array, count: number): Uint32Array {
 
 const set24 = (d: Uint8Array, o: number, v: number): void => { d[o] = v & 255; d[o + 1] = v >> 8 & 255; d[o + 2] = v >> 16 & 255; };
 
+const hasAlpha = (rgba: Uint8Array): boolean => {
+    for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) return true;
+    return false;
+};
+
 /**
  * Encodes RGBA pixels into a lossless WebP
+ * @param exif Exif data (a TIFF header and IFDs), needs the extended format (VP8X)
  */
-export function encode(rgba: Uint8Array, width: number, height: number): Uint8Array {
-    return riff([riffChunk('VP8L', vp8l.encode(toARGB(rgba, width * height), width, height))]);
+export function encode(rgba: Uint8Array, width: number, height: number, exif?: Uint8Array): Uint8Array {
+    const bitstream = riffChunk('VP8L', vp8l.encode(toARGB(rgba, width * height), width, height));
+    if (!exif) return riff([bitstream]);
+
+    const vp8x = new Uint8Array(10);
+    vp8x[0] = 8 | (hasAlpha(rgba.subarray(0, width * height * 4)) ? 16 : 0); // exif, alpha
+    set24(vp8x, 4, width - 1);
+    set24(vp8x, 7, height - 1);
+    return riff([riffChunk('VP8X', vp8x), bitstream, riffChunk('EXIF', exif)]);
 }
 
 export interface WebPEncodeFrame {
@@ -321,17 +334,16 @@ export interface WebPEncodeFrame {
 /**
  * Encodes frames into a lossless animated WebP. Frame offsets have to be even (the format stores them halved)
  * @param plays How often to play the animation, 0 = forever
+ * @param exif Exif data (a TIFF header and IFDs)
  */
-export function encodeAnimation(frames: WebPEncodeFrame[], width: number, height: number, plays: number): Uint8Array {
+export function encodeAnimation(frames: WebPEncodeFrame[], width: number, height: number, plays: number, exif?: Uint8Array): Uint8Array {
     if (!frames.length) throw new Error('WebP: an animation needs at least one frame');
     if (width > 1 << 24 || height > 1 << 24) throw new RangeError('WebP: canvas too large');
 
-    let alpha = false;
-    for (const f of frames)
-        for (let i = 3; i < f.pixels.length && !alpha; i += 4) if (f.pixels[i] !== 255) alpha = true;
+    const alpha = frames.some(f => hasAlpha(f.pixels));
 
     const vp8x = new Uint8Array(10);
-    vp8x[0] = 2 | (alpha ? 16 : 0); // animation, alpha
+    vp8x[0] = 2 | (alpha ? 16 : 0) | (exif ? 8 : 0); // animation, alpha, exif
     set24(vp8x, 4, width - 1);
     set24(vp8x, 7, height - 1);
 
@@ -356,5 +368,6 @@ export function encodeAnimation(frames: WebPEncodeFrame[], width: number, height
         chunks.push(riffChunk('ANMF', body));
     }
 
+    if (exif) chunks.push(riffChunk('EXIF', exif));
     return riff(chunks);
 }

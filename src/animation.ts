@@ -5,6 +5,7 @@ import { BinaryData, view } from './util/mem.ts';
 import { Image, ResizeMode } from './image.ts';
 import { Frame } from './frame.ts';
 import { ImageType } from './image-type.ts';
+import { Metadata, resolveMetadata, pngText, exifData, gifComments } from './metadata.ts';
 
 // loop counts: ImageScript (like GIF) counts repetitions (-1 forever, 0 play once), APNG and WebP count plays (0 forever)
 const toPlays = (loopCount: number): number => loopCount < 0 ? 0 : loopCount + 1;
@@ -118,8 +119,9 @@ export class Animation extends Array<Frame> {
     /**
      * Encodes the animation as GIF
      * @param quality 1-100, scales the palette size from 8 colors (1) to 256 colors (90 and above)
+     * @param metadata Metadata to include, see {@link Metadata}
      */
-    async encodeGIF(quality = 95): Promise<Uint8Array> {
+    async encodeGIF(quality = 95, metadata: Metadata = {}): Promise<Uint8Array> {
         this.__validate__();
         const frames: gifCodec.GIFFrame[] = [];
 
@@ -135,34 +137,37 @@ export class Animation extends Array<Frame> {
                 pixels: new Uint8Array(frame.bitmap.buffer, frame.bitmap.byteOffset, frame.bitmap.byteLength)
             });
 
-        return gifCodec.encode({ width: this.width, height: this.height, loopCount: this.loopCount, frames }, quality);
+        return gifCodec.encode({ width: this.width, height: this.height, loopCount: this.loopCount, frames }, quality, gifComments(resolveMetadata(metadata)));
     }
 
     /**
      * Encodes the animation as APNG (animated PNG, lossless and with full alpha). Viewers without APNG support show
      * the first frame
      * @param compression The zlib compression level (0-9), higher is smaller but slower
+     * @param metadata Metadata to include, see {@link Metadata}
      */
-    async encodeAPNG(compression = 1): Promise<Uint8Array> {
+    async encodeAPNG(compression = 1, metadata: Metadata = {}): Promise<Uint8Array> {
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
 
-        return png.encodeAnimation(this.__apngFrames__(), this.width, this.height, toPlays(this.loopCount), compression);
+        return png.encodeAnimation(this.__apngFrames__(), this.width, this.height, toPlays(this.loopCount), compression, pngText(resolveMetadata(metadata)));
     }
 
     /**
      * Encodes the animation as lossless animated WebP
+     * @param metadata Metadata to include, see {@link Metadata}
      */
-    async encodeWebP(): Promise<Uint8Array> {
+    async encodeWebP(metadata: Metadata = {}): Promise<Uint8Array> {
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
         const width = this.width, height = this.height;
+        const exif = exifData(resolveMetadata(metadata));
 
         // WebP knows no "previous" disposal and stores offsets halved: such animations are stored as full frames
         const fullFrames = this.some(f => f.disposalMode === 'previous' || (f.disposalMode === 'background' && (f.xOffset & 1 || f.yOffset & 1)));
         if (fullFrames) {
             const canvases = png.compositeAnimation({ width, height, frames: this.__apngFrames__() });
-            return webp.encodeAnimation(canvases.map(c => ({ x: 0, y: 0, width, height, duration: c.duration, dispose: true, pixels: c.pixels })), width, height, toPlays(this.loopCount));
+            return webp.encodeAnimation(canvases.map(c => ({ x: 0, y: 0, width, height, duration: c.duration, dispose: true, pixels: c.pixels })), width, height, toPlays(this.loopCount), exif);
         }
 
         const frames = Array.from(this, frame => {
@@ -178,7 +183,7 @@ export class Animation extends Array<Frame> {
             }
             return { x, y, width: w, height: h, duration: frame.duration, dispose: frame.disposalMode === 'background', pixels };
         });
-        return webp.encodeAnimation(frames, width, height, toPlays(this.loopCount));
+        return webp.encodeAnimation(frames, width, height, toPlays(this.loopCount), exif);
     }
 
     /** @internal frames in the APNG codec's terms (alpha blended, disposal 0 none, 1 background, 2 previous) */

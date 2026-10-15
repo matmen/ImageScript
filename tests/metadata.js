@@ -1,0 +1,75 @@
+const {Image, Frame, Animation} = require('..');
+
+const panic = message => {
+    console.error(message);
+    process.exit(1);
+};
+
+const has = (data, text) => Buffer.from(data).includes(Buffer.from(text));
+const latin1 = (data, text) => Buffer.from(data).includes(Buffer.from(text, 'latin1'));
+
+(async () => {
+    const {VERSION} = await import('../dist/version.js');
+    const software = `github.com/matmen/ImageScript v${VERSION}`;
+    const image = new Image(8, 4).fill(0xff000080);
+    const animation = new Animation([Frame.from(image, 100), Frame.from(new Image(8, 4).fill(0x00ff00ff), 100)]);
+
+    const encoders = {
+        png: m => image.encode(m),
+        jpeg: m => image.encodeJPEG(90, m),
+        webp: m => image.encodeWebP(m),
+        tga: m => image.encodeTGA(m),
+        gif: m => animation.encodeGIF(95, m),
+        apng: m => animation.encodeAPNG(1, m),
+        'animated webp': m => animation.encodeWebP(m)
+    };
+
+    // every format names the software by default, '' leaves it out, and the files still decode
+    for (const [format, encode] of Object.entries(encoders)) {
+        const tagged = await encode();
+        if (!has(tagged, software)) panic(`${format}: software missing by default`);
+        if (has(await encode({software: ''}), 'ImageScript')) panic(`${format}: software: '' should leave it out`);
+        if (!has(await encode({software: 'custom tool'}), 'custom tool')) panic(`${format}: custom software missing`);
+
+        const decoded = /gif|apng|animated/.test(format) ? (await Animation.decode(tagged))[0] : await Image.decode(tagged);
+        if (decoded.width !== 8 || decoded.height !== 4) panic(`${format}: doesn't decode with metadata`);
+    }
+
+    const metadata = {author: 'Jörg', description: 'a description', copyright: 'Ⓒ someone', comment: 'a comment', creationTime: Date.UTC(2026, 9, 15, 12, 34, 56)};
+
+    // PNG: tEXt is Latin-1, other text goes into iTXt (UTF-8), before the image data
+    {
+        const png = Buffer.from(await image.encode(metadata));
+        if (!latin1(png, 'Author\0Jörg')) panic('png: Latin-1 text should be a tEXt chunk');
+        if (!has(png, 'iTXtCopyright\0\0\0\0\0Ⓒ someone')) panic('png: other text should be an iTXt chunk');
+        if (png.indexOf('tEXt') > png.indexOf('IDAT')) panic('png: text chunks should come before the image data');
+        if (!has(png, 'Thu, 15 Oct 2026 12:34:56 GMT')) panic('png: creation time missing');
+    }
+
+    // JPEG and WebP: Exif (IFD0 strings, UTC date), JPEG also a comment marker
+    for (const format of ['jpeg', 'webp']) {
+        const file = await encoders[format](metadata);
+        for (const text of ['Exif'.slice(format === 'webp' ? 4 : 0), 'MM\0*', 'Jörg', 'a description', 'Ⓒ someone', '2026:10:15 12:34:56\0', '+00:00'])
+            if (!has(file, text)) panic(`${format}: ${JSON.stringify(text)} missing from the Exif data`);
+        if (format === 'jpeg' && !has(file, Buffer.from([0xff, 0xfe, 0, 11, ...Buffer.from('a comment')]))) panic('jpeg: comment marker missing');
+    }
+
+    // GIF: comment extensions
+    if (!has(await animation.encodeGIF(95, metadata), Buffer.from([0x21, 0xfe, 9, ...Buffer.from('a comment'), 0]))) panic('gif: comment extension missing');
+
+    // TGA: extension area, referenced by the footer
+    {
+        const tga = Buffer.from(await image.encodeTGA({...metadata, comment: 'line 1\n' + 'x'.repeat(100)}));
+        const area = tga.readUInt32LE(tga.length - 26);
+        if (tga.readUInt16LE(area) !== 495) panic('tga: extension area missing');
+        const field = (offset, size) => tga.subarray(area + offset, area + offset + size).toString().split('\0')[0];
+        if (field(2, 41) !== 'Jörg') panic('tga: author missing');
+        // long lines wrap at 80 bytes
+        if (field(43, 81) !== 'line 1' || field(124, 81) !== 'x'.repeat(80) || field(205, 81) !== 'x'.repeat(20)) panic('tga: comment lines wrong');
+        if ([0, 1, 2, 3, 4, 5].map(i => tga.readUInt16LE(area + 367 + i * 2)).join() !== '10,15,2026,12,34,56') panic('tga: date wrong');
+        if (field(426, 41) !== software) panic('tga: software missing');
+        if (tga[area + 494] !== 3) panic('tga: attributes type should be "useful alpha"');
+    }
+
+    if (await image.encode({creationTime: 'not a date'}).then(() => true, () => false)) panic('an invalid creation time should throw');
+})();
