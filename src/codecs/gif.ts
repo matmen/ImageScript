@@ -272,21 +272,18 @@ export function decode(data: Uint8Array, onlyFirstFrame = false): GIFData {
             const pixels = new Uint8Array(fw * fh * 4);
             const rows = interlaced ? interlacedRows(fh) : null;
 
+            // the RGBA value of every index: transparent stays 0, indices past the color table are opaque black
+            const colors = new Uint8Array(256 * 4);
+            for (let index = 0; index < 256; index++) {
+                if (index === transparentIndex) continue;
+                if (table && index * 3 + 2 < table.length) colors.set(table.subarray(index * 3, index * 3 + 3), index * 4);
+                colors[index * 4 + 3] = 0xff;
+            }
+            const lookup = new Uint32Array(colors.buffer), out = new Uint32Array(pixels.buffer);
+
             for (let row = 0; row < fh; row++) {
-                const targetRow = rows ? rows[row] : row;
-
-                for (let column = 0; column < fw; column++) {
-                    const index = indices[row * fw + column];
-                    if (index === transparentIndex) continue;
-
-                    const o = (targetRow * fw + column) * 4;
-                    if (table && index * 3 + 2 < table.length) {
-                        pixels[o] = table[index * 3];
-                        pixels[o + 1] = table[index * 3 + 1];
-                        pixels[o + 2] = table[index * 3 + 2];
-                    }
-                    pixels[o + 3] = 0xff;
-                }
+                const target = (rows ? rows[row] : row) * fw, source = row * fw;
+                for (let column = 0; column < fw; column++) out[target + column] = lookup[indices[source + column]];
             }
 
             frames.push({ x, y, width: fw, height: fh, delay, dispose, pixels });
@@ -393,9 +390,17 @@ function lzwDecode(data: Uint8Array, minCodeSize: number, pixelCount: number): U
         const length = lengths[entry];
         const end = Math.min(out + length, pixelCount);
         let c = entry;
-        for (let i = out + length - 1; i >= out; i--) {
-            if (i < end) output[i] = suffix[c];
-            c = prefix[c];
+        if (end === out + length) {
+            for (let i = end - 1; i >= out; i--) {
+                output[i] = suffix[c];
+                c = prefix[c];
+            }
+        } else {
+            // the string runs past the image: only its start is written
+            for (let i = out + length - 1; i >= out; i--) {
+                if (i < end) output[i] = suffix[c];
+                c = prefix[c];
+            }
         }
 
         let written = end - out;
