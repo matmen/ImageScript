@@ -324,7 +324,8 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
 
     // gif frame durations are rounded to centiseconds
     {
-        const gif = new GIF([new Frame(2, 2, 16), new Frame(2, 2, 14)]);
+        // (different frames: identical ones are merged)
+        const gif = new GIF([new Frame(2, 2, 16), new Frame(2, 2, 14).fill(0xff0000ff)]);
         const decoded = await GIF.decode(await gif.encode());
         assert(decoded[0].duration === 20 && decoded[1].duration === 10, `gif durations should round, got ${decoded[0].duration}, ${decoded[1].duration}`);
     }
@@ -366,7 +367,7 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         assert(frame.disposalMode === 'previous', 'disposalMode should be a name, got ' + frame.disposalMode);
         frame.disposalMode = 0;
         assert(frame.disposalMode === Frame.DISPOSAL_ANY, 'disposalMode set by id should read back as name');
-        const decoded = await GIF.decode(await new GIF([new Frame(2, 2, 100, 0, 0, 'background'), new Frame(2, 2)]).encode());
+        const decoded = await GIF.decode(await new GIF([new Frame(2, 2, 100, 0, 0, 'background'), new Frame(2, 2).fill(0xff0000ff)]).encode());
         assert(decoded.length === 2, 'gif with disposal modes should roundtrip');
     }
 

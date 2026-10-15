@@ -273,6 +273,8 @@ export interface APNGEncodeFrame {
     duration: number;
     /** 0 none, 1 background (transparent), 2 previous */
     dispose: number;
+    /** whether the frame is alpha blended onto the canvas, otherwise it replaces its area. Default: true */
+    blend?: boolean;
     /** RGBA */
     pixels: Uint8Array;
 }
@@ -337,7 +339,7 @@ export async function encodeAnimation(frames: APNGEncodeFrame[], width: number, 
         if (ms <= 65535) { v.setUint16(20, ms); v.setUint16(22, 1000); }
         else { v.setUint16(20, Math.min(65535, Math.round(ms / 10))); v.setUint16(22, 100); }
         fctl[24] = f.dispose;
-        fctl[25] = 1; // APNG_BLEND_OP_OVER
+        fctl[25] = f.blend === false ? 0 : 1; // APNG_BLEND_OP_SOURCE or APNG_BLEND_OP_OVER
         chunks.push(chunk(fcTL, fctl));
 
         const data = await compressRows(format.convert(images[i], f.width, f.height), f.width, f.height, channels, depth, level, filterRows);
