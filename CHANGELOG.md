@@ -24,6 +24,11 @@
   TGA, text chunks for PNG and APNG. Like PNGs, all files name ImageScript and its version as the software and
   include the creation time by default; `{software: ''}` leaves the software out.
 
+### Performance
+
+- GIF decoding is about 25% faster, with identical results: indices become colors through a lookup table, LZW
+  strings are written without bounds checks unless they run past the image.
+
 ### Deprecated
 
 - **Animations as arrays**: `Animation` (and `GIF`) extend `Array`, so `animation[0]`, `animation.length` and
