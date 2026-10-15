@@ -69,34 +69,34 @@ function coefficients(inSize: number, outSize: number, filter: Filter): Coeffici
 export function resample(src: Uint8ClampedArray, width: number, height: number, outWidth: number, outHeight: number, filter: Filter, out: Uint8ClampedArray): void {
     // premultiplied float rows, scaled horizontally (premultiplying on the fly)
     let plane = new Float32Array(outWidth * height * 4);
-    const horizontal = outWidth !== width ? coefficients(width, outWidth, filter) : null;
 
-    for (let y = 0; y < height; y++) {
-        const row = y * width * 4;
-        for (let x = 0; x < outWidth; x++) {
-            let r = 0, g = 0, b = 0, a = 0;
-            if (horizontal) {
-                const { start, count, weights, size } = horizontal;
-                for (let k = 0, s = row + start[x] * 4; k < count[x]; k++, s += 4) {
-                    const wa = weights[x * size + k] * src[s + 3];
+    if (outWidth !== width) {
+        const { start, count, weights, size } = coefficients(width, outWidth, filter);
+        for (let y = 0, o = 0; y < height; y++) {
+            const row = y * width * 4;
+            for (let x = 0; x < outWidth; x++, o += 4) {
+                let r = 0, g = 0, b = 0, a = 0;
+                for (let k = 0, s = row + start[x] * 4, w = x * size, n = count[x]; k < n; k++, s += 4) {
+                    const wa = weights[w + k] * src[s + 3];
                     r += src[s] * wa;
                     g += src[s + 1] * wa;
                     b += src[s + 2] * wa;
                     a += wa;
                 }
-            } else {
-                const s = row + x * 4;
-                a = src[s + 3];
-                r = src[s] * a;
-                g = src[s + 1] * a;
-                b = src[s + 2] * a;
-            }
 
-            const o = (y * outWidth + x) * 4;
-            plane[o] = r / 255;
-            plane[o + 1] = g / 255;
-            plane[o + 2] = b / 255;
-            plane[o + 3] = a;
+                plane[o] = r / 255;
+                plane[o + 1] = g / 255;
+                plane[o + 2] = b / 255;
+                plane[o + 3] = a;
+            }
+        }
+    } else {
+        for (let s = 0; s < plane.length; s += 4) {
+            const a = src[s + 3];
+            plane[s] = src[s] * a / 255;
+            plane[s + 1] = src[s + 1] * a / 255;
+            plane[s + 2] = src[s + 2] * a / 255;
+            plane[s + 3] = a;
         }
     }
 
@@ -105,12 +105,26 @@ export function resample(src: Uint8ClampedArray, width: number, height: number, 
         const next = new Float32Array(outWidth * outHeight * 4);
         const stride = outWidth * 4;
 
+        // every sum is rounded to float32 after each row it adds, as accumulating in a Float32Array would. Up to 4 rows
+        // (bilinear and bicubic, from half the size up) are added with the weights in variables, more in a loop
         for (let y = 0; y < outHeight; y++) {
-            const o = y * stride;
-            for (let k = 0; k < count[y]; k++) {
-                const w = weights[y * size + k];
-                const s = (start[y] + k) * stride;
-                for (let x = 0; x < stride; x++) next[o + x] += plane[s + x] * w;
+            const o = y * stride, n = count[y], w = y * size;
+            const s0 = start[y] * stride, s1 = s0 + stride, s2 = s1 + stride, s3 = s2 + stride;
+            const w0 = weights[w], w1 = weights[w + 1], w2 = weights[w + 2], w3 = weights[w + 3];
+            if (n === 1) for (let x = 0; x < stride; x++) next[o + x] = 0 + plane[s0 + x] * w0;
+            else if (n === 2) for (let x = 0; x < stride; x++) next[o + x] = Math.fround(0 + plane[s0 + x] * w0) + plane[s1 + x] * w1;
+            else if (n === 3) {
+                for (let x = 0; x < stride; x++)
+                    next[o + x] = Math.fround(Math.fround(0 + plane[s0 + x] * w0) + plane[s1 + x] * w1) + plane[s2 + x] * w2;
+            } else if (n === 4) {
+                for (let x = 0; x < stride; x++)
+                    next[o + x] = Math.fround(Math.fround(Math.fround(0 + plane[s0 + x] * w0) + plane[s1 + x] * w1) + plane[s2 + x] * w2) + plane[s3 + x] * w3;
+            } else {
+                for (let x = 0; x < stride; x++) {
+                    let sum = 0;
+                    for (let k = 0, s = s0 + x; k < n; k++, s += stride) sum = Math.fround(sum + plane[s] * weights[w + k]);
+                    next[o + x] = sum;
+                }
             }
         }
 
