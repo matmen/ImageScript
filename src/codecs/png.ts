@@ -14,6 +14,9 @@ const eXIf = 0x65584966;
 const tEXt = 0x74455874;
 const zTXt = 0x7a545874;
 const iTXt = 0x69545874;
+const acTL = 0x6163544c;
+const fcTL = 0x6663544c;
+const fdAT = 0x66644154;
 
 const COLOR_TYPE_CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
 const CHANNELS_TO_COLOR_TYPE: Record<number, number> = { 1: 0, 2: 4, 3: 2, 4: 6 };
@@ -130,36 +133,41 @@ function chunk(type: number, body: Uint8Array): Uint8Array {
     return out;
 }
 
+interface PixelFormat {
+    channels: number;
+    depth: number;
+    palette?: Uint8Array;
+    transparency?: Uint8Array;
+    /** converts RGBA pixels to this format's packed rows */
+    convert(rgba: Uint8Array, width: number, height: number): Uint8Array;
+}
+
 /**
- * Encodes 8-bit RGBA pixels into a PNG with the smallest lossless color type:
- * a palette for up to 256 colors, otherwise greyscale or RGB, with alpha only if a pixel isn't opaque.
- * Rows of non-palette images are paeth filtered (unless the data isn't compressed), palette indices aren't
- * filtered (like libpng recommends)
+ * Picks the smallest lossless format that fits all the given RGBA images: a palette for up to 256 colors,
+ * otherwise greyscale or RGB, with alpha only if a pixel isn't opaque
  */
-export async function encodeRGBA(rgba: Uint8Array, width: number, height: number, level: number, text?: EncodeOptions['text']): Promise<Uint8Array> {
-    const count = width * height;
-    if (rgba.byteOffset % 4) rgba = rgba.slice(0, count * 4);
-    const pixels = new Uint32Array(rgba.buffer, rgba.byteOffset, count);
+function pixelFormat(images: Uint8Array[]): PixelFormat {
     let opaque = true, grey = true;
 
     // collect up to 257 distinct colors, runs of equal pixels are skipped cheaply
     let colors: Map<number, number> | null = new Map();
-    let previous = -1;
-    for (let i = 0; i < count; i++) {
-        const value = pixels[i];
-        if (value === previous) continue;
-        previous = value;
+    for (const rgba of images) {
+        const pixels = new Uint32Array(rgba.buffer, rgba.byteOffset, rgba.length >> 2);
+        let previous = -1;
+        for (let i = 0; i < pixels.length; i++) {
+            const value = pixels[i];
+            if (value === previous) continue;
+            previous = value;
 
-        const o = i * 4;
-        if (rgba[o + 3] !== 255) opaque = false;
-        if (rgba[o] !== rgba[o + 1] || rgba[o] !== rgba[o + 2]) grey = false;
-        if (colors && !colors.has(value)) {
-            if (colors.size === 256) colors = null;
-            else colors.set(value, colors.size);
+            const o = i * 4;
+            if (rgba[o + 3] !== 255) opaque = false;
+            if (rgba[o] !== rgba[o + 1] || rgba[o] !== rgba[o + 2]) grey = false;
+            if (colors && !colors.has(value)) {
+                if (colors.size === 256) colors = null;
+                else colors.set(value, colors.size);
+            }
         }
     }
-
-    const options = { width, height, level, text, filter: level > 0 };
 
     if (colors) {
         // opaque entries are moved to the end, so tRNS can be cut short
@@ -172,65 +180,220 @@ export async function encodeRGBA(rgba: Uint8Array, width: number, height: number
         entries.forEach((bytes, i) => palette.set(bytes.subarray(0, 3), i * 3));
         const translucent = entries.filter(bytes => bytes[3] !== 255).length;
         const transparency = translucent ? Uint8Array.from(entries.slice(0, translucent), bytes => bytes[3]) : undefined;
-
         const depth = entries.length <= 2 ? 1 : entries.length <= 4 ? 2 : entries.length <= 16 ? 4 : 8;
-        const rowBytes = Math.ceil(width * depth / 8);
-        const perByte = 8 / depth;
-        const data = new Uint8Array(rowBytes * height);
 
-        let last = -1, lastIndex = 0;
-        for (let y = 0; y < height; y++) {
-            for (let x = 0; x < width; x++) {
-                const value = pixels[y * width + x];
-                if (value !== last) {
-                    last = value;
-                    lastIndex = index.get(value) as number;
+        return {
+            channels: 1, depth, palette, transparency,
+            convert(rgba, width, height) {
+                const pixels = new Uint32Array(rgba.buffer, rgba.byteOffset, width * height);
+                const rowBytes = Math.ceil(width * depth / 8);
+                const perByte = 8 / depth;
+                const data = new Uint8Array(rowBytes * height);
+
+                let last = -1, lastIndex = 0;
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const value = pixels[y * width + x];
+                        if (value !== last) {
+                            last = value;
+                            lastIndex = index.get(value) as number;
+                        }
+                        data[y * rowBytes + (x / perByte | 0)] |= lastIndex << (8 - depth - (x % perByte) * depth);
+                    }
                 }
-                data[y * rowBytes + (x / perByte | 0)] |= lastIndex << (8 - depth - (x % perByte) * depth);
+                return data;
             }
-        }
-
-        return encode(data, { ...options, channels: 1, depth, palette, transparency, filter: false });
+        };
     }
 
     const channels = (grey ? 1 : 3) + (opaque ? 0 : 1);
-    if (channels === 4) return encode(rgba, { ...options, channels });
-
-    const data = new Uint8Array(count * channels);
-    for (let i = 0, o = 0; i < count; i++) {
-        const s = i * 4;
-        if (grey) data[o++] = rgba[s];
-        else {
-            data[o++] = rgba[s];
-            data[o++] = rgba[s + 1];
-            data[o++] = rgba[s + 2];
+    return {
+        channels, depth: 8,
+        convert(rgba, width, height) {
+            if (channels === 4) return rgba;
+            const count = width * height;
+            const data = new Uint8Array(count * channels);
+            for (let i = 0, o = 0; i < count; i++) {
+                const s = i * 4;
+                if (grey) data[o++] = rgba[s];
+                else {
+                    data[o++] = rgba[s];
+                    data[o++] = rgba[s + 1];
+                    data[o++] = rgba[s + 2];
+                }
+                if (!opaque) data[o++] = rgba[s + 3];
+            }
+            return data;
         }
-        if (!opaque) data[o++] = rgba[s + 3];
-    }
+    };
+}
 
-    return encode(data, { ...options, channels });
+// 4-byte aligned copy if needed (pixel analysis reads 32-bit words)
+const aligned = (rgba: Uint8Array): Uint8Array => rgba.byteOffset % 4 ? rgba.slice() : rgba;
+
+/**
+ * Encodes 8-bit RGBA pixels into a PNG with the smallest lossless color type (see {@link pixelFormat}).
+ * Rows of non-palette images are paeth filtered (unless the data isn't compressed), palette indices aren't
+ * filtered (like libpng recommends)
+ */
+export async function encodeRGBA(rgba: Uint8Array, width: number, height: number, level: number, text?: EncodeOptions['text']): Promise<Uint8Array> {
+    rgba = aligned(rgba.subarray(0, width * height * 4));
+    const format = pixelFormat([rgba]);
+    const { channels, depth, palette, transparency } = format;
+    return encode(format.convert(rgba, width, height), { width, height, level, text, channels, depth, palette, transparency, filter: level > 0 && !palette });
+}
+
+// filters (or just prefixes) the rows and compresses them
+async function compressRows(data: Uint8Array, width: number, height: number, channels: number, depth: number, level: number, filterRows: boolean): Promise<Uint8Array> {
+    const rowBytes = Math.ceil(width * channels * depth / 8);
+    let filtered: Uint8Array;
+    if (filterRows) filtered = filter(data, rowBytes, height, Math.max(1, channels * depth / 8));
+    else {
+        filtered = new Uint8Array(height * (rowBytes + 1));
+        for (let y = 0; y < height; y++) filtered.set(data.subarray(y * rowBytes, (y + 1) * rowBytes), y * (rowBytes + 1) + 1);
+    }
+    return compressAsync(filtered, level);
+}
+
+export interface APNGEncodeFrame {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    /** milliseconds (stored as a fraction of up to 65535/65535 seconds) */
+    duration: number;
+    /** 0 none, 1 background (transparent), 2 previous */
+    dispose: number;
+    /** RGBA */
+    pixels: Uint8Array;
 }
 
 /**
- * Decodes a PNG into 8-bit RGBA pixel data
- * Supports all color types, bit depths, tRNS transparency and adam7 interlacing
- * The orientation comes from the eXIf chunk, or, if there is none, from the Exif text ImageMagick wrote before eXIf
- * existed ("Raw profile type exif") or from the XMP packet
- * @param {Uint8Array} array The PNG data
- * @return {{width: number, height: number, pixels: Uint8Array, orientation: number}}
+ * Encodes frames into an APNG. Frames are alpha blended onto the canvas ("over"); the first frame is also the
+ * default image that viewers without APNG support show
+ * @param plays How often to play the animation, 0 = forever
  */
-export async function decode(array: Uint8Array): Promise<Decoded> {
+export async function encodeAnimation(frames: APNGEncodeFrame[], width: number, height: number, plays: number, level: number): Promise<Uint8Array> {
+    if (!frames.length) throw new Error('PNG: an animation needs at least one frame');
+
+    // the default image has to cover the whole canvas: pad the first frame if needed
+    const first = frames[0];
+    if (first.x !== 0 || first.y !== 0 || first.width !== width || first.height !== height) {
+        const pixels = new Uint8Array(width * height * 4);
+        for (let y = 0; y < first.height && first.y + y < height; y++) {
+            const row = first.pixels.subarray(y * first.width * 4, (y * first.width + Math.min(first.width, width - first.x)) * 4);
+            pixels.set(row, ((first.y + y) * width + first.x) * 4);
+        }
+        frames = [{ ...first, x: 0, y: 0, width, height, pixels }, ...frames.slice(1)];
+    }
+
+    for (const f of frames)
+        if (f.x < 0 || f.y < 0 || f.x + f.width > width || f.y + f.height > height || !f.width || !f.height)
+            throw new RangeError('PNG: APNG frames have to lie within the canvas');
+
+    const images = frames.map(f => aligned(f.pixels.subarray(0, f.width * f.height * 4)));
+    const format = pixelFormat(images);
+    const { channels, depth, palette, transparency } = format;
+    const filterRows = level > 0 && !palette;
+
+    const header = new Uint8Array(13);
+    const hv = new DataView(header.buffer);
+    hv.setUint32(0, width);
+    hv.setUint32(4, height);
+    header[8] = depth;
+    header[9] = palette ? 3 : CHANNELS_TO_COLOR_TYPE[channels];
+
+    const actl = new Uint8Array(8);
+    new DataView(actl.buffer).setUint32(0, frames.length);
+    new DataView(actl.buffer).setUint32(4, plays);
+
+    const chunks = [chunk(IHDR, header), chunk(acTL, actl)];
+    if (palette) chunks.push(chunk(PLTE, palette));
+    if (transparency) chunks.push(chunk(tRNS, transparency));
+
+    let sequence = 0;
+    for (let i = 0; i < frames.length; i++) {
+        const f = frames[i];
+        const fctl = new Uint8Array(26);
+        const v = new DataView(fctl.buffer);
+        v.setUint32(0, sequence++);
+        v.setUint32(4, f.width);
+        v.setUint32(8, f.height);
+        v.setUint32(12, f.x);
+        v.setUint32(16, f.y);
+        // milliseconds as num/1000 where they fit, otherwise centiseconds
+        const ms = Math.max(0, Math.round(f.duration));
+        if (ms <= 65535) { v.setUint16(20, ms); v.setUint16(22, 1000); }
+        else { v.setUint16(20, Math.min(65535, Math.round(ms / 10))); v.setUint16(22, 100); }
+        fctl[24] = f.dispose;
+        fctl[25] = 1; // APNG_BLEND_OP_OVER
+        chunks.push(chunk(fcTL, fctl));
+
+        const data = await compressRows(format.convert(images[i], f.width, f.height), f.width, f.height, channels, depth, level, filterRows);
+        if (i === 0) chunks.push(chunk(IDAT, data));
+        else {
+            const body = new Uint8Array(data.length + 4);
+            new DataView(body.buffer).setUint32(0, sequence++);
+            body.set(data, 4);
+            chunks.push(chunk(fdAT, body));
+        }
+    }
+
+    chunks.push(chunk(IEND, new Uint8Array(0)));
+    return concat([HEAD, ...chunks]);
+}
+
+interface PNGHeader {
+    width: number;
+    height: number;
+    depth: number;
+    colorType: number;
+    interlace: number;
+}
+
+interface APNGFrameControl {
+    width: number;
+    height: number;
+    x: number;
+    y: number;
+    /** milliseconds */
+    delay: number;
+    dispose: number;
+    blend: number;
+}
+
+interface Parsed {
+    header: PNGHeader;
+    palette: Uint8Array | null;
+    transparency: Uint8Array | null;
+    idat: Uint8Array[];
+    exif: Uint8Array | null;
+    text: Array<{ type: number, chunk: Uint8Array }>;
+    /** set for APNGs: number of frames and plays (0 = forever) */
+    animation: { frames: number, plays: number } | null;
+    /** APNG frames, with their zlib data; the IDAT is the first frame if it has a fcTL */
+    frames: Array<{ control: APNGFrameControl, data: Uint8Array[] }>;
+    /** set if the animation is broken, which makes decoders fall back to the default image */
+    animationError: boolean;
+}
+
+function parse(array: Uint8Array): Parsed {
     const view = new DataView(array.buffer, array.byteOffset, array.byteLength);
 
     for (let i = 0; i < HEAD.length; i++)
         if (array[i] !== HEAD[i]) throw new Error('PNG: invalid signature');
 
-    let header: { width: number, height: number, depth: number, colorType: number, interlace: number } | null = null;
+    let header: PNGHeader | null = null;
     let palette: Uint8Array | null = null;
     let transparency: Uint8Array | null = null;
     const idat: Uint8Array[] = [];
     let exif: Uint8Array | null = null;
     const text: Array<{ type: number, chunk: Uint8Array }> = [];
+    let animation: Parsed['animation'] = null;
+    const frames: Parsed['frames'] = [];
+    let current: Parsed['frames'][number] | null = null;
+    let sequence = 0;
+    let animationError = false;
 
     let offset = 8;
     while (offset + 8 <= array.length) {
@@ -265,8 +428,36 @@ export async function decode(array: Uint8Array): Promise<Decoded> {
         } else if (type === tRNS) {
             if (transparency) throw new Error('PNG: tRNS can only occur once in an image');
             transparency = chunk;
-        } else if (type === IDAT) idat.push(chunk);
-        else if (type === eXIf) exif ??= chunk;
+        } else if (type === IDAT) {
+            idat.push(chunk);
+            // the default image is the first frame if a fcTL came before it
+            if (current && !frames.length) frames.push(current);
+        } else if (type === acTL) {
+            // only one acTL, before the image data
+            if (animation || idat.length || length < 8) animationError = true;
+            else animation = { frames: view.getUint32(start), plays: view.getUint32(start + 4) };
+        } else if (type === fcTL) {
+            // (a fcTL before the acTL is tolerated, like browsers do)
+            if (length < 26 || view.getUint32(start) !== sequence++) animationError = true;
+            if (animationError) { offset = end + 4; continue; }
+            const num = view.getUint16(start + 20), den = view.getUint16(start + 22) || 100;
+            current = {
+                control: {
+                    width: view.getUint32(start + 4),
+                    height: view.getUint32(start + 8),
+                    x: view.getUint32(start + 12),
+                    y: view.getUint32(start + 16),
+                    delay: num * 1000 / den,
+                    dispose: chunk[24],
+                    blend: chunk[25]
+                },
+                data: idat.length ? [] : idat
+            };
+            if (idat.length) frames.push(current);
+        } else if (type === fdAT) {
+            if (length < 4 || view.getUint32(start) !== sequence++ || !current || current.data === idat) animationError = true;
+            else current.data.push(chunk.subarray(4));
+        } else if (type === eXIf) exif ??= chunk;
         else if (type === tEXt || type === zTXt || type === iTXt) text.push({ type, chunk });
         else if (type === IEND) break;
 
@@ -276,13 +467,25 @@ export async function decode(array: Uint8Array): Promise<Decoded> {
     if (!header) throw new Error('PNG: missing IHDR');
     if (!idat.length) throw new Error('PNG: missing IDAT');
 
-    const { width, height, depth, colorType, interlace } = header;
+    const { width, height, depth, colorType } = header;
     const channels = COLOR_TYPE_CHANNELS[colorType];
     if (!channels) throw new Error(`PNG: invalid color type ${colorType}`);
     if (!VALID_DEPTHS[colorType].includes(depth)) throw new Error(`PNG: invalid bit depth ${depth} for color type ${colorType}`);
     if (width === 0 || height === 0) throw new Error('PNG: invalid dimensions');
     if (colorType === 3 && !palette) throw new Error('PNG: indexed color image has no PLTE');
 
+    // more frames than announced are ignored; fewer (or none) make the animation invalid
+    if (animation) {
+        if (frames.length > animation.frames) frames.length = animation.frames;
+        if (!frames.length || frames.length < animation.frames || frames.some(f => !f.data.length)) animationError = true;
+    }
+    return { header, palette, transparency, idat, exif, text, animation, frames, animationError };
+}
+
+// inflates and converts one image (the default image or an APNG frame) to RGBA
+async function decodeImageData(p: Parsed, chunks: Uint8Array[], width: number, height: number): Promise<Uint8Array> {
+    const { depth, colorType, interlace } = p.header;
+    const channels = COLOR_TYPE_CHANNELS[colorType];
     const bitsPerPixel = channels * depth;
     const bpp = Math.max(1, bitsPerPixel >> 3);
     const passes = interlace ? ADAM7.map(([xs, ys, dx, dy]) => [xs, ys, dx, dy, Math.ceil((width - xs) / dx), Math.ceil((height - ys) / dy)]) : [[0, 0, 1, 1, width, height]];
@@ -293,11 +496,12 @@ export async function decode(array: Uint8Array): Promise<Decoded> {
         if (pw > 0 && ph > 0) expected += ph * (1 + Math.ceil(pw * bitsPerPixel / 8));
     }
 
-    const data = await decompressAsync(idat.length === 1 ? idat[0] : concat(idat), expected);
+    if (!chunks.length) throw new Error('PNG: missing image data');
+    const data = await decompressAsync(chunks.length === 1 ? chunks[0] : concat(chunks), expected);
     if (data.length < expected) throw new Error('PNG: image data is truncated');
 
     const rgba = new Uint8Array(width * height * 4);
-    const toRGBA = createConverter(colorType, depth, palette, transparency);
+    const toRGBA = createConverter(colorType, depth, p.palette, p.transparency);
 
     let dataOffset = 0;
     for (const [xs, ys, dx, dy, pw, ph] of passes) {
@@ -311,7 +515,107 @@ export async function decode(array: Uint8Array): Promise<Decoded> {
         toRGBA(pixels, rowBytes, pw, ph, rgba, { row: y => ((ys + y * dy) * width + xs) * 4, step: dx * 4 });
     }
 
-    return { width, height, pixels: rgba, orientation: exif ? exifOrientation(exif) : await textOrientation(text) };
+    return rgba;
+}
+
+/**
+ * Decodes a PNG into 8-bit RGBA pixel data (for APNGs, the default image)
+ * Supports all color types, bit depths, tRNS transparency and adam7 interlacing
+ * The orientation comes from the eXIf chunk, or, if there is none, from the Exif text ImageMagick wrote before eXIf
+ * existed ("Raw profile type exif") or from the XMP packet
+ */
+export async function decode(array: Uint8Array): Promise<Decoded> {
+    const p = parse(array);
+    const { width, height } = p.header;
+    const pixels = await decodeImageData(p, p.idat, width, height);
+    return { width, height, pixels, orientation: p.exif ? exifOrientation(p.exif) : await textOrientation(p.text) };
+}
+
+export interface APNGFrame {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    /** milliseconds */
+    duration: number;
+    /** 0 none, 1 background (transparent), 2 previous */
+    dispose: number;
+    /** 0 source (replace), 1 over */
+    blend: number;
+    pixels: Uint8Array;
+}
+
+/** Whether the PNG is an APNG (has an acTL chunk) */
+export function isAnimated(array: Uint8Array): boolean {
+    try {
+        const p = parse(array);
+        return p.animation !== null && !p.animationError;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Decodes an APNG into its (uncomposited) frames; a plain PNG becomes a single frame
+ * @return plays: 0 = forever
+ */
+export async function decodeAnimation(array: Uint8Array, onlyFirstFrame = false): Promise<{ width: number, height: number, plays: number, frames: APNGFrame[] }> {
+    const p = parse(array);
+    const { width, height } = p.header;
+
+    // broken animations show the default image, like browsers do
+    if (!p.animation || p.animationError) {
+        const pixels = await decodeImageData(p, p.idat, width, height);
+        return { width, height, plays: 0, frames: [{ x: 0, y: 0, width, height, duration: 0, dispose: 0, blend: 0, pixels }] };
+    }
+
+    const frames: APNGFrame[] = [];
+    for (const { control: c, data } of p.frames) {
+        if (!c.width || !c.height || c.x + c.width > width || c.y + c.height > height) throw new Error('PNG: invalid APNG frame region');
+        frames.push({
+            x: c.x, y: c.y, width: c.width, height: c.height, duration: c.delay,
+            // DISPOSE_OP_PREVIOUS on the first frame means background
+            dispose: !frames.length && c.dispose === 2 ? 1 : c.dispose,
+            blend: c.blend,
+            pixels: await decodeImageData(p, data, c.width, c.height)
+        });
+        if (onlyFirstFrame) break;
+    }
+
+    return { width, height, plays: p.animation.plays, frames };
+}
+
+/**
+ * Composites APNG frames onto the canvas, as the APNG specification describes (its integer "over" operation)
+ */
+export function compositeAnimation({ width, height, frames }: { width: number, height: number, frames: APNGFrame[] }): Array<{ pixels: Uint8Array, duration: number }> {
+    const canvas = new Uint8Array(width * height * 4);
+    const output = [];
+
+    for (const f of frames) {
+        const previous = f.dispose === 2 ? canvas.slice() : null;
+
+        for (let y = 0; y < f.height; y++)
+            for (let x = 0; x < f.width; x++) {
+                const s = (y * f.width + x) * 4, d = ((f.y + y) * width + f.x + x) * 4;
+                const sa = f.pixels[s + 3], da = canvas[d + 3];
+                if (f.blend === 0 || sa === 255 || da === 0) {
+                    if (f.blend === 0 || sa !== 0) canvas.set(f.pixels.subarray(s, s + 4), d);
+                } else if (sa !== 0) {
+                    const u = sa * 255, v = (255 - sa) * da, al = u + v;
+                    for (let c = 0; c < 3; c++) canvas[d + c] = (f.pixels[s + c] * u + canvas[d + c] * v) / al | 0;
+                    canvas[d + 3] = al / 255 | 0;
+                }
+            }
+
+        output.push({ pixels: canvas.slice(), duration: f.duration });
+
+        if (f.dispose === 1)
+            for (let y = 0; y < f.height; y++) canvas.fill(0, ((f.y + y) * width + f.x) * 4, ((f.y + y) * width + f.x + f.width) * 4);
+        else if (previous) canvas.set(previous);
+    }
+
+    return output;
 }
 
 const RAW_EXIF = /^Raw profile type (exif|APP1)$/;

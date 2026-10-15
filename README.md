@@ -9,7 +9,7 @@
 
 **ImageScript** is a zero-dependency alternative to common JavaScript bitmap image manipulation tools. Every codec and
 renderer is written in TypeScript: no WebAssembly, no native binaries, no npm dependencies, no install scripts. The
-package is about 120 kB (compressed) and runs in Node.js 22.13 or newer (including Alpine/musl, ARM and bundled
+package is about 140 kB (compressed) and runs in Node.js 22.13 or newer (including Alpine/musl, ARM and bundled
 serverless functions), Deno, Bun and browsers. It works with both `import` and `require()`, type definitions are included.
 
 ```sh
@@ -26,7 +26,8 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   - JPEGs (baseline and progressive; grayscale, RGB, CMYK)
   - TIFFs (strips and tiles; uncompressed, LZW, deflate, PackBits and JPEG compressed; BigTIFF)
   - JPEGs, TIFFs and PNGs are rotated as their Exif (or, for PNGs, XMP) orientation says
-- [Decoding GIFs](https://imagescript.matmen.dev/classes/GIF.html#decode) with all frames, durations and disposal modes
+- [Decoding animations](https://imagescript.matmen.dev/classes/Animation.html#decode) (GIF and APNG) with all
+  frames, durations and disposal modes
 - [Rendering SVGs](https://imagescript.matmen.dev/classes/Image.html#rendersvg) (shapes, paths, gradients, strokes, clip paths,
   masks, CSS; no text, images or filters)
 - [Rendering vector fonts](https://imagescript.matmen.dev/classes/Image.html#rendertext) (TrueType and OpenType, with kerning and outlines)
@@ -44,7 +45,8 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   , [dominantColor](https://imagescript.matmen.dev/classes/Image.html#dominantcolor), ...)
 - Encoding images as [PNGs](https://imagescript.matmen.dev/classes/Image.html#encode) (smallest lossless color type)
   , [JPEGs](https://imagescript.matmen.dev/classes/Image.html#encodejpeg)
-  and animated [GIFs](https://imagescript.matmen.dev/classes/GIF.html#encode)
+- Encoding animations as [GIF](https://imagescript.matmen.dev/classes/Animation.html#encodegif) and
+  [APNG](https://imagescript.matmen.dev/classes/Animation.html#encodeapng)
 
 ---
 
