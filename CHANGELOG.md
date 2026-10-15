@@ -19,6 +19,7 @@
   run length encoded 24/32 bit files.
 - **`colorToAlpha(color, options)`** (#39): makes a color transparent like GIMP's "Color to Alpha", antialiased edges
   become translucent instead of keeping a fringe of the removed color. Without a color, the top left pixel's is used.
+  The color is removed everywhere in the image, not only from a connected background.
 
 ### Deprecated
 
