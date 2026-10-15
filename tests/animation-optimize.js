@@ -118,6 +118,24 @@ const disc = (size, color) => new Image(size, size).fill((x, y) => {
         if (animation.__optimized__({replace: true, even: false, alpha: () => 4 / 3}).some(f => f.blend)) panic('opaque animation: frames weren\'t filled in');
     }
 
+    // a GIF frame stays dense when its colors fill the palette and its sparse pixels wouldn't fit (they'd need one more
+    // color for the unchanged pixels): it stays lossless. The blocks around the center change color, the center doesn't
+    {
+        const color = index => Image.rgbaToColor(index, 255 - index, index * 37 & 255, 255);
+        // 24×24 blocks: the ring around the center has all 256 colors in turn, the center some of them
+        const ring = (i, j) => i < 4 || i > 19 || j < 4 || j > 19;
+        const grid = shift => {
+            const blocks = [];
+            for (let j = 0, k = 0; j < 24; j++) for (let i = 0; i < 24; i++) blocks.push(ring(i, j) ? (k++ + shift) & 255 : (i * 7 + j * 13) & 255);
+            return new Image(96, 96).fill((x, y) => color(blocks[(y >> 2) * 24 + (x >> 2)]));
+        };
+        const animation = new Animation([Frame.from(grid(0), 100), Frame.from(grid(1), 100)]);
+        const decoded = await Animation.decode(await animation.encodeGIF());
+        decoded.forEach((frame, i) => {
+            if (frame.bitmap.some((v, k) => v !== animation[i].bitmap[k])) panic(`palette: GIF frame ${i} lost colors`);
+        });
+    }
+
     // a mostly static animation (like a screen recording) only stores what changes
     {
         const background = new Image(160, 120).fill((x, y) => Image.rgbaToColor(x * 7 ^ y * 13, x * y, y * 5, 255));
