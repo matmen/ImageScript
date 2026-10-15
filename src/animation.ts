@@ -180,7 +180,7 @@ export class Animation extends Array<Frame> {
     async encodeGIF(qualityOrOptions: number | GIFEncodeOptions = 95): Promise<Uint8Array> {
         const { quality = 95, metadata = {} } = isOptions(qualityOrOptions) ? qualityOrOptions : { quality: qualityOrOptions };
         this.__validate__();
-        const frames = this.__optimized__({ replace: false, even: false, alpha: 'frame' }).map(f => ({
+        const frames = this.__optimized__({ replace: false, even: false, alpha: 'frame', palette: 256 }).map(f => ({
             x: f.x,
             y: f.y,
             width: f.width,

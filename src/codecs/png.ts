@@ -164,7 +164,8 @@ interface PixelFormat {
 export function alphaCost(images: Uint8Array[]): number {
     let grey = true;
     const colors = new Set<number>();
-    for (const rgba of images) {
+    // more than 256 colors and not grey: truecolor either way, nothing else can change
+    scan: for (const rgba of images) {
         const pixels = new Uint32Array(rgba.buffer, rgba.byteOffset, rgba.length >> 2);
         let previous = -1;
         for (let i = 0; i < pixels.length; i++) {
@@ -175,6 +176,7 @@ export function alphaCost(images: Uint8Array[]): number {
             if (rgba[o + 3] === 0) continue;
             if (rgba[o] !== rgba[o + 1] || rgba[o] !== rgba[o + 2]) grey = false;
             if (colors.size <= 256) colors.add(value);
+            else if (!grey) break scan;
         }
     }
     // bytes per pixel: palette 1/8 to 1 (by its bit depth), grey 1 (with alpha 2), truecolor 3 (with alpha 4)

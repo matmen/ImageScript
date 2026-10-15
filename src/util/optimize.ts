@@ -48,6 +48,11 @@ export interface OptimizeOptions {
      * (the transparent pixels are the sparse frames' unchanged ones) than without the transparent pixels
      */
     alpha: 'frame' | ((frames: OptimizedFrame[]) => number);
+    /**
+     * The palette size if each frame has one (GIF: 256): a frame stays dense if its colors fit, but its sparse pixels
+     * (the transparent ones are a color more) don't, so they'd lose colors
+     */
+    palette?: number;
 }
 
 // what transparent pixels make an opaque frame cost: an alpha channel, 4 channels instead of 3 (or a palette entry
@@ -59,7 +64,7 @@ const ALPHA_COST = 4 / 3;
  * @param width The canvas width
  * @param height The canvas height
  */
-export function optimize(frames: InputFrame[], width: number, height: number, { replace, even, alpha }: OptimizeOptions): OptimizedFrame[] {
+export function optimize(frames: InputFrame[], width: number, height: number, { replace, even, alpha, palette }: OptimizeOptions): OptimizedFrame[] {
     const size = width * height * 4;
     // the input animation's canvas, and what the optimized animation shows after its last frame (and its disposal)
     const canvas = new Uint8Array(size), canvas32 = new Int32Array(canvas.buffer);
@@ -111,7 +116,9 @@ export function optimize(frames: InputFrame[], width: number, height: number, { 
         if (!output.length && (w !== width || h !== height)) opaque = false;
         if (!area.denseOpaque) opaque = false;
         const sparseCost = alpha === 'frame' && area.denseOpaque ? area.sparseChanges * ALPHA_COST : area.sparseChanges;
-        const dense = !blend || area.denseChanges < sparseCost;
+        const dense = !blend || area.denseChanges < sparseCost
+            || (palette !== undefined && colors(new Int32Array(pixels.buffer), w, { x: 0, y: 0, width: w, height: h }, palette + 1) > palette
+                && colors(canvas32, width, changed, palette + 1) <= palette);
         denseTotal += area.denseChanges;
         chosenTotal += dense ? area.denseChanges : area.sparseChanges;
         if (dense) {
@@ -147,16 +154,36 @@ export function optimize(frames: InputFrame[], width: number, height: number, { 
         shown.fill(0);
         for (const f of output) {
             const pixels32 = new Int32Array(f.pixels.buffer, f.pixels.byteOffset, f.width * f.height);
-            for (let row = 0, k = 0; row < f.height; row++)
-                for (let p = (f.y + row) * width + f.x, end = p + f.width; p < end; p++, k++) {
-                    if (f.blend && (pixels32[k] & ALPHA) === 0) pixels32[k] = shown32[p];
-                    else shown32[p] = pixels32[k];
-                }
+            for (let row = 0, k = 0; row < f.height; row++, k += f.width) {
+                const start = (f.y + row) * width + f.x;
+                if (!f.blend) shown32.set(pixels32.subarray(k, k + f.width), start);
+                else
+                    for (let i = k, p = start, end = k + f.width; i < end; i++, p++) {
+                        if ((pixels32[i] & ALPHA) === 0) pixels32[i] = shown32[p];
+                        else shown32[p] = pixels32[i];
+                    }
+            }
             f.blend = false;
         }
     }
 
     return output;
+}
+
+// how many colors an area of an image has, counted up to a limit
+function colors(image32: Int32Array, width: number, { x, y, width: w, height: h }: Rect, limit: number): number {
+    const seen = new Set<number>();
+    for (let row = y; row < y + h; row++) {
+        let previous: number | undefined;
+        for (let p = row * width + x, end = p + w; p < end; p++) {
+            const value = image32[p];
+            if (value === previous) continue;
+            previous = value;
+            seen.add(value);
+            if (seen.size >= limit) return seen.size;
+        }
+    }
+    return seen.size;
 }
 
 // a frame that doesn't change anything
