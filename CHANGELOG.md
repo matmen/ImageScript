@@ -14,6 +14,9 @@
 - **`Animation`**, the base class of `GIF`: an array of frames that decodes GIF, APNG and WebP
   (`Animation.decode()`) and encodes `encodeGIF()`, `encodeAPNG()` and `encodeWebP()`. `GIF` keeps its API.
 - `decode()` returns animated WebPs as `Animation`; `ImageType` recognizes WebP (`isWebP()`, `getType() === 'webp'`).
+- **TGA** decoding and encoding (#21): color mapped, truecolor and greyscale, uncompressed and run length encoded, all
+  four origins. `Image.decode()` recognizes TGAs by their header (they have no magic number), `encodeTGA()` writes
+  run length encoded 24/32 bit files.
 
 ### Deprecated
 

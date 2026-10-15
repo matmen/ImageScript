@@ -1,7 +1,8 @@
 import { BinaryData, view as bytes } from './util/mem.ts';
+import { isTGA } from './codecs/tga.ts';
 
 /** Image formats recognized by {@link ImageType.getType} */
-export type ImageTypeName = 'png' | 'jpeg' | 'tiff' | 'gif' | 'webp';
+export type ImageTypeName = 'png' | 'jpeg' | 'tiff' | 'gif' | 'webp' | 'tga';
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -37,6 +38,8 @@ export class ImageType {
         if (this.isTIFF(view)) return 'tiff';
         if (this.isGIF(view)) return 'gif';
         if (this.isWebP(view)) return 'webp';
+        // TGAs have no magic number, they are recognized by a consistent header (or the TGA 2.0 footer)
+        if (this.isTGA(view)) return 'tga';
         return null;
     }
 
@@ -70,5 +73,11 @@ export class ImageType {
     static isWebP(data: BinaryData): boolean {
         const view = dataView(data);
         return view.byteLength >= 12 && view.getUint32(0, false) === MAGIC_NUMBERS.RIFF && view.getUint32(8, false) === MAGIC_NUMBERS.WEBP;
+    }
+
+    /** Whether the data looks like a TGA (which has no magic number: its header has to be consistent) */
+    static isTGA(data: BinaryData): boolean {
+        const view = dataView(data);
+        return isTGA(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
     }
 }

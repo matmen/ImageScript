@@ -2,6 +2,7 @@ import * as png from './codecs/png.ts';
 import * as jpeg from './codecs/jpeg.ts';
 import * as tiff from './codecs/tiff.ts';
 import * as webp from './codecs/webp.ts';
+import * as tga from './codecs/tga.ts';
 import * as quantize from './codecs/quantize.ts';
 import * as textRenderer from './render/text.ts';
 import * as svgRenderer from './render/svg.ts';
@@ -1584,8 +1585,15 @@ export class Image {
     }
 
     /**
-     * Decodes an image (PNG, JPEG, TIFF or WebP). For APNGs this is the default image; animated WebPs and GIFs have
-     * no single image, decode those with {@link Animation.decode}
+     * Encodes the image as run length encoded TGA (32 bit, or 24 bit if the image is opaque)
+     */
+    async encodeTGA(): Promise<Uint8Array> {
+        return tga.encode(this.__bytes__(), this.width, this.height);
+    }
+
+    /**
+     * Decodes an image (PNG, JPEG, TIFF, WebP or TGA). For APNGs this is the default image; animated WebPs and GIFs
+     * have no single image, decode those with {@link Animation.decode}
      * @param input The binary data to decode
      * @param options See {@link DecodeOptions}. JPEGs, TIFFs and PNGs are rotated/mirrored as their orientation tag
      *     (Exif, for PNGs also XMP) says by default: photos taken with a rotated camera are stored sideways
@@ -1603,7 +1611,8 @@ export class Image {
         else if (ImageType.isWebP(dataView)) {
             if (webp.isAnimated(data)) throw new Error('Animated WebPs have to be decoded with Animation.decode()');
             decoded = webp.decode(data);
-        } else throw new Error('Unsupported image type');
+        } else if (ImageType.isTGA(dataView)) decoded = tga.decode(data);
+        else throw new Error('Unsupported image type');
 
         const image = new Image(decoded.width, decoded.height);
         image.bitmap.set(decoded.pixels);

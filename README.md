@@ -26,6 +26,7 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   - JPEGs (baseline and progressive; grayscale, RGB, CMYK)
   - TIFFs (strips and tiles; uncompressed, LZW, deflate, PackBits and JPEG compressed; BigTIFF)
   - WebPs (lossy, lossless and with alpha; bit-exact with libwebp)
+  - TGAs (color mapped, truecolor and greyscale; uncompressed and run length encoded)
   - JPEGs, TIFFs, PNGs and WebPs are rotated as their Exif (or, for PNGs, XMP) orientation says
 - [Decoding animations](https://imagescript.matmen.dev/classes/Animation.html#decode) (GIF, APNG and WebP) with all
   frames, durations and disposal modes
@@ -46,7 +47,8 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   , [dominantColor](https://imagescript.matmen.dev/classes/Image.html#dominantcolor), ...)
 - Encoding images as [PNGs](https://imagescript.matmen.dev/classes/Image.html#encode) (smallest lossless color type)
   , [JPEGs](https://imagescript.matmen.dev/classes/Image.html#encodejpeg)
-  and lossless [WebPs](https://imagescript.matmen.dev/classes/Image.html#encodewebp)
+  , lossless [WebPs](https://imagescript.matmen.dev/classes/Image.html#encodewebp)
+  and [TGAs](https://imagescript.matmen.dev/classes/Image.html#encodetga)
 - Encoding animations as [GIF](https://imagescript.matmen.dev/classes/Animation.html#encodegif),
   [APNG](https://imagescript.matmen.dev/classes/Animation.html#encodeapng) and lossless
   [WebP](https://imagescript.matmen.dev/classes/Animation.html#encodewebp)
