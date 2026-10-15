@@ -342,7 +342,11 @@ export function encodeAnimation(frames: WebPEncodeFrame[], width: number, height
     if (!frames.length) throw new Error('WebP: an animation needs at least one frame');
     if (width > 1 << 24 || height > 1 << 24) throw new RangeError('WebP: canvas too large');
 
-    const alpha = frames.some(f => hasAlpha(f.pixels));
+    // transparency also comes from the canvas: where the first frame doesn't cover it, and where frames are disposed
+    // (decoders like libwebp take the canvas as opaque without the flag)
+    const first = frames[0];
+    const alpha = first.x > 0 || first.y > 0 || first.width < width || first.height < height
+        || frames.some(f => f.dispose || hasAlpha(f.pixels));
 
     const vp8x = new Uint8Array(10);
     vp8x[0] = 2 | (alpha ? 16 : 0) | (exif ? 8 : 0); // animation, alpha, exif

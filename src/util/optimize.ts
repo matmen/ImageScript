@@ -53,6 +53,11 @@ export interface OptimizeOptions {
      * (the transparent ones are a color more) don't, so they'd lose colors
      */
     palette?: number;
+    /**
+     * Whether the first frame has to cover the canvas (GIF: decoders disagree on what's outside it, browsers show it
+     * transparent, others the background color)
+     */
+    cover?: boolean;
 }
 
 // what transparent pixels make an opaque frame cost: an alpha channel, 4 channels instead of 3 (or a palette entry
@@ -64,7 +69,7 @@ const ALPHA_COST = 4 / 3;
  * @param width The canvas width
  * @param height The canvas height
  */
-export function optimize(frames: InputFrame[], width: number, height: number, { replace, even, alpha, palette }: OptimizeOptions): OptimizedFrame[] {
+export function optimize(frames: InputFrame[], width: number, height: number, { replace, even, alpha, palette, cover }: OptimizeOptions): OptimizedFrame[] {
     const size = width * height * 4;
     // the input animation's canvas, and what the optimized animation shows after its last frame (and its disposal)
     const canvas = new Uint8Array(size), canvas32 = new Int32Array(canvas.buffer);
@@ -167,6 +172,7 @@ export function optimize(frames: InputFrame[], width: number, height: number, { 
         }
     }
 
+    if (cover && output.length) grow(output[0], { x: 0, y: 0, width, height });
     return output;
 }
 
