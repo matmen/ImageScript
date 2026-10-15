@@ -5,6 +5,21 @@
  */
 export type PathCommand = [string, ...number[]];
 
+/** a TrueType glyph's points (font units) and instructions, for hinting */
+export interface GlyfPoints {
+    xs: number[];
+    ys: number[];
+    /** on curve flags */
+    on: boolean[];
+    /** index of the last point of every contour */
+    ends: number[];
+    instructions: Uint8Array;
+    /** glyph bounding box minimum x (the left side bearing's reference) */
+    xMin: number;
+    /** components of composite glyphs (their points are not included in xs/ys) */
+    components: Array<{ glyph: number, dx: number, dy: number, matrix: [number, number, number, number], round: boolean, match: [number, number] | null, useMetrics: boolean }> | null;
+}
+
 interface CFF {
     charStrings: Uint8Array[];
     globalSubrs: Uint8Array[];
@@ -104,6 +119,98 @@ export class Font {
         const hmtx = this.tables.hmtx.offset;
         const index = Math.min(glyph, this.numberOfHMetrics - 1);
         return this.u16(hmtx + index * 4);
+    }
+
+    /** left side bearing in font units */
+    leftSideBearing(glyph: number): number {
+        const hmtx = this.tables.hmtx.offset;
+        if (glyph < this.numberOfHMetrics) return this.i16(hmtx + glyph * 4 + 2);
+        return this.i16(hmtx + this.numberOfHMetrics * 4 + (glyph - this.numberOfHMetrics) * 2);
+    }
+
+    /**
+     * A TrueType glyph's points and instructions (null for empty glyphs or CFF fonts)
+     */
+    glyfPoints(glyph: number): GlyfPoints | null {
+        if (this.outlines !== 'glyf' || glyph >= this.numGlyphs) return null;
+        const loca = this.tables.loca.offset;
+        const start = this.indexToLocFormat ? this.u32(loca + glyph * 4) : this.u16(loca + glyph * 2) * 2;
+        const end = this.indexToLocFormat ? this.u32(loca + glyph * 4 + 4) : this.u16(loca + glyph * 2 + 2) * 2;
+        if (end <= start) return null;
+
+        const offset = this.tables.glyf.offset + start;
+        const contourCount = this.i16(offset);
+        const xMin = this.i16(offset + 2);
+
+        if (contourCount < 0) {
+            const components: NonNullable<GlyfPoints['components']> = [];
+            let p = offset + 10, flags = 0;
+            do {
+                flags = this.u16(p);
+                const component = this.u16(p + 2);
+                p += 4;
+                let arg1, arg2;
+                if (flags & 1) {
+                    arg1 = flags & 2 ? this.i16(p) : this.u16(p);
+                    arg2 = flags & 2 ? this.i16(p + 2) : this.u16(p + 2);
+                    p += 4;
+                } else {
+                    arg1 = flags & 2 ? this.i8(p) : this.u8(p);
+                    arg2 = flags & 2 ? this.i8(p + 1) : this.u8(p + 1);
+                    p += 2;
+                }
+                let matrix: [number, number, number, number] = [1, 0, 0, 1];
+                const f2dot14 = (o: number): number => this.i16(o) / 16384;
+                if (flags & 8) { const s = f2dot14(p); matrix = [s, 0, 0, s]; p += 2; }
+                else if (flags & 0x40) { matrix = [f2dot14(p), 0, 0, f2dot14(p + 2)]; p += 4; }
+                else if (flags & 0x80) { matrix = [f2dot14(p), f2dot14(p + 2), f2dot14(p + 4), f2dot14(p + 6)]; p += 8; }
+                components.push({
+                    glyph: component,
+                    dx: flags & 2 ? arg1 : 0,
+                    dy: flags & 2 ? arg2 : 0,
+                    matrix,
+                    round: (flags & 4) !== 0,
+                    match: flags & 2 ? null : [arg1, arg2],
+                    useMetrics: (flags & 0x200) !== 0
+                });
+            } while (flags & 0x20);
+            const instructions = flags & 0x100 ? this.data.subarray(p + 2, p + 2 + this.u16(p)) : new Uint8Array(0);
+            return { xs: [], ys: [], on: [], ends: [], instructions, xMin, components };
+        }
+
+        const ends: number[] = [];
+        for (let i = 0; i < contourCount; i++) ends.push(this.u16(offset + 10 + i * 2));
+        const pointCount = contourCount ? ends[contourCount - 1] + 1 : 0;
+
+        let p = offset + 10 + contourCount * 2;
+        const instructionLength = this.u16(p);
+        const instructions = this.data.subarray(p + 2, p + 2 + instructionLength);
+        p += 2 + instructionLength;
+
+        const flags = new Uint8Array(pointCount);
+        for (let i = 0; i < pointCount;) {
+            const flag = this.u8(p++);
+            flags[i++] = flag;
+            if (flag & 8) for (let repeat = this.u8(p++); repeat > 0 && i < pointCount; repeat--) flags[i++] = flag;
+        }
+
+        const xs: number[] = [], ys: number[] = [];
+        for (const [coords, short, same] of [[xs, 2, 16], [ys, 4, 32]] as Array<[number[], number, number]>) {
+            let value = 0;
+            for (let i = 0; i < pointCount; i++) {
+                const flag = flags[i];
+                if (flag & short) {
+                    const delta = this.u8(p++);
+                    value += flag & same ? delta : -delta;
+                } else if (!(flag & same)) {
+                    value += this.i16(p);
+                    p += 2;
+                }
+                coords.push(value);
+            }
+        }
+
+        return { xs, ys, on: Array.from(flags, f => (f & 1) === 1), ends, instructions, xMin, components: null };
     }
 
     /**
@@ -239,10 +346,10 @@ export class Font {
 }
 
 // converts a TrueType contour (quadratic, with implied on-curve points) to path commands
-function contourToPath(path: PathCommand[], xs: Int32Array, ys: Int32Array, flags: Uint8Array, first: number, last: number): void {
+export function contourToPath(path: PathCommand[], xs: ArrayLike<number>, ys: ArrayLike<number>, flags: ArrayLike<number | boolean>, first: number, last: number): void {
     if (last < first) return;
     const count = last - first + 1;
-    const on = (i: number): number => flags[first + (i % count)] & 1;
+    const on = (i: number): boolean => flags[first + (i % count)] === true || ((flags[first + (i % count)] as number) & 1) === 1;
     const x = (i: number): number => xs[first + (i % count)];
     const y = (i: number): number => ys[first + (i % count)];
 

@@ -20,11 +20,21 @@
 - **`colorToAlpha(color, options)`** (#39): makes a color transparent like GIMP's "Color to Alpha", antialiased edges
   become translucent instead of keeping a fringe of the removed color. Without a color, the top left pixel's is used.
   The color is removed everywhere in the image, not only from a connected background.
+- **TrueType hinting** (#31): `renderText()` runs the hinting instructions of TrueType fonts, which align stems and
+  edges with the pixel grid for crisper small text, like Windows renders it. Hinted outlines match FreeType's classic
+  interpreter point for point, glyphs of hinted fonts are placed on whole pixels. Fonts without instructions (and
+  CFF/OpenType outlines) render as before; `renderText(..., {hinting: false})` turns it off.
 
 ### Deprecated
 
 - **`GIF`**: use `Animation`, which works the same and also handles APNG and WebP (`new GIF(frames).encode()` becomes
   `new Animation(frames).encodeGIF()`, `GIF.decode()` becomes `Animation.decode()`). `GIF` will be removed in 4.0.
+
+### Fixes
+
+- Text rendering: glyph outlines touching the left edge of their bitmap could come out inverted (a rasterizer
+  rounding issue); hinting made it common
+
 
 ## 3.0.0
 

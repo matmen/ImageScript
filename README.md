@@ -32,7 +32,8 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   frames, durations and disposal modes
 - [Rendering SVGs](https://imagescript.matmen.dev/classes/Image.html#rendersvg) (shapes, paths, gradients, strokes, clip paths,
   masks, CSS; no text, images or filters)
-- [Rendering vector fonts](https://imagescript.matmen.dev/classes/Image.html#rendertext) (TrueType and OpenType, with kerning and outlines)
+- [Rendering vector fonts](https://imagescript.matmen.dev/classes/Image.html#rendertext) (TrueType and OpenType, with kerning,
+  outlines and TrueType hinting)
 - [Resizing](https://imagescript.matmen.dev/classes/Image.html#resize) (bilinear, bicubic, area averaging and nearest neighbor)
 - Image manipulation functions ([crop](https://imagescript.matmen.dev/classes/Image.html#crop)
   , [rotate](https://imagescript.matmen.dev/classes/Image.html#rotate)
