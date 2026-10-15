@@ -28,6 +28,8 @@
 
 - GIF decoding is about 25% faster, with identical results: indices become colors through a lookup table, LZW
   strings are written without bounds checks unless they run past the image.
+- SVG rendering is about 15-20% faster, with identical results: groups with opacity, clip paths, masks and nested
+  viewports are composited only where they painted.
 
 ### Deprecated
 
