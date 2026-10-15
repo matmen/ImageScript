@@ -2,6 +2,9 @@
 // changed since the frame before, with the pixels that didn't change transparent (they compress better, and GIFs keep
 // their palette for the others). Consecutive identical frames become one. The animation looks the same as before
 
+// a pixel's alpha bits, read as one 32-bit word (whatever the byte order): 0 transparent, ALPHA opaque
+const ALPHA = new Int32Array(new Uint8Array([0, 0, 0, 255]).buffer)[0];
+
 export interface InputFrame {
     x: number;
     y: number;
@@ -38,82 +41,126 @@ export interface OptimizeOptions {
     replace: boolean;
     /** Whether frame offsets have to be even (WebP stores them halved) */
     even: boolean;
+    /**
+     * What the transparent pixels of sparse frames cost when they would be opaque otherwise. "frame" if each frame
+     * stores an alpha channel (WebP) or transparent palette index (GIF) only if it needs one. If all frames share one
+     * pixel format (APNG): a function that tells how much more an opaque animation costs per pixel with its frames
+     * (the transparent pixels are the sparse frames' unchanged ones) than without the transparent pixels
+     */
+    alpha: 'frame' | ((frames: OptimizedFrame[]) => number);
 }
+
+// what transparent pixels make an opaque frame cost: an alpha channel, 4 channels instead of 3 (or a palette entry
+// less in GIFs, which costs about as much)
+const ALPHA_COST = 4 / 3;
 
 /**
  * Composites the frames and stores each as the area that changed
  * @param width The canvas width
  * @param height The canvas height
  */
-export function optimize(frames: InputFrame[], width: number, height: number, { replace, even }: OptimizeOptions): OptimizedFrame[] {
+export function optimize(frames: InputFrame[], width: number, height: number, { replace, even, alpha }: OptimizeOptions): OptimizedFrame[] {
     const size = width * height * 4;
     // the input animation's canvas, and what the optimized animation shows after its last frame (and its disposal)
-    const canvas = new Uint8Array(size), canvas32 = new Uint32Array(canvas.buffer);
-    const shown = new Uint8Array(size), shown32 = new Uint32Array(shown.buffer);
+    const canvas = new Uint8Array(size), canvas32 = new Int32Array(canvas.buffer);
+    const shown = new Uint8Array(size), shown32 = new Int32Array(shown.buffer);
     const output: OptimizedFrame[] = [];
 
-    const state: State = { canvas, canvas32, shown, shown32, width, replace };
-    const same = (p: number): boolean => canvas32[p] === shown32[p] || (canvas[p * 4 + 3] === 0 && shown[p * 4 + 3] === 0);
+    const state: State = { canvas32, shown32, width, replace };
 
-    for (const f of frames) {
-        const saved = f.dispose === 2 ? canvas.slice() : null;
-        draw(canvas, width, height, f);
+    // for a shared pixel format: whether the animation is opaque when all frames are stored dense, and the changes
+    // from pixel to pixel all dense and as chosen
+    let opaque = true, denseTotal = 0, chosenTotal = 0;
 
-        // the changed area, and the area of changed pixels that blending can't produce
-        let changed = bounds(state, false, { x: 0, y: 0, width, height });
+    // stores what the canvas shows now as the next frame
+    const add = (duration: number): void => {
+        let changed = bounds(state, { x: 0, y: 0, width, height });
         if (!changed) {
-            if (output.length) output[output.length - 1].duration += f.duration;
-            else output.push({ x: 0, y: 0, width: 1, height: 1, duration: f.duration, dispose: false, blend: true, pixels: new Uint8Array(4) });
-        } else {
-            let blend = true;
-            const unblendable = bounds(state, true, changed);
-            if (unblendable && replace) blend = false;
-            else if (unblendable) {
-                // GIF: the frame before clears an area covering these pixels (it grows by transparent, unchanged
-                // pixels if needed), then the frame is blended onto the cleared area
-                const last = output[output.length - 1];
-                grow(last, union(last, unblendable));
-                last.dispose = true;
-                clear(shown, width, last);
-                changed = bounds(state, false, { x: 0, y: 0, width, height }) as Rect;
+            if (output.length) output[output.length - 1].duration += duration;
+            else {
+                output.push(empty(duration));
+                opaque = false;
             }
-
-            if (even) changed = { x: changed.x & ~1, y: changed.y & ~1, width: changed.width + (changed.x & 1), height: changed.height + (changed.y & 1) };
-
-            // blended frames: the changed pixels, the others transparent ("sparse"). The area as it is ("dense")
-            // compresses better when the unchanged pixels are scattered (e.g. in videos): choose the one with fewer
-            // changes from pixel to pixel, which estimates the compressed size well and costs a lot less than
-            // compressing both. GIFs blend the dense area too (its unchanged pixels are the same or transparent in
-            // both), the others replace the area with it
-            const { x, y, width: w, height: h } = changed;
-            const pixels = new Uint8Array(w * h * 4), pixels32 = new Uint32Array(pixels.buffer);
-            let sparseChanges = 0, denseChanges = 0, lastSparse = -1, lastDense = -1;
-            for (let row = 0, k = 0; row < h; row++) {
-                const start = (y + row) * width + x;
-                for (let p = start; p < start + w; p++, k++) {
-                    const value = canvas32[p];
-                    const sparse = blend && same(p) ? 0 : value;
-                    pixels32[k] = sparse;
-                    if (sparse !== lastSparse) sparseChanges++;
-                    if (value !== lastDense) denseChanges++;
-                    lastSparse = sparse;
-                    lastDense = value;
-                }
-                shown.set(canvas.subarray(start * 4, (start + w) * 4), start * 4);
-            }
-            if (blend && denseChanges < sparseChanges) {
-                for (let row = 0; row < h; row++) pixels.set(canvas.subarray(((y + row) * width + x) * 4, ((y + row) * width + x + w) * 4), row * w * 4);
-                if (replace) blend = false;
-            }
-            output.push({ x, y, width: w, height: h, duration: f.duration, dispose: false, blend, pixels });
+            return;
+        }
+        if (even) changed = evenArea(changed);
+        let area = sparse(state, changed);
+        let blend = true;
+        if (area.unblendable && replace) blend = false;
+        else if (area.unblendable) {
+            // GIF: the frame before clears an area covering these pixels (it grows by transparent, unchanged pixels
+            // if needed), then the frame is blended onto the cleared area
+            const last = output[output.length - 1];
+            grow(last, union(last, area.unblendable));
+            last.dispose = true;
+            clear(shown, width, last);
+            changed = bounds(state, { x: 0, y: 0, width, height });
+            // the pixels only became transparent: clearing them is all the frame shows, it only takes its time
+            if (!changed) return void output.push(empty(duration));
+            if (even) changed = evenArea(changed);
+            area = sparse(state, changed);
         }
 
-        if (f.dispose === 1) clear(canvas, width, clip(f, width, height));
-        else if (saved) canvas.set(saved);
+        // blended frames: the changed pixels, the others transparent ("sparse"). The area as it is ("dense")
+        // compresses better when the unchanged pixels are scattered (e.g. in videos): choose the one with fewer
+        // changes from pixel to pixel, which estimates the compressed size well and costs a lot less than compressing
+        // both. GIFs blend the dense area too (its unchanged pixels are the same or transparent in both), the others
+        // replace the area with it
+        const { x, y, width: w, height: h } = changed;
+        const pixels = area.pixels;
+        if (!output.length && (w !== width || h !== height)) opaque = false;
+        if (!area.denseOpaque) opaque = false;
+        const sparseCost = alpha === 'frame' && area.denseOpaque ? area.sparseChanges * ALPHA_COST : area.sparseChanges;
+        const dense = !blend || area.denseChanges < sparseCost;
+        denseTotal += area.denseChanges;
+        chosenTotal += dense ? area.denseChanges : area.sparseChanges;
+        if (dense) {
+            for (let row = 0; row < h; row++) pixels.set(canvas.subarray(((y + row) * width + x) * 4, ((y + row) * width + x + w) * 4), row * w * 4);
+            if (replace) blend = false;
+        }
+        for (let row = 0; row < h; row++) {
+            const start = ((y + row) * width + x) * 4;
+            shown.set(canvas.subarray(start, start + w * 4), start);
+        }
+        output.push({ x, y, width: w, height: h, duration, dispose: false, blend, pixels });
+    };
+
+    // the area of the canvas that is all transparent (frames are copied onto it): decoded animations clear each full
+    // frame before the next
+    let cleared: Rect | null = { x: 0, y: 0, width, height };
+    for (const f of frames) {
+        const saved = f.dispose === 2 ? canvas.slice() : null;
+        const area = clip(f, width, height);
+        if (cleared && contains(cleared, area)) copy(canvas, width, f, area);
+        else draw(canvas, width, height, f);
+        cleared = null;
+        add(f.duration);
+        if (f.dispose === 1) {
+            clear(canvas, width, area);
+            cleared = area;
+        } else if (saved) canvas.set(saved);
+    }
+
+    // an opaque animation with sparse frames needs transparency in its pixel format, for every frame: when that costs
+    // more than storing them dense, the unchanged pixels are filled in again
+    if (typeof alpha === 'function' && opaque && output.some(f => f.blend) && denseTotal < chosenTotal * alpha(output)) {
+        shown.fill(0);
+        for (const f of output) {
+            const pixels32 = new Int32Array(f.pixels.buffer, f.pixels.byteOffset, f.width * f.height);
+            for (let row = 0, k = 0; row < f.height; row++)
+                for (let p = (f.y + row) * width + f.x, end = p + f.width; p < end; p++, k++) {
+                    if (f.blend && (pixels32[k] & ALPHA) === 0) pixels32[k] = shown32[p];
+                    else shown32[p] = pixels32[k];
+                }
+            f.blend = false;
+        }
     }
 
     return output;
 }
+
+// a frame that doesn't change anything
+const empty = (duration: number): OptimizedFrame => ({ x: 0, y: 0, width: 1, height: 1, duration, dispose: false, blend: true, pixels: new Uint8Array(4) });
 
 interface Rect {
     x: number;
@@ -127,33 +174,86 @@ function clip(r: Rect, width: number, height: number): Rect {
     return { x, y, width: Math.max(0, Math.min(width, r.x + r.width) - x), height: Math.max(0, Math.min(height, r.y + r.height) - y) };
 }
 
+function contains(a: Rect, b: Rect): boolean {
+    return b.x >= a.x && b.y >= a.y && b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height;
+}
+
 function union(a: Rect, b: Rect): Rect {
     const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
     return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
 }
 
 interface State {
-    canvas: Uint8Array;
-    canvas32: Uint32Array;
-    shown: Uint8Array;
-    shown32: Uint32Array;
+    canvas32: Int32Array;
+    shown32: Int32Array;
     width: number;
     replace: boolean;
+}
+
+// the area grown to even offsets (WebP stores them halved)
+function evenArea({ x, y, width, height }: Rect): Rect {
+    return { x: x & ~1, y: y & ~1, width: width + (x & 1), height: height + (y & 1) };
+}
+
+interface SparseArea {
+    /** RGBA */
+    pixels: Uint8Array;
+    sparseChanges: number;
+    denseChanges: number;
+    unblendable: Rect | null;
+    /** whether the area as it is has no transparent pixels */
+    denseOpaque: boolean;
+}
+
+/**
+ * The area's changed pixels, the others transparent, and how many times the color changes from pixel to pixel in that
+ * and in the area as it is. Also finds the area of the changed pixels that blending onto what's shown can't produce:
+ * blending gives exactly opaque pixels, for GIFs (which only know opaque and transparent) also anything on a
+ * transparent pixel
+ */
+function sparse({ canvas32, shown32, width, replace }: State, { x, y, width: w, height: h }: Rect): SparseArea {
+    const pixels = new Uint8Array(w * h * 4), pixels32 = new Int32Array(pixels.buffer);
+    let sparseChanges = 0, denseChanges = 0, lastSparse = -1, lastDense = -1;
+    let left = w, right = -1, top = h, bottom = -1, translucent = 0;
+    for (let row = 0, k = 0; row < h; row++) {
+        const start = (y + row) * width + x;
+        for (let i = 0, p = start; i < w; i++, p++, k++) {
+            const value = canvas32[p], before = shown32[p];
+            // unchanged: the same, or transparent in both
+            if (value === before || ((value | before) & ALPHA) === 0) {
+                if (lastSparse !== 0) sparseChanges++;
+                lastSparse = 0;
+            } else {
+                pixels32[k] = value;
+                if (value !== lastSparse) sparseChanges++;
+                lastSparse = value;
+                if ((value & ALPHA) !== ALPHA && (replace || (before & ALPHA) !== 0)) {
+                    if (i < left) left = i;
+                    if (i > right) right = i;
+                    if (row < top) top = row;
+                    bottom = row;
+                }
+            }
+            if (value !== lastDense) {
+                denseChanges++;
+                translucent |= ~value & ALPHA;
+            }
+            lastDense = value;
+        }
+    }
+    const unblendable: Rect | null = right < 0 ? null : { x: x + left, y: y + top, width: right - left + 1, height: bottom - top + 1 };
+    return { pixels, sparseChanges, denseChanges, unblendable, denseOpaque: translucent === 0 };
 }
 
 /**
  * The bounding box of the changed pixels within an area. Searches from the edges inwards, so it stops early when much
  * changed
- * @param unblendable only the changed pixels that blending onto what's shown can't produce: blending gives exactly
- *     opaque pixels, for GIFs (which only know opaque and transparent) also anything on a transparent pixel
  */
-function bounds({ canvas, canvas32, shown, shown32, width, replace }: State, unblendable: boolean, area: Rect): Rect | null {
+function bounds({ canvas32, shown32, width }: State, area: Rect): Rect | null {
     const x0 = area.x, x1 = area.x + area.width, y0 = area.y, y1 = area.y + area.height;
     const test = (p: number): boolean => {
-        if (canvas32[p] === shown32[p]) return false;
-        const ca = canvas[p * 4 + 3], sa = shown[p * 4 + 3];
-        if (ca === 0 && sa === 0) return false;
-        return !unblendable || (ca !== 255 && (replace || sa !== 0));
+        const c = canvas32[p], s = shown32[p];
+        return c !== s && ((c | s) & ALPHA) !== 0;
     };
     const rowHas = (y: number, from: number, to: number): number => {
         for (let x = from, p = y * width + from; x < to; x++, p++) if (test(p)) return x;
@@ -186,20 +286,39 @@ function bounds({ canvas, canvas32, shown, shown32, width, replace }: State, unb
 function draw(canvas: Uint8Array, width: number, height: number, f: InputFrame): void {
     const { x: x0, y: y0, width: w, height: h } = clip(f, width, height);
     const pixels = f.pixels.byteOffset % 4 ? f.pixels.slice() : f.pixels;
-    const src = new Uint32Array(pixels.buffer, pixels.byteOffset, f.width * f.height);
-    const dst = new Uint32Array(canvas.buffer, canvas.byteOffset, width * height);
+    const src = new Int32Array(pixels.buffer, pixels.byteOffset, f.width * f.height);
+    const dst = new Int32Array(canvas.buffer, canvas.byteOffset, width * height);
     for (let y = y0; y < y0 + h; y++)
         for (let x = x0, s = (y - f.y) * f.width + x - f.x, d = y * width + x; x < x0 + w; x++, s++, d++) {
-            const sa = pixels[s * 4 + 3];
-            if (sa === 0) continue;
-            const da = canvas[d * 4 + 3];
-            if (sa === 255 || da === 0) dst[d] = src[s];
+            // opaque pixels replace the canvas: runs of them are copied at once (much faster)
+            let n = 0;
+            while (n < x0 + w - x && (src[s + n] & ALPHA) === ALPHA) n++;
+            if (n) {
+                if (n >= 16) dst.set(src.subarray(s, s + n), d);
+                else for (let i = 0; i < n; i++) dst[d + i] = src[s + i];
+                x += n - 1; s += n - 1; d += n - 1;
+                continue;
+            }
+            const value = src[s], alpha = value & ALPHA;
+            if (alpha === 0) continue;
+            if (alpha === ALPHA || (dst[d] & ALPHA) === 0) dst[d] = value;
             else {
+                const sa = pixels[s * 4 + 3], da = canvas[d * 4 + 3];
                 const u = sa * 255, v = (255 - sa) * da, al = u + v;
                 for (let c = 0; c < 3; c++) canvas[d * 4 + c] = (pixels[s * 4 + c] * u + canvas[d * 4 + c] * v) / al | 0;
                 canvas[d * 4 + 3] = al / 255 | 0;
             }
         }
+}
+
+// draws a frame onto a transparent area: blending only copies its pixels (transparent ones as 0, like draw())
+function copy(canvas: Uint8Array, width: number, f: InputFrame, { x, y, width: w, height: h }: Rect): void {
+    const canvas32 = new Int32Array(canvas.buffer, canvas.byteOffset, width * (y + h));
+    for (let row = y; row < y + h; row++) {
+        const s = ((row - f.y) * f.width + x - f.x) * 4, d = row * width + x;
+        canvas.set(f.pixels.subarray(s, s + w * 4), d * 4);
+        for (let p = d; p < d + w; p++) if ((canvas32[p] & ALPHA) === 0) canvas32[p] = 0;
+    }
 }
 
 function clear(canvas: Uint8Array, width: number, r: Rect): void {
