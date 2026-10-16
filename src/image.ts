@@ -529,8 +529,11 @@ export class Image {
      * Clones the current image
      */
     clone(): Image {
-        const image = new Image(this.width, this.height);
-        image.bitmap.set(this.bitmap);
+        // copying in the constructor of the array saves zeroing the memory first
+        const image = new Image(1, 1);
+        image.__width__ = this.width;
+        image.__height__ = this.height;
+        image.__set_bitmap__(new Uint8ClampedArray(this.bitmap));
         return image;
     }
 
