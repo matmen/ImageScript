@@ -3,7 +3,8 @@
 
 import { littleEndian, isOpaque, premultiply8, unpremultiply8 } from './alpha.ts';
 
-// widths of the three boxes for a gaussian with the given standard deviation
+// widths of the three boxes for a gaussian with the given standard deviation: the formula of Peter Kovesi's "Fast
+// Almost-Gaussian Filtering" (2010), as in Ivan Kuckir's "Fastest Gaussian Blur" (boxesForGauss)
 function boxSizes(sigma: number): number[] {
     const n = 3;
     let lower = Math.floor(Math.sqrt(12 * sigma * sigma / n + 1));

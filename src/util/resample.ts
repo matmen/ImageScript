@@ -1,3 +1,10 @@
+/*!
+ * The filter coefficients and the box, bilinear and bicubic filters are translated from Pillow's
+ * src/libImaging/Resample.c (precompute_coeffs, box_filter, bilinear_filter, bicubic_filter). Copyright © 1997-2011 by
+ * Secret Labs AB, © 1995-2011 by Fredrik Lundh and contributors, © 2010 by Jeffrey 'Alex' Clark and contributors,
+ * MIT-CMU License (see THIRD_PARTY_NOTICES.md)
+ */
+
 // separable convolution resampling (the approach of Pillow's resample.c): the filter is stretched by the
 // downscaling factor, so shrinking averages every source pixel instead of skipping most of them.
 // The arithmetic is integer (weights are fixed point numbers), and the vertical pass runs first: its weights are the

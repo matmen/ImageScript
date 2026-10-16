@@ -14,6 +14,7 @@ following projects, under their own licenses. Each derived file says so in its h
 | [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386) (VP8 Data Format and Decoding Guide, with the libvpx reference decoder) | `src/codecs/vp8-tables.ts` (probability and quantizer tables), `src/codecs/vp8.ts` (decoding procedures) | BSD-3-Clause |
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | `src/codecs/vp8.ts` (YUV to RGB conversion, "fancy" chroma upsampling), `src/codecs/webp.ts` (animation frame blending) | BSD-3-Clause |
 | [FreeType](https://freetype.org) | `src/render/hinting.ts` (behavior and parts of the logic of the TrueType interpreter) | FreeType License |
+| [Pillow](https://github.com/python-pillow/Pillow) | `src/util/resample.ts` (filter coefficients, box, bilinear and bicubic filters) | MIT-CMU |
 
 ## fflate, Fast CRC32 in JavaScript
 
@@ -154,3 +155,43 @@ Where the specification leaves details open, its behavior and parts of its logic
 interpolation of untouched points (IUP), the handling of near-perpendicular freedom and projection vectors, and the
 tolerance of invalid references. FreeType is used under the FreeType License, included as
 [licenses/FTL.txt](licenses/FTL.txt).
+
+## Pillow
+
+```
+The Python Imaging Library (PIL) is
+
+    Copyright © 1997-2011 by Secret Labs AB
+    Copyright © 1995-2011 by Fredrik Lundh and contributors
+
+Pillow is the friendly PIL fork. It is
+
+    Copyright © 2010 by Jeffrey 'Alex' Clark and contributors
+
+Like PIL, Pillow is licensed under the open source MIT-CMU License:
+
+By obtaining, using, and/or copying this software and/or its associated
+documentation, you agree that you have read, understood, and will comply
+with the following terms and conditions:
+
+Permission to use, copy, modify and distribute this software and its
+documentation for any purpose and without fee is hereby granted,
+provided that the above copyright notice appears in all copies, and that
+both that copyright notice and this permission notice appear in supporting
+documentation, and that the name of Secret Labs AB or the author not be
+used in advertising or publicity pertaining to distribution of the software
+without specific, written prior permission.
+
+SECRET LABS AB AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS
+SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS.
+IN NO EVENT SHALL SECRET LABS AB OR THE AUTHOR BE LIABLE FOR ANY SPECIAL,
+INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
+OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+```
+
+The resampling in `src/util/resample.ts` computes its filter coefficients as Pillow's `precompute_coeffs` does (the
+filter stretched by the downscaling factor, the source range rounded around each output pixel's center, the weights
+normalized) and uses Pillow's box, bilinear and bicubic (a = -0.5) filter functions. The integer passes, the fast
+paths and the premultiplied alpha handling are ImageScript's own.
