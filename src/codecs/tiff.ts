@@ -1,5 +1,6 @@
 import { decompressAsync } from './zlib.ts';
 import * as jpeg from './jpeg.ts';
+import { MAX_PIXELS, checkPixels, checkBytes } from '../util/limits.ts';
 
 const TYPE_SIZES: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4, 16: 8, 17: 8, 18: 8 };
 
@@ -46,7 +47,7 @@ interface SampleReader {
     (rowOffset: number, n: number): { raw: number, value: number };
 }
 
-export async function decode(data: Uint8Array): Promise<{ width: number, height: number, pixels: Uint8Array, orientation: number }> {
+export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS): Promise<{ width: number, height: number, pixels: Uint8Array, orientation: number }> {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
     let little: boolean;
@@ -178,6 +179,11 @@ export async function decode(data: Uint8Array): Promise<{ width: number, height:
         return data.subarray(offset, Math.min(data.length, offset + count));
     };
 
+    checkPixels(width, height, maxPixels);
+    // tiles may reach past the image, but not by much (a segment's buffer is that large), and samples can take more
+    // memory than the pixels
+    checkPixels(segmentWidth, segmentHeight, Math.max(4 * width * height, 1 << 20));
+    checkBytes(Math.ceil(width * samplesPerPixel * bps / 8) * height, maxPixels);
     const pixels = new Uint8Array(width * height * 4);
 
     // JPEG compressed segments decode straight to RGBA

@@ -38,9 +38,9 @@ export function decode(data: BinaryData, options?: AnimationDecodeOptions & Deco
  */
 export function decode(data: BinaryData, onlyExtractFirstFrame?: boolean): Promise<GIF | Animation | Image>;
 export function decode(data: BinaryData, onlyFirstFrameOrOptions: boolean | (AnimationDecodeOptions & DecodeOptions) = false): Promise<GIF | Animation | Image> {
-    const { onlyFirstFrame = false, applyOrientation } = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions : { onlyFirstFrame: onlyFirstFrameOrOptions };
+    const { onlyFirstFrame = false, applyOrientation, maxPixels } = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions : { onlyFirstFrame: onlyFirstFrameOrOptions };
     const type = ImageType.getType(data);
-    if (type === 'gif') return GIF.decode(data, { onlyFirstFrame });
-    if (type === 'webp' && webp.isAnimated(view(data))) return Animation.decode(data, { onlyFirstFrame });
-    return Image.decode(data, { applyOrientation });
+    if (type === 'gif') return GIF.decode(data, { onlyFirstFrame, maxPixels });
+    if (type === 'webp' && webp.isAnimated(view(data))) return Animation.decode(data, { onlyFirstFrame, maxPixels });
+    return Image.decode(data, { applyOrientation, maxPixels });
 }

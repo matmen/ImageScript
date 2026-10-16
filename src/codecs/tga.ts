@@ -1,4 +1,5 @@
 import { encode as utf8 } from '../util/utf8.ts';
+import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 
 // Truevision TGA: color mapped, truecolor and greyscale images, uncompressed or run length encoded
 
@@ -91,10 +92,11 @@ function readColor(d: Uint8Array, o: number, bits: number, alphaBits: number, ou
 /**
  * Decodes a TGA into RGBA
  */
-export function decode(d: Uint8Array): { width: number, height: number, pixels: Uint8Array } {
+export function decode(d: Uint8Array, maxPixels = MAX_PIXELS): { width: number, height: number, pixels: Uint8Array } {
     const h = readHeader(d);
     if (!h || !isTGA(d)) throw new Error('TGA: invalid header');
     const { width, height, depth } = h;
+    checkPixels(width, height, maxPixels);
     const base = h.imageType & ~8, rle = (h.imageType & 8) !== 0;
     const bytesPerPixel = Math.ceil(depth / 8);
 

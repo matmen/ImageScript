@@ -1,4 +1,5 @@
 import { quantize } from './quantize.ts';
+import { MAX_PIXELS, PixelBudget, checkPixels } from '../util/limits.ts';
 
 // ImageScript disposal modes (any, keep, previous, background) <-> GIF disposal methods (unspecified, none, background, previous)
 const DISPOSAL_TO_GIF = [0, 1, 3, 2];
@@ -206,7 +207,7 @@ function writeSubBlocks(out: ByteWriter, data: Uint8Array): void {
  * @param {boolean} [onlyFirstFrame=false]
  * @return {{width: number, height: number, loopCount: number, frames: GIFFrame[]}}
  */
-export function decode(data: Uint8Array, onlyFirstFrame = false): DecodedGIF {
+export function decode(data: Uint8Array, onlyFirstFrame = false, maxPixels = MAX_PIXELS): DecodedGIF {
     const reader = new ByteReader(data);
 
     const signature = reader.string(6);
@@ -222,6 +223,8 @@ export function decode(data: Uint8Array, onlyFirstFrame = false): DecodedGIF {
     const frames: DecodedGIFFrame[] = [];
     let loopCount = 0;
     let control: GraphicControl | null = null;
+    // the frames' color indices, and later a canvas per frame
+    const budget = new PixelBudget(maxPixels);
 
     try {
         parse();
@@ -230,6 +233,7 @@ export function decode(data: Uint8Array, onlyFirstFrame = false): DecodedGIF {
         if (err !== UNEXPECTED_END) throw err;
     }
 
+    checkPixels(width, height, maxPixels, Math.max(1, frames.length));
     return { width, height, loopCount, frames };
 
     function parse(): void {
@@ -287,6 +291,7 @@ export function decode(data: Uint8Array, onlyFirstFrame = false): DecodedGIF {
 
             const minCodeSize = reader.u8();
             const compressed = readSubBlocks(reader);
+            budget.take(fw, fh);
             const indices = lzwDecode(compressed, minCodeSize, fw * fh);
 
             const { dispose = 0, delay = 0, transparentIndex = -1 } = control || {};

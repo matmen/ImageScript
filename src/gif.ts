@@ -43,9 +43,9 @@ export class GIF extends Animation {
      * @deprecated Use {@link Animation.decode}, which decodes APNGs too
      */
     static override async decode(input: BinaryData, onlyFirstFrameOrOptions: boolean | AnimationDecodeOptions = false): Promise<GIF> {
-        const onlyExtractFirstFrame = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions.onlyFirstFrame ?? false : onlyFirstFrameOrOptions;
+        const { onlyFirstFrame = false, maxPixels } = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions : { onlyFirstFrame: onlyFirstFrameOrOptions };
         const data = view(input);
         if (!ImageType.isGIF(new DataView(data.buffer, data.byteOffset, data.byteLength))) throw new Error('Unsupported image type');
-        return Animation.__fromGIF__(data, onlyExtractFirstFrame, GIF);
+        return Animation.__fromGIF__(data, onlyFirstFrame, GIF, maxPixels);
     }
 }

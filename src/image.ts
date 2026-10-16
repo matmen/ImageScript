@@ -15,6 +15,7 @@ import { resample, BOX, TRIANGLE, CUBIC } from './util/resample.ts';
 import { rotateBilinear } from './util/rotate.ts';
 import { gaussianBlur, boxBlurRGBA, premultiply, unpremultiply } from './util/blur.ts';
 import { isOptions } from './util/options.ts';
+import { MAX_PIXELS, decoding } from './util/limits.ts';
 
 /** A color as a 32-bit RGBA integer (`0xRRGGBBAA`) */
 export type Color = number;
@@ -133,6 +134,12 @@ export interface TextOptions extends TextStyle {
 export interface DecodeOptions {
     /** Whether to rotate/mirror JPEGs, TIFFs, PNGs and WebPs as their orientation tag (Exif or XMP) says. Default: `true` */
     applyOrientation?: boolean;
+    /**
+     * The most pixels to decode: larger images throw a RangeError before anything that size is allocated, so small
+     * files declaring huge images (decompression bombs) can't exhaust the memory. Default: `268402689` (16383², like
+     * sharp), `Infinity` for no limit
+     */
+    maxPixels?: number;
 }
 
 /** Text style options of {@link Image.renderText} */
@@ -1344,7 +1351,7 @@ export class Image {
      * @param radius The blur radius: the gaussian's standard deviation in pixels, like CSS' blur()
      */
     blur(radius: number): this {
-        if (isNaN(radius) || radius < 0)
+        if (!Number.isFinite(radius) || radius < 0)
             throw new RangeError('Invalid blur radius');
 
         if (boxBlurRGBA(this.bitmap, this.width, this.height, radius)) return this;
@@ -1367,9 +1374,9 @@ export class Image {
     sharpen(amount?: number, radius?: number): this;
     sharpen(amountOrOptions: number | SharpenOptions = 1, radiusArgument = 1): this {
         const { amount = 1, radius = 1 } = isOptions(amountOrOptions) ? amountOrOptions : { amount: amountOrOptions, radius: radiusArgument };
-        if (isNaN(amount) || amount < 0)
+        if (!Number.isFinite(amount) || amount < 0)
             throw new RangeError('Invalid sharpen amount');
-        if (isNaN(radius) || radius <= 0)
+        if (!Number.isFinite(radius) || radius <= 0)
             throw new RangeError('Invalid sharpen radius');
 
         const blurred = premultiply(this.bitmap);
@@ -1922,22 +1929,25 @@ export class Image {
      * @return The decoded image
      */
     static async decode(input: BinaryData, options: DecodeOptions = {}): Promise<Image> {
-        const { applyOrientation = true } = options;
+        const { applyOrientation = true, maxPixels = MAX_PIXELS } = options;
         const data = view(input);
         const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
-        let decoded: { width: number, height: number, pixels: Uint8Array, orientation?: number };
-        if (ImageType.isPNG(dataView)) decoded = await png.decode(data);
-        else if (ImageType.isJPEG(dataView)) decoded = jpeg.decode(data);
-        else if (ImageType.isTIFF(dataView)) decoded = await tiff.decode(data);
-        else if (ImageType.isWebP(dataView)) {
-            if (webp.isAnimated(data)) throw new Error('Animated WebPs have to be decoded with Animation.decode()');
-            decoded = webp.decode(data);
-        } else if (ImageType.isTGA(dataView)) decoded = tga.decode(data);
-        else throw new Error('Unsupported image type');
+        const decoded: { width: number, height: number, pixels: Uint8Array, orientation?: number } = await decoding(() => {
+            if (ImageType.isPNG(dataView)) return png.decode(data, maxPixels);
+            if (ImageType.isJPEG(dataView)) return jpeg.decode(data, { maxPixels });
+            if (ImageType.isTIFF(dataView)) return tiff.decode(data, maxPixels);
+            if (ImageType.isWebP(dataView)) {
+                if (webp.isAnimated(data)) throw new Error('Animated WebPs have to be decoded with Animation.decode()');
+                return webp.decode(data, maxPixels);
+            }
+            if (ImageType.isTGA(dataView)) return tga.decode(data, maxPixels);
+            throw new Error('Unsupported image type');
+        });
 
+        // the decoded pixels become the bitmap, without a copy
         const image = new Image(decoded.width, decoded.height);
-        image.bitmap.set(decoded.pixels);
+        image.bitmap = decoded.pixels;
         return applyOrientation && decoded.orientation ? image.__orient__(decoded.orientation) : image;
     }
 

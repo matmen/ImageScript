@@ -1,4 +1,4 @@
-const {Image, Frame, GIF, TextLayout} = require('..');
+const {Image, Frame, GIF, Animation, TextLayout} = require('..');
 const zlib = require('zlib');
 
 const assert = (condition, message) => {
@@ -560,5 +560,81 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
                 assert(Date.now() - start < 3000, `${file} #${k}: a damaged font took ${Date.now() - start} ms`);
             }
         }
+    }
+
+    // decompression bombs: tiny files declaring huge images throw a RangeError before anything that size is allocated,
+    // maxPixels sets the limit; damaged data throws an error saying so
+    {
+        const chunk = (type, body) => {
+            const out = Buffer.alloc(12 + body.length);
+            out.writeUInt32BE(body.length);
+            out.write(type, 4, 'latin1');
+            body.copy(out, 8);
+            out.writeUInt32BE(zlib.crc32(out.subarray(4, 8 + body.length)), 8 + body.length);
+            return out;
+        };
+        const png = (width, height) => {
+            const header = Buffer.alloc(13);
+            header.writeUInt32BE(width);
+            header.writeUInt32BE(height, 4);
+            header.set([8, 6, 0, 0, 0], 8);
+            return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', zlib.deflateSync(Buffer.alloc(64))), chunk('IEND', Buffer.alloc(0))]);
+        };
+        // a 4000x4000 screen with 50 frames of a pixel
+        const frame = Buffer.from([0x21, 0xf9, 4, 0, 1, 0, 0, 0, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 1, 0]);
+        const gif = Buffer.concat([Buffer.from('GIF89a'), Buffer.from([0xa0, 0x0f, 0xa0, 0x0f, 0x80, 0, 0, 0, 0, 0, 255, 255, 255]), ...Array(50).fill(frame), Buffer.from([0x3b])]);
+        const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 0xff, 0xdc, 0xff, 0xdc, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 0xff, 0xd9]);
+        // 278x374 with 57859 samples per pixel (a damaged TIFF that took 6 GB)
+        const entries = [[256, 4, 1, 278], [257, 4, 1, 374], [258, 3, 1, 8], [259, 3, 1, 1], [262, 3, 1, 2], [273, 4, 1, 8], [277, 3, 1, 57859], [278, 4, 1, 374], [279, 4, 1, 4]];
+        const tiff = Buffer.alloc(8 + 2 + entries.length * 12 + 4);
+        tiff.write('II*\0', 0, 'latin1');
+        tiff.writeUInt32LE(8, 4);
+        tiff.writeUInt16LE(entries.length, 8);
+        entries.forEach(([tag, type, count, value], k) => {
+            const o = 10 + k * 12;
+            tiff.writeUInt16LE(tag, o);
+            tiff.writeUInt16LE(type, o + 2);
+            tiff.writeUInt32LE(count, o + 4);
+            if (type === 3) tiff.writeUInt16LE(value, o + 8);
+            else tiff.writeUInt32LE(value, o + 8);
+        });
+
+        const tooLarge = async (name, decode) => {
+            const start = Date.now();
+            let error = null;
+            try { await decode(); } catch (err) { error = err; }
+            assert(error instanceof RangeError && /too large/.test(error.message), `${name}: should be too large (${error && error.message})`);
+            assert(Date.now() - start < 1000, `${name}: took ${Date.now() - start} ms`);
+        };
+        await tooLarge('png', () => Image.decode(png(30000, 30000)));
+        await tooLarge('png animation', () => Animation.decode(png(30000, 30000)));
+        await tooLarge('jpeg', () => Image.decode(jpeg));
+        await tooLarge('tiff samples', () => Image.decode(tiff));
+        await tooLarge('gif frames', () => Animation.decode(gif, {maxPixels: 4000 * 4000 * 10}));
+        await tooLarge('gif frames through GIF.decode', () => GIF.decode(gif, {maxPixels: 4000 * 4000 * 10}));
+        await tooLarge('maxPixels', () => Image.decode(png(100, 100), {maxPixels: 9999}));
+
+        // without a limit, the PNG gets as far as its data (which is too short)
+        let error = null;
+        try { await Image.decode(png(30000, 30000), {maxPixels: Infinity}); } catch (err) { error = err; }
+        assert(error && /truncated/.test(error.message), `maxPixels: Infinity should lift the limit (${error && error.message})`);
+        // the first frame alone fits
+        assert((await Animation.decode(gif, {maxPixels: 4000 * 4000 * 10, onlyFirstFrame: true})).length === 1, 'the first frame should fit the limit');
+
+        // damaged data
+        error = null;
+        try { await Image.decode(Buffer.from([0x52, 0x49, 0x46, 0x46, 0x10, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x4c, 0xff, 0, 0, 0])); } catch (err) { error = err; }
+        assert(error && !(error instanceof RangeError), `damaged data should throw an Error, not a RangeError (${error && error.message})`);
+    }
+
+    // blur with a huge radius takes about as long as with a small one, infinite ones throw
+    {
+        const image = new Image(200, 100).fill(x => x < 100 ? 0xff0000ff : 0x0000ffff);
+        const start = Date.now();
+        image.blur(1e9);
+        assert(Date.now() - start < 1000, `blur(1e9) took ${Date.now() - start} ms`);
+        let threw = false;
+        try { image.blur(Infinity); } catch { threw = true; }
+        assert(threw, 'blur(Infinity) should throw');
     }
 })();

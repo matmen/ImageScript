@@ -4,6 +4,8 @@
  * Revised BSD License (see THIRD_PARTY_NOTICES.md)
  */
 
+import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
+
 /** decoded VP8L image: ARGB pixels (0xAARRGGBB) */
 export interface VP8LImage {
     width: number;
@@ -484,8 +486,9 @@ export function readHeader(data: Uint8Array): { width: number, height: number, h
 /**
  * Decodes a VP8L bitstream (the payload of a VP8L chunk)
  */
-export function decode(data: Uint8Array): VP8LImage {
+export function decode(data: Uint8Array, maxPixels = MAX_PIXELS): VP8LImage {
     const { width, height, hasAlpha } = readHeader(data);
+    checkPixels(width, height, maxPixels);
     const reader = new BitReader(data, 5);
     return { width, height, hasAlpha, argb: decodeStream(reader, width, height) };
 }

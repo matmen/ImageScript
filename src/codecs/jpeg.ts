@@ -5,6 +5,7 @@
  * (Copyright 2014 Mozilla Foundation, Apache License 2.0). See THIRD_PARTY_NOTICES.md
  */
 
+import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { orientation as exifOrientation } from './exif.ts';
 import { concat } from '../util/mem.ts';
 
@@ -60,6 +61,8 @@ interface Frame {
 export interface DecodeOptions {
     /** overrides the color transform detected from JFIF/Adobe markers (used by TIFF) */
     transform?: 'ycc' | 'rgb' | 'cmyk' | null;
+    /** the most pixels to decode */
+    maxPixels?: number;
 }
 
 function clamp8(v: number): number {
@@ -79,7 +82,7 @@ function clamp8(v: number): number {
  * @param {{transform?: 'ycc'|'rgb'|'cmyk'}} [options] overrides the color transform detected from JFIF/Adobe markers (used by TIFF)
  * @return {{width: number, height: number, pixels: Uint8Array}}
  */
-export function decode(data: Uint8Array, { transform }: DecodeOptions = {}): { width: number, height: number, pixels: Uint8Array, orientation: number } {
+export function decode(data: Uint8Array, { transform, maxPixels = MAX_PIXELS }: DecodeOptions = {}): { width: number, height: number, pixels: Uint8Array, orientation: number } {
     if (data[0] !== 0xff || data[1] !== 0xd8) throw new Error('JPEG: invalid signature');
 
     const quantizationTables: Int32Array[] = [];
@@ -160,6 +163,7 @@ export function decode(data: Uint8Array, { transform }: DecodeOptions = {}): { w
             case 0xc0: case 0xc1: case 0xc2: { // SOF baseline, extended, progressive
                 if (frame) throw new Error('JPEG: multiple frames are not supported');
                 if (data[start] !== 8) throw new Error(`JPEG: ${data[start]}-bit precision is not supported`);
+                checkPixels(u16(start + 3), u16(start + 1), maxPixels);
                 frame = createFrame(marker === 0xc2, u16(start + 1), u16(start + 3), data.subarray(start + 5, end));
                 break;
             }
@@ -235,6 +239,8 @@ function createFrame(progressive: boolean, height: number, width: number, compon
     }
 
     if (!width || !sampling.length) throw new Error('JPEG: invalid dimensions');
+    // each component takes coefficients for the whole image (grey, YCbCr/RGB and CMYK have up to 4)
+    if (sampling.length > 4) throw new Error(`JPEG: ${sampling.length} components are not supported`);
 
     const hmax = Math.max(...sampling.map(c => c.h));
     const vmax = Math.max(...sampling.map(c => c.v));

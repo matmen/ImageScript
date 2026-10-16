@@ -35,12 +35,22 @@
   character, and decomposes characters the fonts lack where one has their parts, like HarfBuzz.
 - Fallback fonts are only loaded when the text needs them, and glyphs (also decoded and scaled emoji bitmaps) are
   kept per font and size across calls.
+- `DecodeOptions.maxPixels` and `AnimationDecodeOptions.maxPixels` (default 268,402,689, that's 16383², like sharp):
+  larger images, and animations whose frames take more pixels together, throw a RangeError before anything that size
+  is allocated. Tiny files declaring huge images (decompression bombs) could take gigabytes or kill the process: a
+  250-byte JPEG of 65500x65500, a 115 kB GIF with 5000 frames on a 4000x4000 screen. `maxPixels: Infinity` lifts the
+  limit. TIFFs also can't take more than 8 bytes of samples per pixel of the limit, or tiles much larger than the
+  image.
 
 ### Performance
 
 - Lossless WebP encoding is about 40% faster and decoding about 15% faster (1920×1080 photo: 735 instead of 1220 ms,
   82 instead of 95 ms), with identical output: the predictors run as one loop per mode instead of a switch per pixel,
   residual costs come from a table, and the LZ77 search hashes every pixel pair once.
+
+- Decoding PNGs takes less memory (an 8000x8000 RGBA image: 785 instead of 1272 MB at most): the rows are unfiltered in
+  place, and `Image.decode` keeps the decoded pixels instead of copying them. `Animation.decode` decodes still PNGs like
+  images (10 times as fast for large ones), and composites APNG frames that replace pixels row by row.
 
 ### Fixes
 
@@ -56,6 +66,11 @@
   of a RangeError, and text larger than 2^28 pixels throws.
 - Glyph outlines reaching far outside their bitmap rasterize correctly (the parts outside used to change the slope of
   the edges inside).
+- Damaged images throw "Image: damaged or truncated image data" (with the original RangeError as its cause) instead
+  of RangeErrors from reading past their end. JPEGs with more than 4 components are rejected (each took memory the size
+  of the image).
+- `blur` and `sharpen` hung with an infinite radius, they throw a RangeError now; huge finite radii take as long as
+  small ones (`blur(1e9)` took minutes).
 
 ## 3.2.1
 
