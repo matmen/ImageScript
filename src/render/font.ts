@@ -28,6 +28,9 @@ interface CFF {
 
 type Dict = Record<number, number[]>;
 
+// the most path commands of a glyph outline
+const MAX_COMMANDS = 100000;
+
 /**
  * Parses TrueType (glyf) and OpenType (CFF) fonts, including the first font of a collection
  */
@@ -90,7 +93,7 @@ export class Font {
             this.outlines = 'cff';
             this.cff = parseCFF(this, this.tables['CFF '].offset);
         } else if (this.tables.CFF2) throw new Error('Font: CFF2 outlines are not supported');
-        else if (this.tables.CBDT && this.tables.CBLC) this.outlines = 'none';
+        else if (this.tables.CBDT && this.tables.CBLC || this.tables.sbix) this.outlines = 'none';
         else throw new Error('Font: no supported glyph outlines');
 
         this.cmap = parseCmap(this, this.tables.cmap.offset);
@@ -180,8 +183,13 @@ export class Font {
             return { xs: [], ys: [], on: [], ends: [], instructions, xMin, components };
         }
 
+        // contours end at increasing points (see simpleGlyph)
         const ends: number[] = [];
-        for (let i = 0; i < contourCount; i++) ends.push(this.u16(offset + 10 + i * 2));
+        for (let i = 0; i < contourCount; i++) {
+            const end = this.u16(offset + 10 + i * 2);
+            if (i && end <= ends[i - 1]) return null;
+            ends.push(end);
+        }
         const pointCount = contourCount ? ends[contourCount - 1] + 1 : 0;
 
         let p = offset + 10 + contourCount * 2;
@@ -223,14 +231,18 @@ export class Font {
         if (glyph >= this.numGlyphs) glyph = 0;
         let path = this.outlineCache.get(glyph);
         if (!path) {
-            path = this.outlines === 'glyf' ? this.glyfOutline(glyph, 0) : this.outlines === 'cff' ? this.cffOutline(glyph) : [];
+            path = this.outlines === 'glyf' ? this.glyfOutline(glyph, { expanding: new Set(), budget: MAX_COMMANDS }) : this.outlines === 'cff' ? this.cffOutline(glyph) : [];
             this.outlineCache.set(glyph, path);
         }
         return path;
     }
 
-    glyfOutline(glyph: number, depth: number): PathCommand[] {
-        if (depth > 8) return [];
+    /**
+     * @param expanding the composite glyphs being expanded (a glyph doesn't contain itself), and how many commands are
+     *     left (damaged composites can multiply each other's components endlessly)
+     */
+    glyfOutline(glyph: number, expanding: { expanding: Set<number>, budget: number }): PathCommand[] {
+        if (expanding.expanding.has(glyph) || expanding.expanding.size > 8 || expanding.budget <= 0) return [];
 
         const loca = this.tables.loca.offset;
         const start = this.indexToLocFormat ? this.u32(loca + glyph * 4) : this.u16(loca + glyph * 2) * 2;
@@ -240,12 +252,25 @@ export class Font {
         const offset = this.tables.glyf.offset + start;
         const contours = this.i16(offset);
 
-        return contours >= 0 ? this.simpleGlyph(offset, contours) : this.compositeGlyph(offset, depth);
+        if (contours >= 0) {
+            const path = this.simpleGlyph(offset, contours);
+            expanding.budget -= path.length;
+            return expanding.budget >= 0 ? path : [];
+        }
+        expanding.expanding.add(glyph);
+        const path = this.compositeGlyph(offset, expanding);
+        expanding.expanding.delete(glyph);
+        return path;
     }
 
     simpleGlyph(offset: number, contourCount: number): PathCommand[] {
+        // contours end at increasing points, damaged glyphs (as FreeType rejects them) are left empty
         const endPoints = [];
-        for (let i = 0; i < contourCount; i++) endPoints.push(this.u16(offset + 10 + i * 2));
+        for (let i = 0; i < contourCount; i++) {
+            const end = this.u16(offset + 10 + i * 2);
+            if (i && end <= endPoints[i - 1]) return [];
+            endPoints.push(end);
+        }
         const pointCount = contourCount ? endPoints[contourCount - 1] + 1 : 0;
 
         let p = offset + 10 + contourCount * 2;
@@ -287,7 +312,7 @@ export class Font {
         return path;
     }
 
-    compositeGlyph(offset: number, depth: number): PathCommand[] {
+    compositeGlyph(offset: number, expanding: { expanding: Set<number>, budget: number }): PathCommand[] {
         const path: PathCommand[] = [];
         let p = offset + 10;
 
@@ -327,7 +352,7 @@ export class Font {
                 p += 8;
             }
 
-            for (const command of this.glyfOutline(glyph, depth + 1)) {
+            for (const command of this.glyfOutline(glyph, expanding)) {
                 const transformed: PathCommand = [command[0]];
                 for (let i = 1; i < command.length; i += 2) {
                     const x = command[i] as number, y = command[i + 1] as number;

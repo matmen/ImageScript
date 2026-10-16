@@ -84,6 +84,8 @@ interface Line {
 
 // glyphs are rasterized at quarter pixel offsets
 const SUBPIXELS = 4;
+// the largest glyph bitmap (2^26 pixels, 8192 pixels square)
+const MAX_GLYPH_PIXELS = 1 << 26;
 
 // parsed fonts are cached per memory region, so new views of the same font data (e.g. from node Buffers) hit the cache
 const fonts = new WeakMap<ArrayBufferLike, Map<string, Font>>();
@@ -175,11 +177,26 @@ function glyphOf(f: SizedFont, index: number, size: number): Glyph {
  * @return the coverage of the outline glyphs, and the premultiplied RGBA pixels of color glyphs (null without any)
  */
 export async function render(fonts: Uint8Array[], size: number, text: string, layout: Layout, hinting = false, foreground = 0xffffffff): Promise<{ width: number, height: number, coverage: Uint8Array, color: Uint8ClampedArray | null }> {
+    // reading past the end of damaged or truncated font data throws a RangeError
+    try {
+        return await layOut(fonts, size, text, layout, hinting, foreground);
+    } catch (err) {
+        if (err instanceof RangeError && !(err instanceof TooLarge)) throw new Error('Font: damaged or truncated font data', { cause: err });
+        throw err;
+    }
+}
+
+// rendered text larger than 2^28 pixels (16384 square)
+const MAX_PIXELS = 1 << 28;
+class TooLarge extends RangeError {}
+
+async function layOut(fonts: Uint8Array[], size: number, text: string, layout: Layout, hinting: boolean, foreground: number): Promise<{ width: number, height: number, coverage: Uint8Array, color: Uint8ClampedArray | null }> {
     const sized: SizedFont[] = [];
     const font = (i: number): SizedFont => sized[i] ??= sizedFont(fonts[i], size, hinting);
     const primary = font(0);
     const ascent = Math.ceil(primary.font.ascender * primary.scale);
-    const lineHeight = Math.ceil((primary.font.ascender - primary.font.descender + primary.font.lineGap) * primary.scale);
+    // (at least a pixel, damaged fonts can have any metrics)
+    const lineHeight = Math.max(1, Math.ceil((primary.font.ascender - primary.font.descender + primary.font.lineGap) * primary.scale));
 
     const invisible: Glyph = { index: 0, font: primary, path: [], scale: primary.scale, advance: 0, ink: null, bitmaps: [], color: null, colors: new Map() };
     const paragraphs = layout.wrapHardBreaks ? text.split(/\r\n|\r|\n/) : [text.replace(/\r\n|\r|\n/g, '')];
@@ -204,8 +221,10 @@ export async function render(fonts: Uint8Array[], size: number, text: string, la
         }
     }
 
-    const width = Math.ceil(Math.max(0, ...visible.map(line => line.extent)));
+    // text without ink (empty, spaces) still makes an image, a transparent pixel wide
+    const width = Math.max(1, Math.ceil(Math.max(0, ...visible.map(line => line.extent))));
     const height = visible.length * lineHeight;
+    if (!(width * height <= MAX_PIXELS)) throw new TooLarge(`Text too large to render (${width}x${height} pixels)`);
     const coverage = new Uint8Array(width * height);
     let color: Uint8ClampedArray | null = null;
 
@@ -247,21 +266,22 @@ export async function render(fonts: Uint8Array[], size: number, text: string, la
 
 /**
  * Turns a paragraph into glyphs: graphemes go to the first font that has all of their (visible) characters,
- * preferring color glyphs before an emoji variation selector and others before a text one; each run of a font is
- * mapped to glyphs and substituted. Invisible characters that weren't substituted show nothing
+ * preferring color glyphs before an emoji variation selector and others before a text one (composed or decomposed
+ * where that makes a font have them); each run of a font is mapped to glyphs and substituted. Invisible characters that
+ * weren't substituted show nothing
  */
 function shape(paragraph: string, count: number, font: (i: number) => SizedFont, size: number, invisible: Glyph): ShapedGlyph[] {
-    const codepoints = Array.from(paragraph, char => char.codePointAt(0) as number);
+    const characters = Array.from(paragraph, char => char.codePointAt(0) as number);
     const has = (f: SizedFont, codepoint: number): boolean => f.font.glyphIndex(codepoint) !== 0;
     const isColor = (f: SizedFont, codepoint: number): boolean => {
         const index = f.font.glyphIndex(codepoint);
         return !!(f.paints && f.paints.paint(index) !== null || f.bitmaps?.(index) || f.layers?.(index));
     };
 
-    // the font of a grapheme (later fonts are only loaded when the earlier ones miss a character)
-    const choose = (start: number, end: number): number => {
-        const needed = codepoints.slice(start, end).filter(c => !defaultIgnorable(c));
-        const variation = codepoints.slice(start, end).find(c => c === 0xfe0f || c === 0xfe0e);
+    // the font of a grapheme (later fonts are only loaded when the earlier ones miss a character), -1 if none has all
+    const choose = (grapheme: number[]): number => {
+        const needed = grapheme.filter(c => !defaultIgnorable(c));
+        const variation = grapheme.find(c => c === 0xfe0f || c === 0xfe0e);
         let first = -1;
         for (let i = 0; i < count; i++) {
             const f = font(i);
@@ -272,11 +292,23 @@ function shape(paragraph: string, count: number, font: (i: number) => SizedFont,
         return first;
     };
 
-    // fonts per character: whole graphemes where a font has all of them, else character by character
-    const fontOf = new Int32Array(codepoints.length);
-    for (const [start, end] of graphemes(codepoints)) {
-        const chosen = choose(start, end);
-        for (let k = start; k < end; k++) fontOf[k] = chosen >= 0 ? chosen : Math.max(0, choose(k, k + 1));
+    // the characters to shape and their fonts: whole graphemes where a font has all of them, else character by
+    // character. Like HarfBuzz, combining sequences are composed where a font has the composed character, and
+    // characters no font has are decomposed where one has their parts
+    const codepoints: number[] = [], fontOf: number[] = [];
+    const normalized = (grapheme: number[], form: string): number[] => Array.from(String.fromCodePoint(...grapheme).normalize(form), char => char.codePointAt(0) as number);
+    for (const [start, end] of graphemes(characters)) {
+        const grapheme = characters.slice(start, end);
+        let form = grapheme, chosen = -1;
+        for (const candidate of grapheme.length > 1 ? [normalized(grapheme, 'NFC'), grapheme] : [grapheme, normalized(grapheme, 'NFD')])
+            if ((chosen = choose(candidate)) >= 0) {
+                form = candidate;
+                break;
+            }
+        for (const c of form) {
+            codepoints.push(c);
+            fontOf.push(chosen >= 0 ? chosen : Math.max(0, choose([c])));
+        }
     }
 
     const shaped: ShapedGlyph[] = [];
@@ -385,7 +417,7 @@ function layeredGlyph(g: Glyph, layers: ColorLayer[], offset: number, foreground
 // a COLR version 1 glyph, its outlines rasterized like the others
 function paintedGlyph(g: Glyph, offset: number, foreground: number): ColorBitmap | null {
     const { font } = g.font;
-    return renderPaintGlyph(font, g.font.paints as PaintGlyphs, g.index, g.scale, offset, foreground, glyph => font.outline(glyph), path => rasterizeGlyph(path, 1));
+    return renderPaintGlyph(font, g.font.paints as PaintGlyphs, g.index, g.scale, offset, foreground, glyph => font.outline(glyph), (path, clip) => rasterizeGlyph(path, 1, 0, clip));
 }
 
 function premultiply(rgba: Uint8ClampedArray): void {
@@ -512,10 +544,11 @@ function blitColor(target: Uint8ClampedArray, width: number, height: number, bit
  * @param {Array} path outline in font units (y up)
  * @param {number} scale pixels per font unit
  * @param {number} [offset=0] horizontal subpixel offset
+ * @param clip the area (pixels, y up) to rasterize the outline within, if not all of it
  * @return {{data: Uint8Array, width: number, height: number, left: number, top: number}|null}
  *     left/top position the bitmap relative to the pen position on the baseline (top is measured upwards)
  */
-export function rasterizeGlyph(path: PathCommand[], scale: number, offset = 0): GlyphBitmap | null {
+export function rasterizeGlyph(path: PathCommand[], scale: number, offset = 0, clip?: { left: number, top: number, right: number, bottom: number }): GlyphBitmap | null {
     if (!path.length) return null;
 
     let xmin = Infinity, ymin = Infinity, xmax = -Infinity, ymax = -Infinity;
@@ -528,10 +561,18 @@ export function rasterizeGlyph(path: PathCommand[], scale: number, offset = 0): 
             if (y > ymax) ymax = y;
         }
 
-    const left = Math.floor(xmin), right = Math.ceil(xmax);
-    const bottom = Math.floor(ymin), top = Math.ceil(ymax);
+    // only the part within the clip: the rasterizer puts what lies left of the bitmap into its first column, what lies
+    // right of it evens out at the row's end, rows above and below are left out
+    let left = Math.floor(xmin), right = Math.ceil(xmax), bottom = Math.floor(ymin), top = Math.ceil(ymax);
+    if (clip) {
+        left = Math.max(left, clip.left);
+        right = Math.min(right, clip.right);
+        bottom = Math.max(bottom, clip.bottom);
+        top = Math.min(top, clip.top);
+    }
     const width = right - left, height = top - bottom;
-    if (width <= 0 || height <= 0) return null;
+    // (damaged fonts can have coordinates that aren't numbers, or are far out)
+    if (!(width > 0 && height > 0) || width * height > MAX_GLYPH_PIXELS) return null;
 
     const raster = new Rasterizer(width, height);
     // flip y and move the bitmap origin to (left, top)
@@ -594,8 +635,16 @@ export class Rasterizer {
 
     line(x0: number, y0: number, x1: number, y1: number): void {
         if (y0 === y1) return;
-        // outlines lie within the bitmap, but subdividing curves can land a hair outside (e.g. -1e-17 for points on the
-        // left edge, common with hinting); such segments would be dropped (their row index is negative)
+        // segments crossing the left or right edge are split there, so the parts outside run along the edge: what lies
+        // left of the bitmap covers its rows from the first column, what lies right of it evens out at the row's end.
+        // (Outlines clipped to a part, and subdivided curves landing a hair outside, e.g. -1e-17 on the left edge)
+        for (const edge of [0, this.width])
+            if ((x0 - edge) * (x1 - edge) < 0) {
+                const y = y0 + (y1 - y0) * (edge - x0) / (x1 - x0);
+                this.line(x0, y0, edge, y);
+                this.line(edge, y, x1, y1);
+                return;
+            }
         x0 = x0 < 0 ? 0 : x0 > this.width ? this.width : x0;
         x1 = x1 < 0 ? 0 : x1 > this.width ? this.width : x1;
 

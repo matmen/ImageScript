@@ -73,21 +73,64 @@ export function parseColorLayers(font: Font): ((glyph: number) => ColorLayer[] |
 }
 
 /**
- * The font's bitmap glyphs (CBDT/CBLC with PNG images) from the strike closest to `size` (the smallest at least as
- * large, else the largest), null if the font has none. The lookup returns null for glyphs without a bitmap
+ * The font's bitmap glyphs (CBDT/CBLC or sbix, with PNG images) from the strike closest to `size` (the smallest at least
+ * as large, else the largest), null if the font has none. The lookup returns null for glyphs without a bitmap
  */
 export function parseBitmaps(font: Font, size: number): ((glyph: number) => BitmapGlyph | null) | null {
+    return parseCBDT(font, size) ?? parseSbix(font, size);
+}
+
+// the index of the strike closest to the size (the smallest at least as large, else the largest), -1 if none
+function closestStrike(ppems: number[], size: number): number {
+    let best = -1;
+    for (const [i, ppem] of ppems.entries()) {
+        const current = best < 0 ? 0 : ppems[best];
+        if (best < 0 || (current < size ? ppem > current : ppem >= size && ppem < current)) best = i;
+    }
+    return best;
+}
+
+// Apple's sbix: per strike, glyph data offsets; per glyph, the origin offset, a graphic type and the data
+function parseSbix(font: Font, size: number): ((glyph: number) => BitmapGlyph | null) | null {
+    const sbix = font.tables.sbix?.offset;
+    if (sbix === undefined) return null;
+    const strikes = Array.from({ length: font.u32(sbix + 4) }, (_, i) => sbix + font.u32(sbix + 8 + i * 4));
+    const index = closestStrike(strikes.map(strike => font.u16(strike)), size);
+    if (index < 0) return null;
+    const strike = strikes[index], ppem = font.u16(strike);
+
+    const cache = new Map<number, BitmapGlyph | null>();
+    const lookup = (glyph: number, depth: number): BitmapGlyph | null => {
+        if (glyph >= font.numGlyphs || depth > 4) return null;
+        const start = strike + font.u32(strike + 4 + glyph * 4), end = strike + font.u32(strike + 8 + glyph * 4);
+        if (end - start < 8) return null;
+        const type = font.u32(start + 4);
+        // 'dupe': the data of another glyph
+        if (type === 0x64757065) return lookup(font.u16(start + 8), depth + 1);
+        if (type !== 0x706e6720) return null; // 'png '
+        const png = font.data.subarray(start + 8, end);
+        // the size from the PNG header (the IHDR chunk follows the signature)
+        if (png.length < 24) return null;
+        const header = new DataView(png.buffer, png.byteOffset + 16, 8), height = header.getUint32(4);
+        // the origin offset places the bitmap's bottom left corner
+        return { png, ppem, width: header.getUint32(0), height, left: font.i16(start), top: font.i16(start + 2) + height };
+    };
+    return glyph => {
+        let result = cache.get(glyph);
+        if (result === undefined) cache.set(glyph, result = lookup(glyph, 0));
+        return result;
+    };
+}
+
+// CBDT/CBLC (Google's color bitmaps)
+function parseCBDT(font: Font, size: number): ((glyph: number) => BitmapGlyph | null) | null {
     const cblc = font.tables.CBLC?.offset, cbdt = font.tables.CBDT?.offset;
     if (cblc === undefined || cbdt === undefined) return null;
 
-    const sizes = font.u32(cblc + 4);
-    let strike = -1, strikePpem = 0;
-    for (let i = 0; i < sizes; i++) {
-        const ppem = font.u8(cblc + 8 + i * 48 + 45);
-        const better = strike < 0 || (strikePpem < size ? ppem > strikePpem : ppem >= size && ppem < strikePpem);
-        if (better) { strike = cblc + 8 + i * 48; strikePpem = ppem; }
-    }
-    if (strike < 0) return null;
+    const ppems = Array.from({ length: font.u32(cblc + 4) }, (_, i) => font.u8(cblc + 8 + i * 48 + 45));
+    const index = closestStrike(ppems, size);
+    if (index < 0) return null;
+    const strike = cblc + 8 + index * 48, strikePpem = ppems[index];
 
     const array = cblc + font.u32(strike), subtables = font.u32(strike + 8);
 
