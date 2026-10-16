@@ -639,6 +639,7 @@ export function decompress(data: Uint8Array, limit: number): Uint8Array {
 
 interface NodeZlib {
     deflateSync(data: Uint8Array, options: { level: number }): Uint8Array;
+    crc32?(data: Uint8Array): number;
     inflateSync(data: Uint8Array, options: { maxOutputLength: number, finishFlush: number }): Uint8Array;
     constants: { Z_SYNC_FLUSH: number };
 }
@@ -650,13 +651,14 @@ interface StreamReader {
 
 interface Globals {
     process?: { getBuiltinModule?: (id: string) => unknown };
+    CompressionStream?: new (format: 'deflate') => unknown;
     DecompressionStream?: new (format: 'deflate') => unknown;
     Blob?: new (parts: Uint8Array[]) => { stream(): { pipeThrough(transform: unknown): { getReader(): StreamReader } } };
 }
 
-const { process: runtime, DecompressionStream: NativeDecompression, Blob: NativeBlob } = globalThis as unknown as Globals;
+const { process: runtime, CompressionStream: NativeCompression, DecompressionStream: NativeDecompression, Blob: NativeBlob } = globalThis as unknown as Globals;
 
-const nodeZlib = ((): NodeZlib | null => {
+export const nodeZlib = ((): NodeZlib | null => {
     try {
         return (runtime && runtime.getBuiltinModule && runtime.getBuiltinModule('node:zlib') as NodeZlib) || null;
     } catch {
@@ -674,6 +676,22 @@ const plain = (buffer: Uint8Array): Uint8Array => new Uint8Array(buffer.buffer, 
 export async function compressAsync(data: Uint8Array, level: number): Promise<Uint8Array> {
     level = Math.min(9, Math.max(0, level | 0));
     if (nodeZlib) return plain(nodeZlib.deflateSync(data, { level }));
+    // CompressionStream has a fixed level (zlib's default 6): used for levels 1-6, where it is faster than the JS
+    // deflate; storing (0) and the higher levels stay with the JS one
+    if (NativeCompression && NativeBlob && level >= 1 && level <= 6) {
+        const reader = new NativeBlob([data]).stream().pipeThrough(new NativeCompression('deflate')).getReader();
+        const parts: Uint8Array[] = [];
+        let length = 0;
+        for (; ;) {
+            const { done, value } = await reader.read();
+            if (done || !value) break;
+            parts.push(value);
+            length += value.length;
+        }
+        const out = new Uint8Array(length);
+        for (let i = 0, offset = 0; i < parts.length; offset += parts[i++].length) out.set(parts[i], offset);
+        return out;
+    }
     return compress(data, level);
 }
 

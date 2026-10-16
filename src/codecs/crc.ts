@@ -3,6 +3,8 @@
  * Copyright (c) 2021 Arjun Barrett, MIT License (see THIRD_PARTY_NOTICES.md)
  */
 
+import { nodeZlib } from './zlib.ts';
+
 // slice-by-16 tables: TABLE[k * 256 + n] is the CRC of byte n followed by k zero bytes
 const TABLE = new Int32Array(16 * 256);
 for (let n = 0; n < 256; n++) {
@@ -15,11 +17,16 @@ for (let n = 0; n < 256; n++) {
     for (let k = 256; k < TABLE.length; k += 256) c = TABLE[k + n] = TABLE[c & 0xff] ^ c >>> 8;
 }
 
+// the runtime's native CRC-32 (node:zlib in Node, Bun and Deno) is faster except for a few bytes, where the call costs more
+const native = nodeZlib && nodeZlib.crc32 ? nodeZlib.crc32.bind(nodeZlib) : null;
+const NATIVE_MIN = 64;
+
 /**
- * CRC-32 (ISO 3309), as used by PNG and zlib. Processes 16 bytes per step (slice-by-16, see #12), byte by byte so
- * it doesn't depend on alignment or endianness
+ * CRC-32 (ISO 3309), as used by PNG and zlib. Natively where the runtime has it, else 16 bytes per step (slice-by-16,
+ * see #12), byte by byte so it doesn't depend on alignment or endianness
  */
 export function crc32(buffer: Uint8Array): number {
+    if (native && buffer.length >= NATIVE_MIN) return native(buffer) >>> 0;
     let crc = -1, i = 0;
     for (const end = buffer.length - 16; i <= end; i += 16) {
         crc = TABLE[3840 + ((buffer[i] ^ crc) & 0xff)] ^ TABLE[3584 + ((buffer[i + 1] ^ crc >> 8) & 0xff)]

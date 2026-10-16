@@ -11,22 +11,15 @@ interface Ranges {
 
 const decoded = new WeakMap<EncodedProperty, Ranges>();
 
-const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+// base64 is decoded natively: Uint8Array.fromBase64 where available, atob everywhere else (browsers, Node, Deno, Bun)
+declare const atob: (data: string) => string;
+const fromBase64 = (Uint8Array as unknown as { fromBase64?: (text: string) => Uint8Array }).fromBase64;
 
 function base64(text: string): Uint8Array {
-    const digits = new Uint8Array(128);
-    for (let i = 0; i < 64; i++) digits[ALPHABET.charCodeAt(i)] = i;
-    const length = text.replace(/=+$/, '').length;
-    const out = new Uint8Array(length * 3 >> 2);
-    for (let i = 0, o = 0, bits = 0, value = 0; i < length; i++) {
-        value = value << 6 | digits[text.charCodeAt(i)];
-        bits += 6;
-        if (bits >= 8) {
-            bits -= 8;
-            out[o++] = value >> bits & 255;
-        }
-    }
-    return out;
+    if (fromBase64) return fromBase64(text);
+    const binary = atob(text), bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
 }
 
 function decode(property: EncodedProperty): Ranges {
