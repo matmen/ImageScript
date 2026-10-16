@@ -39,11 +39,12 @@ jobs:
         node-version: 24.x
 
     - run: npm ci --no-audit --no-fund
-    # a version that was just published can take a moment to show up on the registry
+    # a version that was just published can take a moment to show up on the registry; npm ci cached the package's
+    # versions from before, which --prefer-online skips
     - if: inputs.version != ''
       run: |
         for attempt in 1 2 3 4 5; do
-          npm install --save-exact --no-audit --no-fund "imagescript@$VERSION" && exit 0
+          npm install --save-exact --prefer-online --no-audit --no-fund "imagescript@$VERSION" && exit 0
           sleep 30
         done
         exit 1
