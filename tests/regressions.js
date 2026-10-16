@@ -457,6 +457,18 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
             if (color === 0xffffffff) white++;
         }
         assert(red > 100 && white > 100, `outlined text should contain both colors (${red} red, ${white} white)`);
+
+        // the stroke goes around translucent text, it doesn't show through it
+        const translucent = await Image.renderText(font, 40, 'Hi', 0x0000ff80, undefined, {strokeWidth: 3, strokeColor: 0xff0000ff});
+        const fill = await Image.renderText(font, 40, 'Hi', 0x0000ff80);
+        let inside = 0, tinted = 0;
+        // pixels the glyphs cover fully (the stroked image is 3 pixels larger on every side)
+        for (const [x, y, color] of fill.iterateWithColors()) {
+            if (color !== 0x0000ff80) continue;
+            inside++;
+            if (translucent.getPixelAt(x + 3, y + 3) !== 0x0000ff80) tinted++;
+        }
+        assert(inside > 100 && !tinted, `translucent text should show no stroke inside (${tinted} of ${inside} pixels tinted)`);
     }
 
     // PNGs are oriented by their eXIf chunk, ImageMagick's Exif text or XMP, in that order

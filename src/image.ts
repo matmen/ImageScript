@@ -2095,14 +2095,14 @@ export class Image {
 
         // the outline goes around the color glyphs as well
         let shape = coverage;
-        if (colored && strokeWidth) {
+        if (colored) {
             shape = coverage.slice();
             for (let i = 0; i < shape.length; i++) shape[i] = Math.max(shape[i], colored[i * 4 + 3]);
         }
         const stroke = strokeWidth ? outline(shape, width, height, strokeWidth) : null;
         const [sr, sg, sb, sa] = Image.colorToRGBA(strokeColor);
 
-        // color glyphs over the text (premultiplied, with the text's alpha), both over their outline
+        // color glyphs over the text (premultiplied, with the text's alpha), both within their outline
         for (let i = 0; i < coverage.length; i++) {
             let af = coverage[i] / 255 * a / 255, pr = r * af, pg = g * af, pb = b * af;
             if (colored && colored[i * 4 + 3]) {
@@ -2113,7 +2113,9 @@ export class Image {
                 af = ca + af * keep;
             }
             if (stroke) {
-                const as = stroke[i] * sa / 255 * (1 - af);
+                // the outline shows around the glyphs only, not through translucent ones (for opaque text it's the
+                // same as drawing the glyphs over it)
+                const as = stroke[i] * sa / 255 * (1 - shape[i] / 255);
                 pr += sr * as;
                 pg += sg * as;
                 pb += sb * as;
