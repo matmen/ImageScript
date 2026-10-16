@@ -35,6 +35,11 @@
   82 instead of 95 ms), with identical output: the predictors run as one loop per mode instead of a switch per pixel,
   residual costs come from a table, and the LZ77 search hashes every pixel pair once.
 
+### Fixes
+
+- The outline of `Image.renderText` (`strokeWidth`) showed through translucent text, it now only shows around the
+  glyphs (opaque text renders as before).
+
 ## 3.2.1
 
 ### Performance
