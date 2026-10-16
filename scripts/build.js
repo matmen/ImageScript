@@ -27,5 +27,23 @@ const rewrite = dir => {
 };
 rewrite(path.join(root, 'dist'));
 
+// only the declarations the public ones import are needed (the exports field hides the other modules)
+const needed = new Set();
+const follow = file => {
+    if (needed.has(file)) return;
+    needed.add(file);
+    for (const [, specifier] of fs.readFileSync(file, 'utf8').matchAll(/(?:from |import\()'(\.{1,2}\/[^']*)\.js'/g))
+        follow(path.join(path.dirname(file), specifier + '.d.ts'));
+};
+follow(path.join(root, 'dist/index.d.ts'));
+const prune = dir => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const file = path.join(dir, entry.name);
+        if (entry.isDirectory()) prune(file);
+        else if (file.endsWith('.d.ts') && !needed.has(file)) fs.rmSync(file);
+    }
+};
+prune(path.join(root, 'dist'));
+
 // the package itself has no "type", so mark the build as ES modules
 fs.writeFileSync(path.join(root, 'dist/package.json'), '{"type":"module"}\n');
