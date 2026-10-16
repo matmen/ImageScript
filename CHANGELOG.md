@@ -4,11 +4,14 @@
 
 ### Features
 
-- `ResizeOptions.fast` (default `true`): opaque images resized with bilinear or area resizing (down to about a third of
-  the size, and enlarging) now round to 8 bits between the two passes as well, so both passes share their
-  multiplications between two channels. Halving a 1920×1080 photo takes 12 instead of 15 ms, doubling it 61 instead of
-  80 ms. About 10-25% of the channel values differ from 3.2.1, by at most 1. `fast: false` keeps the more precise results
-  of 3.2.1.
+- `ResizeOptions.fast` (default `true`): bilinear and area resizing (down to about a third of the size, and
+  enlarging) round to 8 bits between the two passes, so both passes share their multiplications between two channels.
+  `fast: false` keeps the more precise results of 3.2.1.
+  - Opaque images: halving a 1920×1080 photo takes 12 instead of 15 ms, doubling it 61 instead of 80 ms. About 10-25%
+    of the channel values differ from 3.2.1, by at most 1.
+  - Transparent images are premultiplied to 8 bits, like browsers do: halving takes 24 instead of 43 ms, doubling 119
+    instead of 260 ms. What shows once they're composited differs from 3.2.1 by up to about 2 steps (alpha by at most 2),
+    the color of pixels that are almost transparent can differ more.
 
 ## 3.2.1
 

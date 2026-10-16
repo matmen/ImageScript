@@ -48,10 +48,12 @@ export interface ResizeOptions {
     /** The resizing mode. Default: {@link Image.RESIZE_BILINEAR} */
     mode?: ResizeMode;
     /**
-     * Whether to round to 8 bits between the two passes, so two channels share the multiplications of both:
-     * about 15-25% faster, with more channel values a step off the exact result (10-25% instead of
-     * about 1%, never more than 1). Only affects opaque images with {@link Image.RESIZE_BILINEAR} and
-     * {@link Image.RESIZE_AREA}, down to about a third of the size. Default: `true`
+     * Whether to round to 8 bits between the two passes, so two channels share the multiplications of both: about
+     * 15-25% faster for opaque images, with 10-25% of the channel values a step off the precise result (instead of
+     * about 1%, never more than 1). Transparent images are premultiplied to 8 bits like browsers do, which makes them
+     * about twice as fast: what shows once they're composited differs by up to about 2 steps, pixels that are almost
+     * transparent keep less of their color. Only affects {@link Image.RESIZE_BILINEAR} and {@link Image.RESIZE_AREA},
+     * down to about a third of the size. Default: `true`
      */
     fast?: boolean;
 }
