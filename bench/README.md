@@ -19,26 +19,26 @@ WebAssembly.
 
 ## Numbers
 
-Operations per second (more is faster), measured 2026-10-15 with Node.js v24.11.1 on Intel(R) Core(TM) i3-8109U CPU @ 3.00GHz, ImageScript 3.1.0.
+Operations per second (more is faster), measured 2026-10-16 with Node.js v24.21.0 on AMD EPYC 9V74 80-Core Processor, ImageScript 3.2.0.
 
 | | **ImageScript 3** | **ImageScript 1** | **Jimp** | **image-js** | **Photon** | **sharp** | **@napi-rs/canvas** |
 |---|--:|--:|--:|--:|--:|--:|--:|
-| decode JPEG | **9.06** | 3.97 | 4.34 | 5.17 | 16.1 | 37.3 | 42.2 |
-| decode PNG | **20.4** | 20.6 | 12.2 | 7.46 | 22.0 | 43.7 | 48.1 |
-| decode WebP (lossy) | **7.73** | – | – | – | 7.75 | 30.3 | 53.3 |
-| encode JPEG (quality 80) | **9.51** | 14.6 | 1.86 | 6.76 | 6.12 | 49.0 | 30.8 |
-| encode PNG | **6.67** | 3.17 | 3.33 | 2.37 | 7.57 | 6.74 | 2.00 |
-| encode WebP (lossless) | **0.67** | – | – | – | 17.0 | 0.52 | 1.85 |
-| resize to half | **14.9** | 249 | 42.5 | 7.09 | 9.57 | 50.6 | 364 |
-| rotate by 30° | **6.39** | 4.22 | 1.20 | 0.85 | 2.64 | 10.6 | 31.7 |
-| blur (radius 5) | **4.32** | – | 0.01 | 1.00 | 2.54 | 23.7 | 33.5 |
-| composite an overlay | **272** | 408 | 22.4 | 103 | 38.3 | 95.3 | 236 |
-| crop | **313** | 428 | 34.4 | 46.3 | 41.1 | 928 | 934 |
-| clone | **596** | 575 | 700 | 563 | 42.2 | 712 | 273 |
-| render text | **774** | 50.1 | – | – | – | 1,896 | 3,164 |
-| render SVG | **3.86** | fails | – | – | – | 12.0 | 51.2 |
-| decode animated GIF | **4.95** | 6.77 | – | – | – | 12.5 | – |
-| encode animated GIF | **3.39** | 1.01 | – | – | – | 0.80 | – |
+| decode JPEG | **16.5** | 7.83 | 8.11 | 7.46 | 26.2 | 83.6 | 57.2 |
+| decode PNG | **36.2** | 36.5 | 20.0 | 11.5 | 49.5 | 63.3 | 63.5 |
+| decode WebP (lossy) | **13.1** | – | – | – | 13.6 | 43.6 | 80.4 |
+| encode JPEG (quality 80) | **15.4** | 22.6 | 3.04 | 11.3 | 11.2 | 67.0 | 44.8 |
+| encode PNG | **9.77** | 4.76 | 5.10 | 3.76 | 11.7 | 8.83 | 2.41 |
+| encode WebP (lossless) | **1.30** | – | – | – | 28.7 | 0.83 | 2.56 |
+| resize to half | **30.6** | 463 | 87.1 | 13.7 | 21.4 | 71.3 | 411 |
+| rotate by 30° | **12.9** | 8.47 | 2.22 | 1.47 | 6.10 | 18.1 | 41.1 |
+| blur (radius 5) | **8.72** | – | 0.01 | 1.56 | 7.46 | 39.6 | 77.1 |
+| composite an overlay | **534** | 780 | 40.2 | 158 | 206 | 123 | 608 |
+| crop | **942** | 944 | 62.6 | 79.6 | 223 | 1,505 | 1,721 |
+| clone | **1,265** | 1,248 | 1,728 | 1,159 | 530 | 1,995 | 678 |
+| render text | **1,315** | 72.7 | – | – | – | 3,162 | 3,614 |
+| render SVG | **8.77** | fails | – | – | – | 31.8 | 122 |
+| decode animated GIF | **12.6** | 9.59 | – | – | – | 19.6 | – |
+| encode animated GIF | **6.31** | 1.47 | – | – | – | 1.10 | – |
 
 Encoded sizes:
 
@@ -49,15 +49,15 @@ Encoded sizes:
 | photo WebP | 1.4 MB | – | – | – | 1.7 MB | 1.2 MB | 1.4 MB |
 | graphic PNG | 1.1 MB | 802 kB | 2.0 MB | 736 kB | 2.2 MB | 718 kB | 1.0 MB |
 | graphic JPEG | 275 kB | 314 kB | 315 kB | 315 kB | 314 kB | 275 kB | 276 kB |
-| graphic WebP | 579 kB | – | – | – | 856 kB | 239 kB | 631 kB |
-| animation GIF | 1.3 MB | 1.3 MB | – | – | – | 720 kB | – |
+| graphic WebP | 580 kB | – | – | – | 856 kB | 239 kB | 631 kB |
+| animation GIF | 825 kB | 1.3 MB | – | – | – | 720 kB | – |
 
 | | **ImageScript 3** | **ImageScript 1** | **Jimp** | **image-js** | **Photon** | **sharp** | **@napi-rs/canvas** |
 |---|---|---|---|---|---|---|---|
 | kind | JavaScript | WebAssembly | JavaScript | JavaScript | WebAssembly | native (libvips) | native (Skia) |
-| package | `imagescript@3.1.0` | `imagescript@1.3.1` | `jimp@1.6.1` | `image-js@1.7.1` | `@silvia-odwyer/photon-node@0.3.4` | `sharp@0.35.5` | `@napi-rs/canvas@1.0.11` |
-| install size | 639 kB | 6.7 MB | 26.7 MB | 47.8 MB | 2.3 MB | 30.2 MB | 35.0 MB |
-| packages | 1 | 1 | 64 | 55 | 1 | 9 | 2 |
+| package | `imagescript@3.2.0` | `imagescript@1.3.1` | `jimp@1.6.1` | `image-js@1.7.1` | `@silvia-odwyer/photon-node@0.3.4` | `sharp@0.35.5` | `@napi-rs/canvas@1.0.11` |
+| install size | 660 kB | 6.7 MB | 26.7 MB | 47.8 MB | 2.3 MB | 20.3 MB | 35.0 MB |
+| packages | 1 | 1 | 64 | 55 | 1 | 6 | 2 |
 
 ## Method
 
