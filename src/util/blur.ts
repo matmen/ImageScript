@@ -1,6 +1,8 @@
 // gaussian blur approximated by three box blurs (the box sizes match the gaussian's variance), each pass is a
 // running sum, so the cost doesn't depend on the radius. Pixels outside the image repeat the edge pixels
 
+import { littleEndian, isOpaque, premultiply8, unpremultiply8 } from './alpha.ts';
+
 // widths of the three boxes for a gaussian with the given standard deviation
 function boxSizes(sigma: number): number[] {
     const n = 3;
@@ -203,26 +205,15 @@ function boxColumnsWords(src: Int32Array, dst: Int32Array, width: number, height
  * channels per sum, rounded to 8 bits after each box (within a step of blurring floats, several times faster).
  * Transparent images are premultiplied to 8 bits first: that rounds the color of pixels that are almost
  * transparent, which only shows unpremultiplied (composited, they stay within half a step). Returns false (and
- * does nothing) for radii the box approximation doesn't cover (below 2) or that don't fit the lanes
+ * does nothing) on big endian machines and for radii the box approximation doesn't cover (below 2) or that don't
+ * fit the lanes
  */
 export function boxBlurRGBA(bitmap: Uint8ClampedArray, width: number, height: number, sigma: number): boolean {
     const sizes = boxSizes(sigma);
-    if (!(sigma >= 2) || Math.max(...sizes) > 257) return false;
+    if (!littleEndian || !(sigma >= 2) || Math.max(...sizes) > 257) return false;
 
-    let opaque = true;
-    for (let i = 3; i < bitmap.length; i += 4) if (bitmap[i] !== 255) {
-        opaque = false;
-        break;
-    }
-    if (!opaque) {
-        for (let i = 0; i < bitmap.length; i += 4) {
-            const a = bitmap[i + 3];
-            // x * a / 255, rounded
-            bitmap[i] = (bitmap[i] * a + 128) * 257 >> 16;
-            bitmap[i + 1] = (bitmap[i + 1] * a + 128) * 257 >> 16;
-            bitmap[i + 2] = (bitmap[i + 2] * a + 128) * 257 >> 16;
-        }
-    }
+    const opaque = isOpaque(bitmap);
+    if (!opaque) premultiply8(bitmap, bitmap);
 
     const pixels = new Int32Array(bitmap.buffer, bitmap.byteOffset, width * height);
     const tmp = new Int32Array(pixels.length), rbs = new Int32Array(width), gas = new Int32Array(width);
@@ -234,20 +225,7 @@ export function boxBlurRGBA(bitmap: Uint8ClampedArray, width: number, height: nu
         boxColumnsWords(tmp, pixels, width, height, radius, mult, rbs, gas);
     }
 
-    if (!opaque) {
-        for (let i = 0; i < bitmap.length; i += 4) {
-            const a = bitmap[i + 3];
-            if (a === 0) {
-                bitmap[i] = bitmap[i + 1] = bitmap[i + 2] = 0;
-                continue;
-            }
-            // the clamped bitmap rounds and clamps
-            const f = 255 / a;
-            bitmap[i] *= f;
-            bitmap[i + 1] *= f;
-            bitmap[i + 2] *= f;
-        }
-    }
+    if (!opaque) unpremultiply8(bitmap);
     return true;
 }
 
