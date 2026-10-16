@@ -21,9 +21,10 @@ files['photo.webp'] = await sharp(files['photo.jpg']).webp({ quality: 80 }).toBu
 const speed = {}, sizes = {};
 const formatName = format => ({ jpeg: 'JPEG', png: 'PNG', webp: 'WebP' })[format];
 
-// collect: canvases hold their pixels in native memory that V8 doesn't count and only free it in finalizers that run
-// on a later event-loop turn, which tinybench's loop never yields to. So between iterations (outside the measured
-// time) garbage is collected and the loop gets a turn, instead of the pixels piling up until the process is killed
+// collect: canvases (native memory) and Photon images (WebAssembly memory) hold their pixels outside the V8 heap and
+// only free them in finalizers that run on a later event-loop turn, which tinybench's loop never yields to. So between
+// iterations (outside the measured time) garbage is collected and the loop gets a turn, instead of the pixels piling
+// up until the process is killed (or Photon runs out of its 4 GB)
 async function measure(task, fn) {
     const bench = new Bench({ time: 1500, iterations: 3, warmupTime: 300, warmupIterations: 1 });
     bench.add(task, fn, lib.collect && globalThis.gc ? { afterEach: async () => { globalThis.gc(); await new Promise(setImmediate); } } : {});

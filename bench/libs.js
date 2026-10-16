@@ -95,7 +95,7 @@ export const libraries = [
         clone: image => image.clone()
     },
     {
-        name: 'Photon', package: '@silvia-odwyer/photon-node', kind: 'WebAssembly',
+        name: 'Photon', package: '@silvia-odwyer/photon-node', kind: 'WebAssembly', collect: true,
         decode: data => photon.PhotonImage.new_from_byteslice(new Uint8Array(data)),
         encode: {
             png: image => image.get_bytes(),
