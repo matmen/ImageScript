@@ -532,4 +532,33 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
             }
         assert(crc32(data) === zlib.crc32(data), 'crc32: wrong for a long buffer');
     }
+
+    // damaged fonts (truncated, bytes changed) render or throw a font error, quickly: no runaway memory or time (contours
+    // with decreasing end points, composite glyphs containing themselves, huge COLR clip boxes)
+    {
+        const fs = require('fs');
+        let seed = 7;
+        const random = () => (seed = Math.imul(seed, 1103515245) + 12345 >>> 0) / 2 ** 32;
+        // (a damaged copy of the Noto-COLRv1 subset with 3329 contours of decreasing end points in a glyph ran out of memory)
+        const start = Date.now();
+        await Image.renderText(fs.readFileSync('./tests/fonts/damaged noto colrv1 subset.ttf'), 40, '😀🔥👍❤️').catch(err => assert(/^Font: /.test(err.message), err.message));
+        assert(Date.now() - start < 3000, 'the damaged Noto-COLRv1 subset took too long');
+        for (const file of ['sourcesans3 regular.otf', 'opensans bold.ttf', 'noto colrv1 subset.ttf', 'noto color emoji subset.ttf']) {
+            const original = fs.readFileSync(`./tests/fonts/${file}`);
+            for (let k = 0; k < 30; k++) {
+                let data = original.subarray(0, Math.floor(random() * original.length));
+                if (k >= 10) {
+                    data = Buffer.from(original);
+                    for (let n = 0; n < 1 + random() * 20; n++) data[Math.floor(random() * data.length)] = random() * 256;
+                }
+                const start = Date.now();
+                try {
+                    await Image.renderText(data, 40, 'Hi office 😀🔥 👍🏽 🇩🇪 1️⃣ e\u0301');
+                } catch (err) {
+                    assert(/^Font: /.test(err.message), `${file} #${k}: unexpected error for a damaged font: ${err.message}`);
+                }
+                assert(Date.now() - start < 3000, `${file} #${k}: a damaged font took ${Date.now() - start} ms`);
+            }
+        }
+    }
 })();

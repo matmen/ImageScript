@@ -3,8 +3,9 @@
  https://www.1001fonts.com/carbon-font.html
  https://www.1001fonts.com/ethnocentric-font.html
  https://github.com/adobe-fonts/source-sans (SIL OFL, see OFL-SourceSans3.md)
- https://github.com/googlefonts/noto-emoji (subsets of Noto Color Emoji and Noto-COLRv1, SIL OFL, see OFL-NotoColorEmoji.md)
- colrv1 paints.ttf is built by colrv1-paints.py
+ https://github.com/googlefonts/noto-emoji (subsets of Noto Color Emoji and Noto-COLRv1, SIL OFL, see OFL-NotoColorEmoji.md;
+   damaged noto colrv1 subset.ttf is a damaged copy for tests/regressions.js)
+ colrv1 paints.ttf is built by colrv1-paints.py, sbix.ttf by sbix.py
  https://github.com/mozilla/twemoji-colr (subset, CC-BY 4.0, see CC-BY-Twemoji.md)
  */
 
@@ -215,5 +216,27 @@ const panic = message => {
         const foreground = await Image.renderText(font, 100, '\ue010', {color: 0x00aaaaff});
         const [fr, fg, fb, fa] = foreground.getRGBAAt(Math.round(foreground.width * 0.12), foreground.height >> 1);
         if (fr > 2 || Math.abs(fg - 0xaa) > 2 || Math.abs(fb - 0xaa) > 2 || fa < 253) panic(`colrv1: layers in the text color should take it (${fr},${fg},${fb},${fa})`);
+    }
+
+    {
+        // sbix bitmaps: the PNG placed by its origin offset (8, -4 at 64 ppem), and a 'dupe' of it
+        const font = await fs.readFile('./tests/fonts/sbix.ttf');
+        const square = await Image.renderText(font, 64, '\ue000'), dupe = await Image.renderText(font, 64, '\ue001');
+        if (!Buffer.from(square.bitmap).equals(Buffer.from(dupe.bitmap))) panic('sbix: a dupe should render as the glyph it refers to');
+        // the baseline is at the ascender (0.9 em), the bitmap's bottom 4 pixels below it, its left edge at 8
+        const [r, g, b] = square.getRGBAAt(8 + 24, Math.ceil(0.9 * 64) + 4 - 24), [cr, , cb] = square.getRGBAAt(8 + 4, Math.ceil(0.9 * 64) + 4 - 44);
+        if (!(r > 200 && g < 50 && b < 50 && cb > 200 && cr < 50)) panic(`sbix: the bitmap should be placed by its origin offset (${r},${g},${b} / ${cr},${cb})`);
+        if (square.getRGBAAt(8 - 2, 30)[3] !== 0) panic('sbix: nothing left of the bitmap');
+    }
+
+    {
+        // text without anything to show renders a transparent pixel wide, it doesn't throw
+        const font = await fs.readFile('./tests/fonts/sourcesans3 regular.otf');
+        for (const text of ['', ' ', '\u200b\ufe0f'])
+            if ((await Image.renderText(font, 32, text)).width !== 1) panic(`empty text: ${JSON.stringify(text)} should render a pixel wide`);
+
+        // combining sequences are composed where the font has the composed character
+        const composed = await Image.renderText(font, 32, 'Café Müller'), decomposed = await Image.renderText(font, 32, 'Cafe\u0301 Mu\u0308ller');
+        if (!Buffer.from(composed.bitmap).equals(Buffer.from(decomposed.bitmap))) panic('combining sequences should render like the composed characters');
     }
 })();

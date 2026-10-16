@@ -19,7 +19,8 @@
   about 2.5 steps. `fast: false` keeps the precise sampling.
 - `Image.renderText` takes several fonts by priority (`[text, emoji]`): every character comes from the first font that
   has it, the first font sets the line height. Color glyphs keep their colors: COLR version 0 layers with CPAL
-  palettes (e.g. Twemoji) and CBDT/CBLC bitmaps (e.g. Noto Color Emoji, which now loads at all, it has no outlines).
+  palettes (e.g. Twemoji), CBDT/CBLC bitmaps (e.g. Noto Color Emoji, which now loads at all, it has no outlines) and
+  sbix bitmaps (Apple's format).
   Invisible characters like joiners and variation selectors take no room, as in browsers.
 - `Image.renderText` applies the fonts' glyph substitutions (GSUB) that browsers apply by default (`ccmp`, `rlig`,
   `liga`, `clig`, `calt`): emoji sequences (skin tones, flags, keycaps, families and other joined ones) become one
@@ -30,6 +31,8 @@
   gradients (pad, repeat, reflect), glyph outlines as masks, transforms and all composite modes; variable paints with
   their default values. They are rendered at four times the size and scaled down, so layers sharing an edge don't let the
   ones below show through. Fonts with both prefer them over their other color glyphs, like browsers.
+- `Image.renderText` composes combining sequences (e + ◌́ to é, as in text from macOS) where the font has the composed
+  character, and decomposes characters the fonts lack where one has their parts, like HarfBuzz.
 - Fallback fonts are only loaded when the text needs them, and glyphs (also decoded and scaled emoji bitmaps) are
   kept per font and size across calls.
 
@@ -45,6 +48,14 @@
   glyphs (opaque text renders as before).
 - The outline of `Image.renderText` follows the glyphs' antialiased edges instead of their pixels, so it is smooth
   rather than stepped, and it reaches exactly `strokeWidth` beyond the edge.
+- `Image.renderText` threw for text without anything to show (empty, only spaces), it now renders a transparent pixel
+  wide.
+- Damaged fonts no longer take unbounded memory or time: glyphs with contour end points that don't increase render
+  empty (as in FreeType), composite glyphs can't contain themselves (also when hinting), and outlines have a size
+  limit. Reading past the end of damaged or truncated font data throws "Font: damaged or truncated font data" instead
+  of a RangeError, and text larger than 2^28 pixels throws.
+- Glyph outlines reaching far outside their bitmap rasterize correctly (the parts outside used to change the slope of
+  the edges inside).
 
 ## 3.2.1
 
