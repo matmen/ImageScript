@@ -79,4 +79,25 @@ const panic = msg => {
         if (!Buffer.from(image.bitmap).equals(Buffer.from(image.rotate(360).bitmap)))
             panic('rotate 360 failed');
     }
+
+    // the fast sampling (the default) stays within a step of the precise one for opaque pixels, transparent ones
+    // within 2.5 steps where it shows (premultiplied, alpha within 2)
+    {
+        const photo = (await Image.decode(await fs.readFile('./bench/inputs/photo.jpg'))).crop(700, 300, 400, 300);
+        const transparent = photo.clone();
+        for (let i = 0; i < transparent.bitmap.length; i += 4) transparent.bitmap[i + 3] = (i >> 2) % transparent.width * 255 / (transparent.width - 1);
+        for (const source of [photo, transparent])
+            for (const [angle, resize] of [[30, true], [-17.5, true], [123, false], [0.3, true]]) {
+                const a = source.clone().rotate(angle, {resize, fast: false}).bitmap, b = source.clone().rotate(angle, {resize}).bitmap;
+                let opaque = 0, shown = 0;
+                for (let i = 0; i < a.length; i++) {
+                    if (a[i] === b[i]) continue;
+                    const al = a[i | 3], bl = b[i | 3];
+                    if ((i & 3) === 3) shown = Math.max(shown, Math.abs(a[i] - b[i]));
+                    else if (al === 255 && bl === 255) opaque = Math.max(opaque, Math.abs(a[i] - b[i]));
+                    else shown = Math.max(shown, Math.abs(a[i] * al - b[i] * bl) / 255);
+                }
+                if (opaque > 1 || shown > 2.5) panic(`fast rotate ${angle}: ${opaque} (opaque), ${shown} (shown)`);
+            }
+    }
 })();

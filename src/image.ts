@@ -12,6 +12,7 @@ import { TextLayout } from './text-layout.ts';
 import { Metadata, resolveMetadata, pngText, exifData } from './metadata.ts';
 import { encode as utf8 } from './util/utf8.ts';
 import { resample, BOX, TRIANGLE, CUBIC } from './util/resample.ts';
+import { rotateBilinear } from './util/rotate.ts';
 import { gaussianBlur, boxBlurRGBA, premultiply, unpremultiply } from './util/blur.ts';
 import { isOptions } from './util/options.ts';
 
@@ -170,6 +171,13 @@ export interface DominantColorOptions {
 export interface RotateOptions {
     /** Whether to resize the image so it fits all pixels or just ignore outlying pixels. Default: `true` */
     resize?: boolean;
+    /**
+     * Whether to sample with 8-bit weights on 8-bit premultiplied pixels (like {@link ResizeOptions.fast}), about twice
+     * as fast: opaque pixels stay within a step of the precise result, what shows of translucent ones (also the
+     * faded edges) within about 2.5 steps (pixels that are almost transparent keep less of their color). Only affects
+     * angles that aren't multiples of 90°. Default: `true`
+     */
+    fast?: boolean;
 }
 
 /** Options of {@link Image.trim} */
@@ -1551,7 +1559,7 @@ export class Image {
      */
     rotate(angle: number, resize?: boolean): this;
     rotate(angle: number, resizeOrOptions: boolean | RotateOptions = true): this {
-        const { resize = true } = typeof resizeOrOptions === 'object' && resizeOrOptions !== null ? resizeOrOptions : { resize: resizeOrOptions };
+        const { resize = true, fast = true } = typeof resizeOrOptions === 'object' && resizeOrOptions !== null ? resizeOrOptions : { resize: resizeOrOptions };
         angle = ((angle % 360) + 360) % 360;
         if (angle === 0) return this;
 
@@ -1579,6 +1587,7 @@ export class Image {
         const outWidth = resize ? Math.round(Math.abs(width * cos) + Math.abs(height * sin)) : width;
         const outHeight = resize ? Math.round(Math.abs(width * sin) + Math.abs(height * cos)) : height;
         const out = new Image(outWidth, outHeight);
+        if (fast && rotateBilinear(this.bitmap, width, height, out.bitmap, outWidth, outHeight, sin, cos)) return this.__apply__(out);
         const s8 = this.bitmap, d8 = out.bitmap;
 
         // bilinear sampling of the counterclockwise rotated source, with premultiplied alpha

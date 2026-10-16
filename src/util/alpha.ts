@@ -42,6 +42,11 @@ export function unpremultiply8(bitmap: Uint8ClampedArray): void {
     for (let i = 0; i < pixels.length; i++) {
         const p = pixels[i], a = p >>> 24;
         if (a === 255) continue;
+        // what the table gives at alpha 0, without looking it up
+        if (a === 0) {
+            pixels[i] = 0;
+            continue;
+        }
         const o = a << 8;
         pixels[i] = table[o | p & 255] | table[o | p >> 8 & 255] << 8 | table[o | p >> 16 & 255] << 16 | a << 24;
     }
