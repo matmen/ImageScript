@@ -28,7 +28,7 @@
   emoji font rather than the text font's ❤).
 - `Image.renderText` renders COLR version 1 color glyphs (e.g. Noto-COLRv1): solid colors, linear, radial and sweep
   gradients (pad, repeat, reflect), glyph outlines as masks, transforms and all composite modes; variable paints with
-  their default values. They are rendered at twice the size and scaled down, so layers sharing an edge don't let the
+  their default values. They are rendered at four times the size and scaled down, so layers sharing an edge don't let the
   ones below show through. Fonts with both prefer them over their other color glyphs, like browsers.
 - Fallback fonts are only loaded when the text needs them, and glyphs (also decoded and scaled emoji bitmaps) are
   kept per font and size across calls.
