@@ -146,6 +146,111 @@ export function gaussianBlur(pixels: Float32Array, width: number, height: number
     }
 }
 
+// box blurs the pixels of one row (32-bit words) from src into dst, the edge pixels repeat. Red and blue share an
+// int as two 16-bit lanes, green and alpha another: a window of up to 257 pixels fits (255 * 257 < 65536).
+// `mult` divides by the window size (65536 / size)
+function boxRowWords(src: Int32Array, dst: Int32Array, s: number, length: number, radius: number, mult: number): void {
+    const last = length - 1;
+    const first = src[s], end = src[s + last];
+    let rb = (radius + 1) * (first & 0xff00ff), ga = (radius + 1) * (first >>> 8 & 0xff00ff);
+    for (let k = 1; k <= radius; k++) {
+        const p = src[s + (k < last ? k : last)];
+        rb += p & 0xff00ff;
+        ga += p >>> 8 & 0xff00ff;
+    }
+
+    for (let x = 0; x < length; x++) {
+        dst[s + x] = (Math.imul(rb & 0xffff, mult) + 32768 >>> 16) | (Math.imul(ga & 0xffff, mult) + 32768 >>> 16) << 8
+            | (Math.imul(rb >>> 16, mult) + 32768 >>> 16) << 16 | (Math.imul(ga >>> 16, mult) + 32768 >>> 16) << 24;
+        const add = x + radius + 1, remove = x - radius;
+        const entering = add < last ? src[s + add] : end, leaving = remove > 0 ? src[s + remove] : first;
+        rb += (entering & 0xff00ff) - (leaving & 0xff00ff);
+        ga += (entering >>> 8 & 0xff00ff) - (leaving >>> 8 & 0xff00ff);
+    }
+}
+
+// box blurs the columns of src into dst, sliding a window of whole rows (sums per column, in lanes as above)
+function boxColumnsWords(src: Int32Array, dst: Int32Array, width: number, height: number, radius: number, mult: number, rbs: Int32Array, gas: Int32Array): void {
+    for (let x = 0; x < width; x++) {
+        const p = src[x];
+        rbs[x] = (radius + 1) * (p & 0xff00ff);
+        gas[x] = (radius + 1) * (p >>> 8 & 0xff00ff);
+    }
+    for (let k = 1; k <= radius; k++) {
+        const o = Math.min(k, height - 1) * width;
+        for (let x = 0; x < width; x++) {
+            const p = src[o + x];
+            rbs[x] += p & 0xff00ff;
+            gas[x] += p >>> 8 & 0xff00ff;
+        }
+    }
+
+    for (let y = 0; y < height; y++) {
+        const o = y * width, add = Math.min(height - 1, y + radius + 1) * width, remove = Math.max(0, y - radius) * width;
+        for (let x = 0; x < width; x++) {
+            const rb = rbs[x], ga = gas[x];
+            dst[o + x] = (Math.imul(rb & 0xffff, mult) + 32768 >>> 16) | (Math.imul(ga & 0xffff, mult) + 32768 >>> 16) << 8
+                | (Math.imul(rb >>> 16, mult) + 32768 >>> 16) << 16 | (Math.imul(ga >>> 16, mult) + 32768 >>> 16) << 24;
+            const entering = src[add + x], leaving = src[remove + x];
+            rbs[x] = rb + (entering & 0xff00ff) - (leaving & 0xff00ff);
+            gas[x] = ga + (entering >>> 8 & 0xff00ff) - (leaving >>> 8 & 0xff00ff);
+        }
+    }
+}
+
+/**
+ * Blurs 8-bit RGBA in place with the three box blurs of {@link gaussianBlur}, on the pixels as 32-bit words: two
+ * channels per sum, rounded to 8 bits after each box (within a step of blurring floats, several times faster).
+ * Transparent images are premultiplied to 8 bits first: that rounds the color of pixels that are almost
+ * transparent, which only shows unpremultiplied (composited, they stay within half a step). Returns false (and
+ * does nothing) for radii the box approximation doesn't cover (below 2) or that don't fit the lanes
+ */
+export function boxBlurRGBA(bitmap: Uint8ClampedArray, width: number, height: number, sigma: number): boolean {
+    const sizes = boxSizes(sigma);
+    if (!(sigma >= 2) || Math.max(...sizes) > 257) return false;
+
+    let opaque = true;
+    for (let i = 3; i < bitmap.length; i += 4) if (bitmap[i] !== 255) {
+        opaque = false;
+        break;
+    }
+    if (!opaque) {
+        for (let i = 0; i < bitmap.length; i += 4) {
+            const a = bitmap[i + 3];
+            // x * a / 255, rounded
+            bitmap[i] = (bitmap[i] * a + 128) * 257 >> 16;
+            bitmap[i + 1] = (bitmap[i + 1] * a + 128) * 257 >> 16;
+            bitmap[i + 2] = (bitmap[i + 2] * a + 128) * 257 >> 16;
+        }
+    }
+
+    const pixels = new Int32Array(bitmap.buffer, bitmap.byteOffset, width * height);
+    const tmp = new Int32Array(pixels.length), rbs = new Int32Array(width), gas = new Int32Array(width);
+    for (const size of sizes) {
+        const radius = (size - 1) / 2;
+        if (radius < 1) continue;
+        const mult = Math.round(65536 / size);
+        for (let y = 0; y < height; y++) boxRowWords(pixels, tmp, y * width, width, radius, mult);
+        boxColumnsWords(tmp, pixels, width, height, radius, mult, rbs, gas);
+    }
+
+    if (!opaque) {
+        for (let i = 0; i < bitmap.length; i += 4) {
+            const a = bitmap[i + 3];
+            if (a === 0) {
+                bitmap[i] = bitmap[i + 1] = bitmap[i + 2] = 0;
+                continue;
+            }
+            // the clamped bitmap rounds and clamps
+            const f = 255 / a;
+            bitmap[i] *= f;
+            bitmap[i + 1] *= f;
+            bitmap[i + 2] *= f;
+        }
+    }
+    return true;
+}
+
 /**
  * Converts 8-bit RGBA to premultiplied floats
  */

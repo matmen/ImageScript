@@ -12,7 +12,7 @@ import { TextLayout } from './text-layout.ts';
 import { Metadata, resolveMetadata, pngText, exifData } from './metadata.ts';
 import { encode as utf8 } from './util/utf8.ts';
 import { resample, BOX, TRIANGLE, CUBIC } from './util/resample.ts';
-import { gaussianBlur, premultiply, unpremultiply } from './util/blur.ts';
+import { gaussianBlur, boxBlurRGBA, premultiply, unpremultiply } from './util/blur.ts';
 import { isOptions } from './util/options.ts';
 
 /** A color as a 32-bit RGBA integer (`0xRRGGBBAA`) */
@@ -1329,6 +1329,7 @@ export class Image {
         if (isNaN(radius) || radius < 0)
             throw new RangeError('Invalid blur radius');
 
+        if (boxBlurRGBA(this.bitmap, this.width, this.height, radius)) return this;
         const pixels = premultiply(this.bitmap);
         gaussianBlur(pixels, this.width, this.height, radius);
         unpremultiply(pixels, this.bitmap);

@@ -9,6 +9,10 @@
   images two channels share a multiplication. Results differ from 3.2.0 by at most 1 per channel (more only in the
   invisible color of pixels that are almost fully transparent).
 - `clone()` is about 50% faster.
+- `blur()` is about 2.4 times faster (1920×1080 photo: 86 instead of 205 ms): the three box blurs run on the pixels as
+  32-bit words, two channels per sum. Results differ from 3.2.0 by at most 1 per channel (2 for radii above 10).
+  Transparent images are blurred premultiplied in 8 bits, like browsers do: the color of pixels that are almost
+  transparent can differ more, what shows when they're composited stays within 2 steps.
 
 ### Fixes
 
