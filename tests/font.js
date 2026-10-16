@@ -3,7 +3,8 @@
  https://www.1001fonts.com/carbon-font.html
  https://www.1001fonts.com/ethnocentric-font.html
  https://github.com/adobe-fonts/source-sans (SIL OFL, see OFL-SourceSans3.md)
- https://github.com/googlefonts/noto-emoji (subset, SIL OFL, see OFL-NotoColorEmoji.md)
+ https://github.com/googlefonts/noto-emoji (subsets of Noto Color Emoji and Noto-COLRv1, SIL OFL, see OFL-NotoColorEmoji.md)
+ colrv1 paints.ttf is built by colrv1-paints.py
  https://github.com/mozilla/twemoji-colr (subset, CC-BY 4.0, see CC-BY-Twemoji.md)
  */
 
@@ -155,9 +156,10 @@ const panic = message => {
     }
 
     {
-        // color glyphs from fallback fonts: CBDT bitmaps (Noto Color Emoji) and COLR layers (Twemoji), emoji sequences
+        // color glyphs from fallback fonts: CBDT bitmaps (Noto Color Emoji), COLR layers (Twemoji) and paints (Noto-COLRv1),
+        // emoji sequences
         const sans = await fs.readFile('./tests/fonts/sourcesans3 regular.otf');
-        for (const [file, target] of [['noto color emoji subset.ttf', 'emoji-cbdt'], ['twemoji mozilla subset.ttf', 'emoji-colr']]) {
+        for (const [file, target] of [['noto color emoji subset.ttf', 'emoji-cbdt'], ['twemoji mozilla subset.ttf', 'emoji-colr'], ['noto colrv1 subset.ttf', 'emoji-colrv1']]) {
             const emoji = await fs.readFile(`./tests/fonts/${file}`);
             const image = await Image.renderText([sans, emoji], 48, 'Hi 😀🔥 👍🏽 🇩🇪 1️⃣ ❤️ 👨‍👩‍👧', {color: 0x000000ff});
             const encoded = await image.encode(1, {creationTime: 0, software: ''});
@@ -194,5 +196,24 @@ const panic = message => {
         // fonts with only bitmap glyphs render on their own
         const bitmapOnly = await Image.renderText(await fs.readFile('./tests/fonts/noto color emoji subset.ttf'), 32, '🔥');
         if (bitmapOnly.width < 20) panic('bitmap font should render on its own');
+    }
+
+    {
+        // every COLR version 1 paint feature: gradients, transforms, composite modes, the text color
+        const font = await fs.readFile('./tests/fonts/colrv1 paints.ttf');
+        const glyphs = Array.from({length: 17}, (_, k) => String.fromCodePoint(0xe000 + k)).join('');
+        const image = await Image.renderText(font, 48, glyphs, {color: 0x00aaaaff});
+        const encoded = await image.encode(1, {creationTime: 0, software: ''});
+        if (process.env.OVERWRITE_TEST)
+            await fs.writeFile('./tests/targets/colrv1-paints.png', encoded);
+        if (!await samePixels(await fs.readFile('./tests/targets/colrv1-paints.png'), encoded)) panic('colrv1-paints doesn\'t match');
+
+        // the linear gradient runs from red (left) to blue (right), the last glyph's square is in the text color
+        const linear = await Image.renderText(font, 100, '\ue000');
+        const [lr, , lb] = linear.getRGBAAt(Math.round(linear.width * 0.15), linear.height >> 1), [rr, , rb] = linear.getRGBAAt(Math.round(linear.width * 0.85), linear.height >> 1);
+        if (!(lr > 150 && lb < 100 && rb > 150 && rr < 100)) panic(`colrv1: linear gradient should go from red to blue (${lr},${lb} -> ${rr},${rb})`);
+        const foreground = await Image.renderText(font, 100, '\ue010', {color: 0x00aaaaff});
+        const [fr, fg, fb, fa] = foreground.getRGBAAt(Math.round(foreground.width * 0.12), foreground.height >> 1);
+        if (fr > 2 || Math.abs(fg - 0xaa) > 2 || Math.abs(fb - 0xaa) > 2 || fa < 253) panic(`colrv1: layers in the text color should take it (${fr},${fg},${fb},${fa})`);
     }
 })();
