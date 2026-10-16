@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.2.1
+
+### Performance
+
+- Resizing is 2-4 times faster for opaque images with bilinear and area resizing (halving a 1920×1080 photo: 15 instead
+  of 49 ms), and 20-40% faster otherwise: the arithmetic is integer, the vertical pass runs first, and for opaque
+  images two channels share a multiplication. Results differ from 3.2.0 by at most 1 per channel (more only in the
+  invisible color of pixels that are almost fully transparent).
+- `clone()` is about 50% faster.
+
+### Fixes
+
+- Enlarging with `RESIZE_AREA` left transparent rows and columns where a pixel's center fell right on the edge of the
+  filter.
+
 ## 3.2.0
 
 ### New
