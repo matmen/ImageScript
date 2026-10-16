@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.3.0
+
+### Features
+
+- `ResizeOptions.fast` (default `true`): opaque images resized with bilinear or area resizing (down to about a third of
+  the size, and enlarging) now round to 8 bits between the two passes as well, so both passes share their
+  multiplications between two channels. Halving a 1920×1080 photo takes 12 instead of 15 ms, doubling it 61 instead of
+  80 ms. About 10-25% of the channel values differ from 3.2.1, by at most 1. `fast: false` keeps the more precise results
+  of 3.2.1.
+
 ## 3.2.1
 
 ### Performance

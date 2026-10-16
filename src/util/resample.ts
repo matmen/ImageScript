@@ -37,7 +37,7 @@ interface Coefficients {
     taps: number;
 }
 
-function coefficients(inSize: number, outSize: number, filter: Filter, bits: number): Coefficients {
+function coefficients(inSize: number, outSize: number, filter: Filter, bits: number, pad = false): Coefficients {
     const scale = inSize / outSize;
     const filterScale = Math.max(1, scale);
     const support = filter.support * filterScale;
@@ -51,6 +51,8 @@ function coefficients(inSize: number, outSize: number, filter: Filter, bits: num
         maxs[i] = Math.min(inSize, Math.floor(center + support + 0.5));
         taps = Math.max(taps, maxs[i] - mins[i]);
     }
+    // padded to the unrolled counts (zero weights for the extra pixels)
+    if (pad) taps = Math.min(inSize, taps <= 2 ? 2 : taps <= 4 ? 4 : taps);
 
     // every output index gets `taps` weights, so the passes can unroll by the count: a shorter range starts earlier
     // (zero weights for the pixels before it) where it would read past the end
@@ -77,14 +79,17 @@ function coefficients(inSize: number, outSize: number, filter: Filter, bits: num
     return { start, weights, taps };
 }
 
+/** most taps per pass of the fast resampling */
+const FAST_TAPS = 4;
+
 const littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
 
 /**
  * Resamples RGBA pixels with the given filter, in premultiplied alpha so transparent pixels don't bleed their color
  */
-export function resample(src: Uint8ClampedArray, width: number, height: number, outWidth: number, outHeight: number, filter: Filter, out: Uint8ClampedArray): void {
+export function resample(src: Uint8ClampedArray, width: number, height: number, outWidth: number, outHeight: number, filter: Filter, out: Uint8ClampedArray, fast = false): void {
     // opaque pixels don't need premultiplying, and with non-negative weights two channels share a multiplication
-    if (littleEndian && filter.support <= 1 && resampleOpaque(src, width, height, outWidth, outHeight, filter, out)) return;
+    if (littleEndian && filter.support <= 1 && (fast ? resampleOpaqueFast : resampleOpaque)(src, width, height, outWidth, outHeight, filter, out)) return;
     resamplePremultiplied(src, width, height, outWidth, outHeight, filter, out);
 }
 
@@ -229,6 +234,102 @@ function resampleOpaque(src: Uint8ClampedArray, width: number, height: number, o
                 }
                 result[o] = (r + R >> S) | (g + R >> S) << 8 | (b + R >> S) << 16 | 0xff000000;
             }
+        }
+    }
+    return true;
+}
+
+// sums the words of `taps` pixels `step` apart with 8-bit weights, two channels per multiplication, and rounds them
+// back to an opaque pixel: the weights sum to 256, so a lane holds at most 255 * 256 plus the rounding
+function packed(pixels: Int32Array, s: number, step: number, weights: Int32Array, w: number, taps: number): number {
+    let rb = 0x800080, g = 128;
+    for (let k = 0; k < taps; k++, s += step) {
+        const p = pixels[s], wk = weights[w + k];
+        rb += Math.imul(p & 0xff00ff, wk);
+        g += (p >> 8 & 255) * wk;
+    }
+    return (rb >>> 8 & 0xff00ff) | (g & 0xff00) | 0xff000000;
+}
+
+/**
+ * Like {@link resampleOpaque}, but with 8-bit weights in both passes and 8-bit pixels between them, so two channels
+ * share every multiplication of both passes. More values end up a step off the exact result
+ */
+function resampleOpaqueFast(src: Uint8ClampedArray, width: number, height: number, outWidth: number, outHeight: number, filter: Filter, out: Uint8ClampedArray): boolean {
+    // the rounding error of 8-bit weights adds up with the taps
+    const vertical = coefficients(height, outHeight, filter, 8, true), horizontal = coefficients(width, outWidth, filter, 8, true);
+    if (vertical.taps > FAST_TAPS || horizontal.taps > FAST_TAPS) return resampleOpaque(src, width, height, outWidth, outHeight, filter, out);
+
+    const pixels = new Int32Array(src.buffer, src.byteOffset, width * height);
+    let all = -1;
+    for (let x = 0, last = (height - 1) * width; x < width; x++) all &= pixels[x] & pixels[last + x];
+    if (all >>> 24 !== 255) return false;
+
+    let rows = pixels;
+    if (outHeight === height) {
+        for (let i = 0; i < pixels.length; i++) all &= pixels[i];
+    } else {
+        rows = new Int32Array(width * outHeight);
+        const { start, weights, taps } = vertical;
+        for (let y = 0, o = 0; y < outHeight; y++) {
+            const w = y * taps, r0 = start[y] * width;
+            if (taps === 4) {
+                const w0 = weights[w], w1 = weights[w + 1], w2 = weights[w + 2], w3 = weights[w + 3];
+                const r1 = r0 + width, r2 = r1 + width, r3 = r2 + width;
+                for (let x = 0; x < width; x++, o++) {
+                    const p0 = pixels[r0 + x], p1 = pixels[r1 + x], p2 = pixels[r2 + x], p3 = pixels[r3 + x];
+                    all &= p0 & p1 & p2 & p3;
+                    const rb = Math.imul(p0 & 0xff00ff, w0) + Math.imul(p1 & 0xff00ff, w1) + Math.imul(p2 & 0xff00ff, w2) + Math.imul(p3 & 0xff00ff, w3) + 0x800080;
+                    const g = (p0 >> 8 & 255) * w0 + (p1 >> 8 & 255) * w1 + (p2 >> 8 & 255) * w2 + (p3 >> 8 & 255) * w3 + 128;
+                    rows[o] = (rb >>> 8 & 0xff00ff) | (g & 0xff00) | 0xff000000;
+                }
+            } else if (taps === 2) {
+                const w0 = weights[w], w1 = weights[w + 1], r1 = r0 + width;
+                for (let x = 0; x < width; x++, o++) {
+                    const p0 = pixels[r0 + x], p1 = pixels[r1 + x];
+                    all &= p0 & p1;
+                    const rb = Math.imul(p0 & 0xff00ff, w0) + Math.imul(p1 & 0xff00ff, w1) + 0x800080;
+                    const g = (p0 >> 8 & 255) * w0 + (p1 >> 8 & 255) * w1 + 128;
+                    rows[o] = (rb >>> 8 & 0xff00ff) | (g & 0xff00) | 0xff000000;
+                }
+            } else {
+                for (let x = 0; x < width; x++, o++) {
+                    for (let k = 0, s = r0 + x; k < taps; k++, s += width) all &= pixels[s];
+                    rows[o] = packed(pixels, r0 + x, width, weights, w, taps);
+                }
+            }
+        }
+    }
+    if (all >>> 24 !== 255) return false;
+
+    const result = new Int32Array(out.buffer, out.byteOffset, outWidth * outHeight);
+    if (outWidth === width) {
+        result.set(rows);
+        return true;
+    }
+
+    const { start, weights, taps } = horizontal;
+    for (let y = 0, o = 0; y < outHeight; y++) {
+        const row = y * width;
+        if (taps === 4) {
+            for (let x = 0; x < outWidth; x++, o++) {
+                const s = row + start[x], w = x * 4;
+                const p0 = rows[s], p1 = rows[s + 1], p2 = rows[s + 2], p3 = rows[s + 3];
+                const w0 = weights[w], w1 = weights[w + 1], w2 = weights[w + 2], w3 = weights[w + 3];
+                const rb = Math.imul(p0 & 0xff00ff, w0) + Math.imul(p1 & 0xff00ff, w1) + Math.imul(p2 & 0xff00ff, w2) + Math.imul(p3 & 0xff00ff, w3) + 0x800080;
+                const g = (p0 >> 8 & 255) * w0 + (p1 >> 8 & 255) * w1 + (p2 >> 8 & 255) * w2 + (p3 >> 8 & 255) * w3 + 128;
+                result[o] = (rb >>> 8 & 0xff00ff) | (g & 0xff00) | 0xff000000;
+            }
+        } else if (taps === 2) {
+            for (let x = 0; x < outWidth; x++, o++) {
+                const s = row + start[x], w = x * 2;
+                const p0 = rows[s], p1 = rows[s + 1], w0 = weights[w], w1 = weights[w + 1];
+                const rb = Math.imul(p0 & 0xff00ff, w0) + Math.imul(p1 & 0xff00ff, w1) + 0x800080;
+                const g = (p0 >> 8 & 255) * w0 + (p1 >> 8 & 255) * w1 + 128;
+                result[o] = (rb >>> 8 & 0xff00ff) | (g & 0xff00) | 0xff000000;
+            }
+        } else {
+            for (let x = 0; x < outWidth; x++, o++) result[o] = packed(rows, row + start[x], 1, weights, x * taps, taps);
         }
     }
     return true;
