@@ -155,11 +155,11 @@ const panic = message => {
     }
 
     {
-        // color glyphs from fallback fonts: CBDT bitmaps (Noto Color Emoji) and COLR layers (Twemoji)
+        // color glyphs from fallback fonts: CBDT bitmaps (Noto Color Emoji) and COLR layers (Twemoji), emoji sequences
         const sans = await fs.readFile('./tests/fonts/sourcesans3 regular.otf');
         for (const [file, target] of [['noto color emoji subset.ttf', 'emoji-cbdt'], ['twemoji mozilla subset.ttf', 'emoji-colr']]) {
             const emoji = await fs.readFile(`./tests/fonts/${file}`);
-            const image = await Image.renderText([sans, emoji], 48, 'Hi 😀🔥 👍', {color: 0x000000ff});
+            const image = await Image.renderText([sans, emoji], 48, 'Hi 😀🔥 👍🏽 🇩🇪 1️⃣ ❤️ 👨‍👩‍👧', {color: 0x000000ff});
             const encoded = await image.encode(1, {creationTime: 0, software: ''});
             if (process.env.OVERWRITE_TEST)
                 await fs.writeFile(`./tests/targets/${target}.png`, encoded);
@@ -173,6 +173,17 @@ const panic = message => {
             // joiners and variation selectors take no room, even where the font has glyphs for them
             const plain = await Image.renderText([sans, emoji], 48, '😀😀'), joined = await Image.renderText([sans, emoji], 48, '😀\u200d\ufe0f😀');
             if (plain.width !== joined.width) panic(`${file}: invisible characters should take no room (${plain.width} vs ${joined.width})`);
+
+            // sequences are one glyph (GSUB ligatures): skin tones, flags, keycaps, joined ones
+            const one = (await Image.renderText(emoji, 48, '👍')).width;
+            for (const sequence of ['👍🏽', '🇩🇪', '1️⃣', '👨‍👩‍👧'])
+                if ((await Image.renderText([sans, emoji], 48, sequence)).width > one * 1.2) panic(`${file}: ${sequence} should be a single glyph`);
+
+            // the emoji variation selector picks the color glyph over the text font's heart
+            const heart = await Image.renderText([sans, emoji], 48, '❤️', {color: 0x000000ff});
+            let red = 0;
+            for (let i = 0; i < heart.bitmap.length; i += 4) if (heart.bitmap[i + 3] > 128 && heart.bitmap[i] > 150 && heart.bitmap[i + 1] < 100) red++;
+            if (red < 100) panic(`${file}: ❤️ should be the red emoji`);
 
             // characters the emoji font doesn't have come from the next font (the first one still sets the line height)
             const fallback = await Image.renderText([emoji, sans], 48, 'Hi'), direct = await Image.renderText(sans, 48, 'Hi');
