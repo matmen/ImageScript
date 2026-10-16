@@ -3,6 +3,8 @@
  https://www.1001fonts.com/carbon-font.html
  https://www.1001fonts.com/ethnocentric-font.html
  https://github.com/adobe-fonts/source-sans (SIL OFL, see OFL-SourceSans3.md)
+ https://github.com/googlefonts/noto-emoji (subset, SIL OFL, see OFL-NotoColorEmoji.md)
+ https://github.com/mozilla/twemoji-colr (subset, CC-BY 4.0, see CC-BY-Twemoji.md)
  */
 
 const fs = require('fs').promises;
@@ -150,5 +152,36 @@ const panic = message => {
             const off = await Image.renderText(font, 11, 'Hamburg', 0x000000ff, undefined, {hinting: false});
             if (!Buffer.from(on.bitmap).equals(Buffer.from(off.bitmap))) panic(`hinting: ${file} has no instructions and should render unchanged`);
         }
+    }
+
+    {
+        // color glyphs from fallback fonts: CBDT bitmaps (Noto Color Emoji) and COLR layers (Twemoji)
+        const sans = await fs.readFile('./tests/fonts/sourcesans3 regular.otf');
+        for (const [file, target] of [['noto color emoji subset.ttf', 'emoji-cbdt'], ['twemoji mozilla subset.ttf', 'emoji-colr']]) {
+            const emoji = await fs.readFile(`./tests/fonts/${file}`);
+            const image = await Image.renderText([sans, emoji], 48, 'Hi 😀🔥 👍', {color: 0x000000ff});
+            const encoded = await image.encode(1, {creationTime: 0, software: ''});
+            if (process.env.OVERWRITE_TEST)
+                await fs.writeFile(`./tests/targets/${target}.png`, encoded);
+            if (!await samePixels(await fs.readFile(`./tests/targets/${target}.png`), encoded)) panic(`${target} doesn't match`);
+
+            // black text, so colored pixels come from the emoji
+            let colored = 0;
+            for (let i = 0; i < image.bitmap.length; i += 4) if (image.bitmap[i + 3] > 128 && image.bitmap[i] > 128) colored++;
+            if (colored < 500) panic(`${file}: emoji should keep their colors`);
+
+            // joiners and variation selectors take no room, even where the font has glyphs for them
+            const plain = await Image.renderText([sans, emoji], 48, '😀😀'), joined = await Image.renderText([sans, emoji], 48, '😀\u200d\ufe0f😀');
+            if (plain.width !== joined.width) panic(`${file}: invisible characters should take no room (${plain.width} vs ${joined.width})`);
+
+            // characters the emoji font doesn't have come from the next font (the first one still sets the line height)
+            const fallback = await Image.renderText([emoji, sans], 48, 'Hi'), direct = await Image.renderText(sans, 48, 'Hi');
+            const ink = image => image.bitmap.reduce((sum, v, i) => (i & 3) === 3 ? sum + v : sum, 0);
+            if (fallback.width !== direct.width || ink(fallback) !== ink(direct)) panic(`${file}: missing characters should come from the next font`);
+        }
+
+        // fonts with only bitmap glyphs render on their own
+        const bitmapOnly = await Image.renderText(await fs.readFile('./tests/fonts/noto color emoji subset.ttf'), 32, '🔥');
+        if (bitmapOnly.width < 20) panic('bitmap font should render on its own');
     }
 })();

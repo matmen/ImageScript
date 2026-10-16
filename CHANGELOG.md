@@ -17,6 +17,11 @@
   Rotating a 1920×1080 photo by 30° takes 51 instead of 119 ms (61 instead of 114 ms with alpha). Opaque pixels stay
   within 1 of 3.2.1 (0.5-2% of the values differ), what shows of translucent ones (also the faded edges) within
   about 2.5 steps. `fast: false` keeps the precise sampling.
+- `Image.renderText` takes several fonts by priority (`[text, emoji]`): every character comes from the first font that
+  has it, the first font sets the line height. Color glyphs keep their colors: COLR version 0 layers with CPAL
+  palettes (e.g. Twemoji) and CBDT/CBLC bitmaps (e.g. Noto Color Emoji, which now loads at all, it has no outlines).
+  Invisible characters like joiners and variation selectors take no room, as in browsers. Emoji sequences (skin tones,
+  flags, families) still show as their parts.
 
 ### Performance
 

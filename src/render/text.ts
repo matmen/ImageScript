@@ -5,6 +5,9 @@
 
 import { Font, PathCommand } from './font.ts';
 import { Hinter } from './hinting.ts';
+import { ColorLayer, BitmapGlyph, parseColorLayers, parseBitmaps } from './color.ts';
+import { decode as decodePNG } from '../codecs/png.ts';
+import { resample, TRIANGLE } from '../util/resample.ts';
 
 export interface Layout {
     maxWidth: number;
@@ -25,8 +28,28 @@ export interface GlyphBitmap {
     top: number;
 }
 
+/** a color glyph's premultiplied RGBA pixels, placed like a {@link GlyphBitmap} */
+interface ColorBitmap {
+    data: Uint8ClampedArray;
+    width: number;
+    height: number;
+    left: number;
+    top: number;
+}
+
+/** a font with what's derived from it for one size */
+interface SizedFont {
+    font: Font;
+    /** pixels per font unit */
+    scale: number;
+    hinter: Hinter | null;
+    layers: ((glyph: number) => ColorLayer[] | null) | null;
+    bitmaps: ((glyph: number) => BitmapGlyph | null) | null;
+}
+
 interface Glyph {
     index: number;
+    font: SizedFont;
     /** outline and its scale to pixels (1 for hinted outlines, which are in pixels) */
     path: PathCommand[];
     scale: number;
@@ -36,6 +59,10 @@ interface Glyph {
     ink: { left: number, right: number } | null;
     /** bitmaps per subpixel offset */
     bitmaps: Array<GlyphBitmap | null>;
+    /** the layers or the bitmap of color glyphs */
+    color: { layers: ColorLayer[] } | { bitmap: BitmapGlyph } | null;
+    /** color bitmaps per subpixel offset (bitmap glyphs only have the one for offset 0) */
+    colors: Array<ColorBitmap | null>;
 }
 
 interface Line {
@@ -63,53 +90,76 @@ function loadFont(data: Uint8Array): Font {
 
 /**
  * Lays out and rasterizes text
- * Lines start at ceil(ascender) and advance by ceil(ascender - descender + lineGap); glyphs are placed with
- * subpixel precision using their advance widths and the font's kerning; the canvas spans from the origin to the
- * furthest glyph edge
- * @param {Uint8Array} data TrueType/OpenType font
- * @param {number} size font size in pixels per em
- * @param {string} text
- * @param {Layout} layout
+ * Lines start at ceil(ascender) and advance by ceil(ascender - descender + lineGap) of the first font; every character
+ * comes from the first font that has a glyph for it. Glyphs are placed with subpixel precision using their advance
+ * widths and the font's kerning; the canvas spans from the origin to the furthest glyph edge
+ * @param fonts TrueType/OpenType fonts, by priority
+ * @param size font size in pixels per em
+ * @param text
+ * @param layout
  * @param hinting Whether to run TrueType fonts' hinting instructions, the glyphs of hinted fonts are then placed on
  *     whole pixels (fonts without instructions render as without hinting)
- * @return {{width: number, height: number, coverage: Uint8Array}}
+ * @param foreground RGBA color (0xrrggbbaa) of color glyph layers drawn in the text color
+ * @return the coverage of the outline glyphs, and the premultiplied RGBA pixels of color glyphs (null without any)
  */
-export function render(data: Uint8Array, size: number, text: string, layout: Layout, hinting = false): { width: number, height: number, coverage: Uint8Array } {
-    const font = loadFont(data);
-    const scale = size / font.unitsPerEm;
-    let hinter: Hinter | null = null;
-    if (hinting && font.outlines === 'glyf') {
-        hinter = hinters.get(font) ?? null;
-        if (!hinter) hinters.set(font, hinter = new Hinter(font));
-        if (!hinter.hasInstructions) hinter = null;
-    }
-    // whole pixel placement only makes sense for hinted outlines
-    hinting = hinter !== null;
-    const ascent = Math.ceil(font.ascender * scale);
-    const lineHeight = Math.ceil((font.ascender - font.descender + font.lineGap) * scale);
+export async function render(fonts: Uint8Array[], size: number, text: string, layout: Layout, hinting = false, foreground = 0xffffffff): Promise<{ width: number, height: number, coverage: Uint8Array, color: Uint8ClampedArray | null }> {
+    const sized: SizedFont[] = fonts.map(data => {
+        const font = loadFont(data);
+        let hinter: Hinter | null = null;
+        if (hinting && font.outlines === 'glyf') {
+            hinter = hinters.get(font) ?? null;
+            if (!hinter) hinters.set(font, hinter = new Hinter(font));
+            if (!hinter.hasInstructions) hinter = null;
+        }
+        return { font, scale: size / font.unitsPerEm, hinter, layers: parseColorLayers(font), bitmaps: parseBitmaps(font, size) };
+    });
+    const primary = sized[0];
+    const ascent = Math.ceil(primary.font.ascender * primary.scale);
+    const lineHeight = Math.ceil((primary.font.ascender - primary.font.descender + primary.font.lineGap) * primary.scale);
 
     const glyphs = new Map<number, Glyph>();
+    const make = (f: SizedFont, index: number): Glyph => {
+        const { font, scale, hinter } = f;
+        const bitmap = f.bitmaps?.(index) ?? null, layers = bitmap ? null : f.layers?.(index) ?? null;
+        // hinted glyphs go on whole pixels (it only makes sense for hinted outlines)
+        const advance = font.advance(index) * scale;
+        const g: Glyph = { index, font: f, path: [], scale, advance: hinter ? Math.round(advance) : advance, ink: null, bitmaps: [], color: null, colors: [] };
+        if (bitmap) {
+            const s = size / bitmap.ppem;
+            g.color = { bitmap };
+            g.ink = { left: bitmap.left * s, right: (bitmap.left + bitmap.width) * s };
+        } else if (layers) {
+            g.color = { layers };
+            g.ink = inkExtent(layers.flatMap(layer => font.outline(layer.glyph)), scale);
+        } else {
+            const hinted = hinter && hinter.glyph(index, size);
+            if (hinted) Object.assign(g, { path: hinted.path, scale: 1, advance: hinted.advance, ink: inkExtent(hinted.path, 1) });
+            else {
+                g.path = font.outline(index);
+                g.ink = inkExtent(g.path, scale);
+            }
+        }
+        return g;
+    };
     const glyph = (codepoint: number): Glyph => {
         let g = glyphs.get(codepoint);
         if (!g) {
-            const index = font.glyphIndex(codepoint);
-            const hinted = hinter && hinter.glyph(index, size);
-            if (hinted) g = { index, path: hinted.path, scale: 1, advance: hinted.advance, ink: inkExtent(hinted.path, 1), bitmaps: [] };
-            else {
-                const path = font.outline(index);
-                const advance = font.advance(index) * scale;
-                g = { index, path, scale, advance: hinting ? Math.round(advance) : advance, ink: inkExtent(path, scale), bitmaps: [] };
-            }
+            const f = sized.find(f => f.font.glyphIndex(codepoint));
+            // invisible characters (joiners, variation selectors, ...) show nothing even where fonts have glyphs for
+            // them (as HarfBuzz does), characters no font has show the first one's .notdef
+            if (defaultIgnorable(codepoint)) g = { index: 0, font: primary, path: [], scale: primary.scale, advance: 0, ink: null, bitmaps: [], color: null, colors: [] };
+            else g = f ? make(f, f.font.glyphIndex(codepoint)) : make(primary, 0);
             glyphs.set(codepoint, g);
         }
         return g;
     };
 
-    const kerning = font.kerning;
-    const kern = kerning ? (left: Glyph, right: Glyph): number => {
-        const k = kerning(left.index, right.index) * scale;
-        return hinting ? Math.round(k) : k;
-    } : () => 0;
+    const kern = (left: Glyph, right: Glyph): number => {
+        const kerning = left.font === right.font && left.font.font.kerning;
+        if (!kerning) return 0;
+        const k = kerning(left.index, right.index) * left.font.scale;
+        return left.font.hinter ? Math.round(k) : k;
+    };
     const lines = wrap(text, layout, glyph, kern);
 
     // lines that fit into maxHeight, chosen by the vertical alignment
@@ -126,28 +176,106 @@ export function render(data: Uint8Array, size: number, text: string, layout: Lay
     const width = Math.ceil(Math.max(0, ...visible.map(line => line.extent)));
     const height = visible.length * lineHeight;
     const coverage = new Uint8Array(width * height);
+    let color: Uint8ClampedArray | null = null;
 
-    visible.forEach((line, n) => {
+    for (const [n, line] of visible.entries()) {
         let offset = layout.horizontalAlign === 'right' ? width - line.extent
             : layout.horizontalAlign === 'center' ? (width - line.extent) / 2 : 0;
-        if (hinting) offset = Math.round(offset);
+        if (primary.hinter) offset = Math.round(offset);
         const baseline = ascent + n * lineHeight;
 
         for (const { x, glyph: g } of line.glyphs) {
             if (!g.ink) continue;
 
-            // whole pixels plus the closest subpixel offset
-            const position = Math.round((offset + x) * SUBPIXELS) / SUBPIXELS;
+            // whole pixels plus the closest subpixel offset (none for hinted glyphs)
+            const position = g.font.hinter ? Math.round(offset + x) : Math.round((offset + x) * SUBPIXELS) / SUBPIXELS;
             const pixel = Math.floor(position);
-            const subpixel = Math.round((position - pixel) * SUBPIXELS);
+            let subpixel = Math.round((position - pixel) * SUBPIXELS);
+
+            if (g.color) {
+                // bitmaps are placed on whole pixels
+                if ('bitmap' in g.color) subpixel = 0;
+                if (g.colors[subpixel] === undefined) g.colors[subpixel] = 'bitmap' in g.color
+                    ? await scaledBitmap(g.color.bitmap, size / g.color.bitmap.ppem)
+                    : layeredGlyph(g, g.color.layers, subpixel / SUBPIXELS, foreground);
+                const bitmap = g.colors[subpixel];
+                if (bitmap) blitColor(color ??= new Uint8ClampedArray(width * height * 4), width, height, bitmap, pixel + bitmap.left, baseline - bitmap.top);
+                continue;
+            }
 
             if (g.bitmaps[subpixel] === undefined) g.bitmaps[subpixel] = rasterizeGlyph(g.path, g.scale, subpixel / SUBPIXELS);
             const bitmap = g.bitmaps[subpixel];
             if (bitmap) blit(coverage, width, height, bitmap, pixel + bitmap.left, baseline - bitmap.top);
         }
-    });
+    }
 
-    return { width, height, coverage };
+    return { width, height, coverage, color };
+}
+
+// default ignorable code points (Unicode's DerivedCoreProperties), which render as nothing
+const IGNORABLE = [0xad, 0xad, 0x34f, 0x34f, 0x61c, 0x61c, 0x115f, 0x1160, 0x17b4, 0x17b5, 0x180b, 0x180f, 0x200b, 0x200f, 0x202a, 0x202e,
+    0x2060, 0x206f, 0x3164, 0x3164, 0xfe00, 0xfe0f, 0xfeff, 0xfeff, 0xffa0, 0xffa0, 0xfff0, 0xfff8, 0x1bca0, 0x1bca3, 0x1d173, 0x1d17a,
+    0xe0000, 0xe0fff];
+function defaultIgnorable(codepoint: number): boolean {
+    for (let i = 0; i < IGNORABLE.length; i += 2) if (codepoint >= IGNORABLE[i] && codepoint <= IGNORABLE[i + 1]) return true;
+    return false;
+}
+
+// a bitmap glyph's PNG decoded and scaled from its strike to the font size, premultiplied
+async function scaledBitmap(glyph: BitmapGlyph, scale: number): Promise<ColorBitmap | null> {
+    let decoded;
+    try {
+        decoded = await decodePNG(glyph.png);
+    } catch {
+        return null;
+    }
+    const width = Math.max(1, Math.round(decoded.width * scale)), height = Math.max(1, Math.round(decoded.height * scale));
+    const data = new Uint8ClampedArray(width * height * 4);
+    resample(new Uint8ClampedArray(decoded.pixels.buffer, decoded.pixels.byteOffset, decoded.pixels.length), decoded.width, decoded.height, width, height, TRIANGLE, data, true);
+    premultiply(data);
+    return { data, width, height, left: Math.round(glyph.left * scale), top: Math.round(glyph.top * scale) };
+}
+
+// a layered color glyph: every layer's outline filled with its color over the ones below, premultiplied
+function layeredGlyph(g: Glyph, layers: ColorLayer[], offset: number, foreground: number): ColorBitmap | null {
+    const rasters = layers.map(layer => ({ bitmap: rasterizeGlyph(g.font.font.outline(layer.glyph), g.scale, offset), color: layer.color ?? foreground }));
+    let left = Infinity, top = -Infinity, right = -Infinity, bottom = Infinity;
+    for (const { bitmap } of rasters) if (bitmap) {
+        left = Math.min(left, bitmap.left);
+        top = Math.max(top, bitmap.top);
+        right = Math.max(right, bitmap.left + bitmap.width);
+        bottom = Math.min(bottom, bitmap.top - bitmap.height);
+    }
+    if (right <= left) return null;
+
+    const width = right - left, height = top - bottom;
+    const data = new Uint8ClampedArray(width * height * 4);
+    for (const { bitmap, color } of rasters) {
+        if (!bitmap) continue;
+        const r = color >>> 24, gr = color >> 16 & 255, b = color >> 8 & 255, a = color & 255;
+        for (let y = 0; y < bitmap.height; y++)
+            for (let x = 0; x < bitmap.width; x++) {
+                const coverage = bitmap.data[y * bitmap.width + x];
+                if (!coverage) continue;
+                const o = ((top - bitmap.top + y) * width + bitmap.left - left + x) * 4;
+                // source over, premultiplied
+                const sa = coverage * a / 255, keep = 1 - sa / 255;
+                data[o] = r * sa / 255 + data[o] * keep;
+                data[o + 1] = gr * sa / 255 + data[o + 1] * keep;
+                data[o + 2] = b * sa / 255 + data[o + 2] * keep;
+                data[o + 3] = sa + data[o + 3] * keep;
+            }
+    }
+    return { data, width, height, left, top };
+}
+
+function premultiply(rgba: Uint8ClampedArray): void {
+    for (let i = 0; i < rgba.length; i += 4) {
+        const a = rgba[i + 3] / 255;
+        rgba[i] *= a;
+        rgba[i + 1] *= a;
+        rgba[i + 2] *= a;
+    }
 }
 
 // horizontal ink extent of an outline in pixels
@@ -240,6 +368,27 @@ function blit(target: Uint8Array, width: number, height: number, bitmap: GlyphBi
                 const o = ty * width + tx;
                 target[o] = Math.min(255, target[o] + v);
             }
+        }
+    }
+}
+
+// draws premultiplied RGBA over the target (premultiplied RGBA as well)
+function blitColor(target: Uint8ClampedArray, width: number, height: number, bitmap: ColorBitmap, x0: number, y0: number): void {
+    for (let y = 0; y < bitmap.height; y++) {
+        const ty = y0 + y;
+        if (ty < 0 || ty >= height) continue;
+
+        for (let x = 0; x < bitmap.width; x++) {
+            const tx = x0 + x;
+            if (tx < 0 || tx >= width) continue;
+
+            const s = (y * bitmap.width + x) * 4, sa = bitmap.data[s + 3];
+            if (!sa) continue;
+            const o = (ty * width + tx) * 4, keep = 1 - sa / 255;
+            target[o] = bitmap.data[s] + target[o] * keep;
+            target[o + 1] = bitmap.data[s + 1] + target[o + 1] * keep;
+            target[o + 2] = bitmap.data[s + 2] + target[o + 2] * keep;
+            target[o + 3] = sa + target[o + 3] * keep;
         }
     }
 }
