@@ -71,6 +71,10 @@
   of the image).
 - `blur` and `sharpen` hung with an infinite radius, they throw a RangeError now; huge finite radii take as long as
   small ones (`blur(1e9)` took minutes).
+- `Image.renderSVG` against denial of service: elements rendered through `<use>` references multiplying each other
+  ("billion laughs", a billion rectangles from a 1 kB file) are limited to 100,000 (like librsvg), dash patterns of
+  more than a million dashes stroke solid (like Skia) instead of taking any amount of memory, and arbitrarily deep
+  nesting no longer overflows the stack.
 
 ## 3.2.1
 

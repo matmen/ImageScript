@@ -47,6 +47,8 @@ interface Context {
     viewport: Viewport;
     layer: Layer;
     depth: number;
+    /** set within the elements a <use> references */
+    instanced?: boolean;
 }
 
 interface Paint {
@@ -413,7 +415,13 @@ function validProperty(name: string, value: string): boolean {
 // document & rendering
 // ---------------------------------------------------------------------------
 
+// the most elements to render through <use> references (like librsvg's limit), and dashes of a path
+const MAX_INSTANCES = 100000;
+const MAX_DASHES = 1000000;
+
 class Document {
+    /** elements rendered through <use> references so far */
+    instances: number;
     ids: Map<string, XNode>;
     active: Set<XNode>;
     root: XNode;
@@ -422,17 +430,20 @@ class Document {
     constructor(root: XNode) {
         this.ids = new Map();
         this.active = new Set(); // clip paths and masks being rendered, to break reference cycles
+        this.instances = 0;
         const styles: string[] = [];
 
-        const walk = (node: XNode): void => {
+        // in document order, with a stack instead of recursion (documents can nest elements arbitrarily deep)
+        const stack = [root];
+        while (stack.length) {
+            const node = stack.pop() as XNode;
             if (node.attrs.id && !this.ids.has(node.attrs.id)) this.ids.set(node.attrs.id, node);
             if (node.name === 'style' && node.svg && (!node.attrs.type || node.attrs.type === 'text/css')) styles.push(node.text);
-            for (const child of node.children) {
-                child.parent = node;
-                walk(child);
+            for (let i = node.children.length - 1; i >= 0; i--) {
+                node.children[i].parent = node;
+                stack.push(node.children[i]);
             }
-        };
-        walk(root);
+        }
 
         this.root = root;
         this.rules = parseStyleSheet(styles.join('\n'));
@@ -507,6 +518,8 @@ class Document {
 
     renderNode(node: XNode, context: Context, root = false): void {
         if (!node.svg || UNSUPPORTED.has(node.name) || context.depth > 32 || !this.passesConditions(node)) return;
+        // <use> references can multiply each other ("billion laughs"): their elements are counted
+        if (context.instanced && ++this.instances > MAX_INSTANCES) throw new Error(`SVG: more than ${MAX_INSTANCES} elements rendered through <use> references`);
 
         const style = this.computeStyle(node, context.style);
         if (style.display === 'none') return;
@@ -620,7 +633,7 @@ class Document {
             const inner = viewBox ? multiply(outer, viewBoxTransform(viewBox, width, height, target.attrs.preserveAspectRatio)) : outer;
 
             const opacity = clamp01(parseNumber(style.opacity, 1));
-            const innerContext = { ...ctx, matrix: inner, style, viewport: viewBox ? { width: viewBox[2], height: viewBox[3] } : { width, height } };
+            const innerContext = { ...ctx, matrix: inner, style, viewport: viewBox ? { width: viewBox[2], height: viewBox[3] } : { width, height }, instanced: true };
             const draw = (layer: Layer): void => /^(visible|auto)$/.test(target.attrs.overflow || '')
                 ? this.renderChildren(target, { ...innerContext, layer })
                 : this.clipped({ ...ctx, matrix: outer, layer }, 0, 0, width, height, inner => this.renderChildren(target, { ...innerContext, layer: inner }));
@@ -635,7 +648,7 @@ class Document {
         // render the referenced element as if it were a child of the use element
         const computed = target.computed, computedParent = target.computedParent;
         target.computed = null;
-        this.renderNode(target, { ...ctx, matrix });
+        this.renderNode(target, { ...ctx, matrix, instanced: true });
         target.computed = computed;
         target.computedParent = computedParent;
     }
@@ -1569,6 +1582,14 @@ function transformPoints(points: number[], m: Matrix): number[] {
 function dash(subpaths: Subpath[], pattern: number[], offset: number): Subpath[] {
     const total = pattern.reduce((a, b) => a + b, 0);
     const result: Subpath[] = [];
+
+    // too many dashes stroke the path solid, as Skia does (they'd take any amount of memory)
+    let length = 0;
+    for (const { points, closed } of subpaths) {
+        const pts = closed ? [...points, points[0], points[1]] : points;
+        for (let i = 0; i + 3 < pts.length; i += 2) length += Math.hypot(pts[i + 2] - pts[i], pts[i + 3] - pts[i + 1]);
+    }
+    if (!(length / total * pattern.length <= MAX_DASHES)) return subpaths;
 
     for (const { points, closed } of subpaths) {
         const pts = closed ? [...points, points[0], points[1]] : points;
