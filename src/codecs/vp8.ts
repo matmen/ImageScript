@@ -4,6 +4,7 @@
  * 2010 Google Inc., BSD license), so the output matches libwebp exactly. See THIRD_PARTY_NOTICES.md
  */
 import { KF_BMODE_PROBS, COEFF_UPDATE_PROBS, DEFAULT_COEFF_PROBS, DC_QLOOKUP, AC_QLOOKUP, PCAT } from './vp8-tables.ts';
+import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 
 /**
  * Boolean entropy decoder, RFC 6386 section 7
@@ -215,9 +216,10 @@ const clamp255 = (v: number): number => v < 0 ? 0 : v > 255 ? 255 : v;
 /**
  * Decodes a VP8 key frame (the payload of a VP8 chunk) into RGBA
  */
-export function decode(data: Uint8Array): { width: number, height: number, pixels: Uint8Array } {
+export function decode(data: Uint8Array, maxPixels = MAX_PIXELS): { width: number, height: number, pixels: Uint8Array } {
     const { header: h, first: d } = readHeader(data);
     const { width, height } = h;
+    checkPixels(width, height, maxPixels);
     const mbw = (width + 15) >> 4, mbh = (height + 15) >> 4;
 
     // planes with a one pixel border on the top and left (127 above, 129 to the left, as the spec defines)

@@ -21,16 +21,21 @@ function boxPass(src: Float32Array, dst: Float32Array, count: number, length: nu
     for (let line = 0; line < count; line++) {
         const base = line * lineStride;
         const first = base, end = base + last;
-        let r = 0, g = 0, b = 0, a = 0;
-
-        // window around the first value, repeating the edge values
-        for (let k = -radius; k <= radius; k++) {
-            const o = k < 0 ? first : Math.min(end, base + k * step);
+        // window around the first value, repeating the edge values: the first value radius + 1 times, the next ones,
+        // and the last one for what the window reaches past the end (so the cost doesn't depend on the radius)
+        let r = (radius + 1) * src[first], g = (radius + 1) * src[first + 1], b = (radius + 1) * src[first + 2], a = (radius + 1) * src[first + 3];
+        const inside = Math.min(radius, length - 1);
+        for (let k = 1, o = base + step; k <= inside; k++, o += step) {
             r += src[o];
             g += src[o + 1];
             b += src[o + 2];
             a += src[o + 3];
         }
+        const beyond = radius - inside;
+        r += beyond * src[end];
+        g += beyond * src[end + 1];
+        b += beyond * src[end + 2];
+        a += beyond * src[end + 3];
 
         for (let i = 0, o = base; i < length; i++, o += step) {
             dst[o] = r * scale;
@@ -55,8 +60,11 @@ function boxPassRows(src: Float32Array, dst: Float32Array, width: number, height
     const sum = new Float64Array(stride);
     const row = (y: number): number => (y < 0 ? 0 : y >= height ? height - 1 : y) * stride;
 
-    for (let k = -radius; k <= radius; k++) {
-        const o = row(k);
+    // the window around the first row (see boxPass)
+    const inside = Math.min(radius, height - 1), last = (height - 1) * stride;
+    for (let x = 0; x < stride; x++) sum[x] = (radius + 1) * src[x] + (radius - inside) * src[last + x];
+    for (let k = 1; k <= inside; k++) {
+        const o = k * stride;
         for (let x = 0; x < stride; x++) sum[x] += src[o + x];
     }
 

@@ -1,4 +1,5 @@
 import { crc32 } from './crc.ts';
+import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { concat } from '../util/mem.ts';
 import { encode as utf8, decode as utf8Decode } from '../util/utf8.ts';
 import { orientation as exifOrientation, xmpOrientation } from './exif.ts';
@@ -559,7 +560,7 @@ async function decodeImageData(p: Parsed, chunks: Uint8Array[], width: number, h
 
         const rowBytes = Math.ceil(pw * bitsPerPixel / 8);
         const size = ph * rowBytes;
-        const pixels = unfilter(data, dataOffset, ph, rowBytes, bpp);
+        const pixels = unfilter(data, dataOffset, ph, rowBytes, bpp, !interlace);
         dataOffset += size + ph;
 
         toRGBA(pixels, rowBytes, pw, ph, rgba, { row: y => ((ys + y * dy) * width + xs) * 4, step: dx * 4 });
@@ -574,9 +575,10 @@ async function decodeImageData(p: Parsed, chunks: Uint8Array[], width: number, h
  * The orientation comes from the eXIf chunk, or, if there is none, from the Exif text ImageMagick wrote before eXIf
  * existed ("Raw profile type exif") or from the XMP packet
  */
-export async function decode(array: Uint8Array): Promise<Decoded> {
+export async function decode(array: Uint8Array, maxPixels = MAX_PIXELS): Promise<Decoded> {
     const p = parse(array);
     const { width, height } = p.header;
+    checkPixels(width, height, maxPixels);
     const pixels = await decodeImageData(p, p.idat, width, height);
     return { width, height, pixels, orientation: p.exif ? exifOrientation(p.exif) : await textOrientation(p.text) };
 }
@@ -610,9 +612,11 @@ export function isAnimated(array: Uint8Array): boolean {
  * a single frame
  * @return plays: 0 = forever
  */
-export async function decodeAnimation(array: Uint8Array, onlyFirstFrame = false): Promise<{ width: number, height: number, plays: number, frames: APNGFrame[] }> {
+export async function decodeAnimation(array: Uint8Array, onlyFirstFrame = false, maxPixels = MAX_PIXELS): Promise<{ width: number, height: number, plays: number, frames: APNGFrame[] }> {
     const p = parse(array);
     const { width, height } = p.header;
+    // every frame is composited onto a canvas of its own
+    checkPixels(width, height, maxPixels, !p.animation || p.animationError || onlyFirstFrame ? 1 : Math.max(1, p.frames.length));
 
     // broken animations show the default image, like browsers do
     if (!p.animation || p.animationError) {
@@ -647,18 +651,29 @@ export function compositeAnimation({ width, height, frames }: { width: number, h
     for (const f of frames) {
         const previous = f.dispose === 2 ? canvas.slice() : null;
 
-        for (let y = 0; y < f.height; y++)
+        for (let y = 0; y < f.height; y++) {
+            // replacing: whole rows
+            if (f.blend === 0) {
+                canvas.set(f.pixels.subarray(y * f.width * 4, (y + 1) * f.width * 4), ((f.y + y) * width + f.x) * 4);
+                continue;
+            }
             for (let x = 0; x < f.width; x++) {
                 const s = (y * f.width + x) * 4, d = ((f.y + y) * width + f.x + x) * 4;
                 const sa = f.pixels[s + 3], da = canvas[d + 3];
-                if (f.blend === 0 || sa === 255 || da === 0) {
-                    if (f.blend === 0 || sa !== 0) canvas.set(f.pixels.subarray(s, s + 4), d);
+                if (sa === 255 || da === 0) {
+                    if (sa !== 0) {
+                        canvas[d] = f.pixels[s];
+                        canvas[d + 1] = f.pixels[s + 1];
+                        canvas[d + 2] = f.pixels[s + 2];
+                        canvas[d + 3] = sa;
+                    }
                 } else if (sa !== 0) {
                     const u = sa * 255, v = (255 - sa) * da, al = u + v;
                     for (let c = 0; c < 3; c++) canvas[d + c] = (f.pixels[s + c] * u + canvas[d + c] * v) / al | 0;
                     canvas[d + 3] = al / 255 | 0;
                 }
             }
+        }
 
         output.push({ pixels: canvas.slice(), duration: f.duration });
 
@@ -718,8 +733,10 @@ function hexProfile(text: string): Uint8Array {
     return out;
 }
 
-function unfilter(data: Uint8Array, offset: number, height: number, rowBytes: number, bpp: number): Uint8Array {
-    const out = new Uint8Array(height * rowBytes);
+// undoes the row filters; in place writes the rows over the data itself (every row ends up before where its data was,
+// and the data is read ahead of what's written)
+function unfilter(data: Uint8Array, offset: number, height: number, rowBytes: number, bpp: number, inPlace = false): Uint8Array {
+    const out = inPlace ? data.subarray(offset, offset + height * rowBytes) : new Uint8Array(height * rowBytes);
     const first = Math.min(bpp, rowBytes);
 
     // the first row and the first pixel of every row have zero neighbours, those are handled by separate loops

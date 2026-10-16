@@ -28,6 +28,8 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   - WebPs (lossy, lossless and with alpha; bit-exact with libwebp)
   - TGAs (color mapped, truecolor and greyscale; uncompressed and run length encoded)
   - JPEGs, TIFFs, PNGs and WebPs are rotated as their Exif (or, for PNGs, XMP) orientation says
+  - images larger than 268 megapixels (`maxPixels`) are rejected before decoding, so small files declaring huge images
+    can't exhaust the memory
 - [Decoding animations](https://imagescript.matmen.dev/classes/Animation.html#decode) (GIF, APNG and WebP) with all
   frames, durations and disposal modes
 - [Rendering SVGs](https://imagescript.matmen.dev/classes/Image.html#rendersvg) (shapes, paths, gradients, strokes, clip paths,

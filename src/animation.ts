@@ -8,13 +8,14 @@ import { ImageType } from './image-type.ts';
 import { optimize, OptimizeOptions, OptimizedFrame } from './util/optimize.ts';
 import { Metadata, resolveMetadata, pngText, exifData, gifComments } from './metadata.ts';
 import { isOptions } from './util/options.ts';
+import { MAX_PIXELS, decoding } from './util/limits.ts';
 
 // loop counts: ImageScript (like GIF) counts repetitions (-1 forever, 0 play once), APNG and WebP count plays (0 forever)
 const toPlays = (loopCount: number): number => loopCount < 0 ? 0 : loopCount + 1;
 const fromPlays = (plays: number): number => plays === 0 ? -1 : plays - 1;
 
 // frames decoded fully composited, as full canvas frames
-function canvasFrames(width: number, height: number, frames: Array<{ pixels: Uint8Array, duration: number }>): Frame[] {
+function canvasFrames(width: number, height: number, frames: Array<{ pixels: Uint8Array | Uint8ClampedArray, duration: number }>): Frame[] {
     return frames.map(({ pixels, duration }) => {
         const frame = new Frame(width, height, duration, 0, 0, Frame.DISPOSAL_BACKGROUND);
         // the composited frames are copies already, the frame can keep them
@@ -33,6 +34,12 @@ export interface AnimationOptions {
 export interface AnimationDecodeOptions {
     /** Whether to stop decoding after the first frame. Default: `false` */
     onlyFirstFrame?: boolean;
+    /**
+     * The most pixels to decode, of all frames together (every frame is a full canvas): larger animations throw a
+     * RangeError before anything that size is allocated, so small files declaring huge animations (decompression
+     * bombs) can't exhaust the memory. Default: `268402689` (16383², like sharp), `Infinity` for no limit
+     */
+    maxPixels?: number;
 }
 
 /** Options of {@link Animation.encodeWebP}, and those all animation encoders have */
@@ -330,31 +337,46 @@ export class Animation extends Array<Frame> {
      */
     static decode(input: BinaryData, onlyExtractFirstFrame?: boolean): Promise<Animation>;
     static async decode(input: BinaryData, onlyFirstFrameOrOptions: boolean | AnimationDecodeOptions = false): Promise<Animation> {
-        const onlyExtractFirstFrame = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions.onlyFirstFrame ?? false : onlyFirstFrameOrOptions;
+        return decoding(() => Animation.__decode__(input, onlyFirstFrameOrOptions));
+    }
+
+    /** @internal */
+    private static async __decode__(input: BinaryData, onlyFirstFrameOrOptions: boolean | AnimationDecodeOptions): Promise<Animation> {
+        const { onlyFirstFrame: onlyExtractFirstFrame = false, maxPixels = MAX_PIXELS } = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions : { onlyFirstFrame: onlyFirstFrameOrOptions };
         const data = view(input);
         const type = ImageType.getType(data);
 
-        if (type === 'gif') return Animation.__fromGIF__(data, onlyExtractFirstFrame, Animation);
+        if (type === 'gif') return Animation.__fromGIF__(data, onlyExtractFirstFrame, Animation, maxPixels);
 
         if (type === 'webp') {
-            const decoded = webp.decodeAnimation(data, onlyExtractFirstFrame);
+            const decoded = webp.decodeAnimation(data, onlyExtractFirstFrame, maxPixels);
             const frames = canvasFrames(decoded.width, decoded.height, webp.composite(decoded));
             return new Animation(frames, fromPlays(decoded.loopCount));
         }
 
+        // (still PNGs decode like images, keeping their orientation as it is like before)
+        if (type === 'png' && !png.isAnimated(data)) {
+            const image = await Image.decode(data, { maxPixels, applyOrientation: false });
+            return new Animation(canvasFrames(image.width, image.height, [{ pixels: image.bitmap, duration: 0 }]), -1);
+        }
         if (type === 'png') {
-            const decoded = await png.decodeAnimation(data, onlyExtractFirstFrame);
+            const decoded = await png.decodeAnimation(data, onlyExtractFirstFrame, maxPixels);
             const frames = canvasFrames(decoded.width, decoded.height, png.compositeAnimation(decoded));
             return new Animation(frames, decoded.frames.length > 1 ? fromPlays(decoded.plays) : -1);
         }
 
-        if (type) return new Animation([Frame.from(await Image.decode(data), 0)]);
+        if (type) return new Animation([Frame.from(await Image.decode(data, { maxPixels }), 0)]);
         throw new Error('Unsupported image type');
     }
 
     /** @internal */
-    static __fromGIF__<T extends Animation>(data: Uint8Array, onlyExtractFirstFrame: boolean, Class: new (frames: Frame[], loopCount: number) => T): T {
-        const decoded = gifCodec.decode(data, onlyExtractFirstFrame);
+    static __fromGIF__<T extends Animation>(data: Uint8Array, onlyExtractFirstFrame: boolean, Class: new (frames: Frame[], loopCount: number) => T, maxPixels = MAX_PIXELS): Promise<T> {
+        return decoding(() => Animation.__gifFrames__(data, onlyExtractFirstFrame, Class, maxPixels));
+    }
+
+    /** @internal */
+    private static __gifFrames__<T extends Animation>(data: Uint8Array, onlyExtractFirstFrame: boolean, Class: new (frames: Frame[], loopCount: number) => T, maxPixels: number): T {
+        const decoded = gifCodec.decode(data, onlyExtractFirstFrame, maxPixels);
         const frames = gifCodec.composite(decoded).map(({ pixels, delay }) => ({ pixels, duration: 10 * delay }));
         return new Class(canvasFrames(decoded.width, decoded.height, frames), decoded.loopCount);
     }

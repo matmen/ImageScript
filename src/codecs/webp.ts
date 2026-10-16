@@ -7,6 +7,7 @@
 import * as vp8l from './vp8l.ts';
 import * as vp8 from './vp8.ts';
 import { orientation as exifOrientation } from './exif.ts';
+import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 
 const fourCC = (s: string): number => s.charCodeAt(0) | s.charCodeAt(1) << 8 | s.charCodeAt(2) << 16 | s.charCodeAt(3) << 24;
 const RIFF = fourCC('RIFF'), WEBP = fourCC('WEBP');
@@ -71,12 +72,12 @@ const u24 = (d: Uint8Array, o: number): number => d[o] | d[o + 1] << 8 | d[o + 2
 /**
  * Decodes a frame's image data: a VP8L chunk, or a VP8 chunk with an optional ALPH chunk before it
  */
-function decodeBitstream(list: Chunk[]): { width: number, height: number, pixels: Uint8Array } {
+function decodeBitstream(list: Chunk[], maxPixels: number): { width: number, height: number, pixels: Uint8Array } {
     let alpha: Chunk | null = null;
     for (const chunk of list) {
         if (chunk.type === ALPH) alpha ??= chunk;
         else if (chunk.type === VP8L) {
-            const { width, height, argb } = vp8l.decode(chunk.data);
+            const { width, height, argb } = vp8l.decode(chunk.data, maxPixels);
             // ARGB -> RGBA in memory, one 32-bit word per pixel (written little endian, the byte order doesn't matter)
             const pixels = new Uint8Array(width * height * 4);
             const out = new DataView(pixels.buffer);
@@ -86,7 +87,7 @@ function decodeBitstream(list: Chunk[]): { width: number, height: number, pixels
             }
             return { width, height, pixels };
         } else if (chunk.type === VP8) {
-            const image = vp8.decode(chunk.data);
+            const image = vp8.decode(chunk.data, maxPixels);
             if (alpha) applyAlpha(image.pixels, image.width, image.height, alpha.data);
             return image;
         }
@@ -147,7 +148,7 @@ export function isAnimated(data: Uint8Array): boolean {
 /**
  * Decodes a still WebP into RGBA pixels. Animated WebPs decode to their first frame composited on the canvas
  */
-export function decode(data: Uint8Array): { width: number, height: number, pixels: Uint8Array, orientation: number } {
+export function decode(data: Uint8Array, maxPixels = MAX_PIXELS): { width: number, height: number, pixels: Uint8Array, orientation: number } {
     const list = container(data);
     if (!list.length) throw new Error('WebP: no image data');
 
@@ -156,12 +157,12 @@ export function decode(data: Uint8Array): { width: number, height: number, pixel
     if (exif) orientation = exifOrientation(exif.data);
 
     if (list.some(c => c.type === ANMF)) {
-        const animation = decodeAnimation(data, true);
+        const animation = decodeAnimation(data, true, maxPixels);
         const frame = composite(animation)[0];
         return { width: animation.width, height: animation.height, pixels: frame.pixels, orientation };
     }
 
-    const image = decodeBitstream(list);
+    const image = decodeBitstream(list, maxPixels);
     if (list[0].type === VP8X && list[0].data.length >= 10) {
         // the canvas size wins over the bitstream's, they have to match
         const width = u24(list[0].data, 4) + 1, height = u24(list[0].data, 7) + 1;
@@ -173,16 +174,18 @@ export function decode(data: Uint8Array): { width: number, height: number, pixel
 /**
  * Decodes an animated WebP into its frames (not composited); still WebPs become a single frame
  */
-export function decodeAnimation(data: Uint8Array, onlyFirstFrame = false): WebPAnimation {
+export function decodeAnimation(data: Uint8Array, onlyFirstFrame = false, maxPixels = MAX_PIXELS): WebPAnimation {
     const list = container(data);
     const header = list[0];
     if (!header || header.type !== VP8X || !list.some(c => c.type === ANMF)) {
-        const { width, height, pixels } = decodeBitstream(list);
+        const { width, height, pixels } = decodeBitstream(list, maxPixels);
         return { width, height, loopCount: 0, background: 0, frames: [{ x: 0, y: 0, width, height, duration: 0, blend: false, dispose: false, pixels }] };
     }
 
     if (header.data.length < 10) throw new Error('WebP: invalid VP8X chunk');
     const width = u24(header.data, 4) + 1, height = u24(header.data, 7) + 1;
+    // every frame is composited onto a canvas of its own
+    checkPixels(width, height, maxPixels, onlyFirstFrame ? 1 : list.filter(c => c.type === ANMF).length);
     let loopCount = 0, background = 0;
     const frames: WebPFrame[] = [];
 
@@ -195,7 +198,7 @@ export function decodeAnimation(data: Uint8Array, onlyFirstFrame = false): WebPA
         } else if (chunk.type === ANMF) {
             const d = chunk.data;
             if (d.length < 16) throw new Error('WebP: invalid ANMF chunk');
-            const frame = decodeBitstream(chunks(d, 16, d.length));
+            const frame = decodeBitstream(chunks(d, 16, d.length), maxPixels);
             frames.push({
                 x: u24(d, 0) * 2,
                 y: u24(d, 3) * 2,
