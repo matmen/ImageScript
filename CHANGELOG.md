@@ -12,6 +12,11 @@
   - Transparent images are premultiplied to 8 bits, like browsers do: halving takes 24 instead of 43 ms, doubling 103
     instead of 260 ms. What shows once they're composited differs from 3.2.1 by up to about 2 steps (alpha by at most 2),
     the color of pixels that are almost transparent can differ more.
+- `RotateOptions.fast` (default `true`): rotations by angles that aren't multiples of 90° sample with 8-bit weights
+  on 8-bit premultiplied pixels, two channels per multiplication, and skip the parts of each row outside the source.
+  Rotating a 1920×1080 photo by 30° takes 51 instead of 119 ms (61 instead of 114 ms with alpha). Opaque pixels stay
+  within 1 of 3.2.1 (0.5-2% of the values differ), what shows of translucent ones (also the faded edges) within
+  about 2.5 steps. `fast: false` keeps the precise sampling.
 
 ### Performance
 
