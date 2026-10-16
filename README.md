@@ -33,7 +33,7 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
 - [Rendering SVGs](https://imagescript.matmen.dev/classes/Image.html#rendersvg) (shapes, paths, gradients, strokes, clip paths,
   masks, CSS; no text, images or filters)
 - [Rendering vector fonts](https://imagescript.matmen.dev/classes/Image.html#rendertext) (TrueType and OpenType, with kerning,
-  outlines, TrueType hinting, fallback fonts and color emoji)
+  ligatures, outlines, TrueType hinting, fallback fonts and color emoji)
 - [Resizing](https://imagescript.matmen.dev/classes/Image.html#resize) (bilinear, bicubic, area averaging and nearest neighbor)
 - Image manipulation functions ([crop](https://imagescript.matmen.dev/classes/Image.html#crop)
   , [rotate](https://imagescript.matmen.dev/classes/Image.html#rotate)

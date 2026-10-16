@@ -20,8 +20,14 @@
 - `Image.renderText` takes several fonts by priority (`[text, emoji]`): every character comes from the first font that
   has it, the first font sets the line height. Color glyphs keep their colors: COLR version 0 layers with CPAL
   palettes (e.g. Twemoji) and CBDT/CBLC bitmaps (e.g. Noto Color Emoji, which now loads at all, it has no outlines).
-  Invisible characters like joiners and variation selectors take no room, as in browsers. Emoji sequences (skin tones,
-  flags, families) still show as their parts.
+  Invisible characters like joiners and variation selectors take no room, as in browsers.
+- `Image.renderText` applies the fonts' glyph substitutions (GSUB) that browsers apply by default (`ccmp`, `rlig`,
+  `liga`, `clig`, `calt`): emoji sequences (skin tones, flags, keycaps, families and other joined ones) become one
+  glyph, and text fonts use their ligatures (fi, ffi, ...) and contextual alternates. Emoji sequences come from one
+  font, the first that has all of their characters, and the emoji variation selector picks a color glyph (❤️ in an
+  emoji font rather than the text font's ❤).
+- Fallback fonts are only loaded when the text needs them, and glyphs (also decoded and scaled emoji bitmaps) are
+  kept per font and size across calls.
 
 ### Performance
 

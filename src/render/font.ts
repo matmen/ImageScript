@@ -598,7 +598,7 @@ function parsePairPos(font: Font, table: number): PairLookup | null {
 }
 
 // returns the coverage index of a glyph, -1 if it isn't covered
-function parseCoverage(font: Font, table: number): (glyph: number) => number {
+export function parseCoverage(font: Font, table: number): (glyph: number) => number {
     const format = font.u16(table), count = font.u16(table + 2);
 
     return glyph => {
@@ -621,7 +621,7 @@ function parseCoverage(font: Font, table: number): (glyph: number) => number {
     };
 }
 
-function parseClassDef(font: Font, table: number): (glyph: number) => number {
+export function parseClassDef(font: Font, table: number): (glyph: number) => number {
     const format = font.u16(table);
 
     if (format === 1) {
