@@ -168,7 +168,6 @@ export class Animation extends Array<Frame> {
      */
     resize(width: number, height: number, mode?: ResizeMode): this;
     resize(width: number, height: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
-        const mode = (isOptions(modeOrOptions) ? modeOrOptions.mode : modeOrOptions) ?? Image.RESIZE_BILINEAR;
         const originalWidth = this.width, originalHeight = this.height;
         if (width === Image.RESIZE_AUTO && height === Image.RESIZE_AUTO) throw new Error('RESIZE_AUTO can only be used for either width or height, not for both');
         if (width === Image.RESIZE_AUTO) width = originalWidth / originalHeight * height;
@@ -179,7 +178,7 @@ export class Animation extends Array<Frame> {
             // scale both edges so adjacent frames stay aligned
             const left = Math.round(frame.xOffset * sx), top = Math.round(frame.yOffset * sy);
             const right = Math.round((frame.xOffset + frame.width) * sx), bottom = Math.round((frame.yOffset + frame.height) * sy);
-            Image.prototype.resize.call(frame, Math.max(1, right - left), Math.max(1, bottom - top), mode);
+            Image.prototype.resize.call(frame, Math.max(1, right - left), Math.max(1, bottom - top), modeOrOptions as ResizeMode);
             frame.xOffset = left;
             frame.yOffset = top;
         }

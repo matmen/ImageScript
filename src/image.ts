@@ -47,6 +47,13 @@ export interface CompositeOptions {
 export interface ResizeOptions {
     /** The resizing mode. Default: {@link Image.RESIZE_BILINEAR} */
     mode?: ResizeMode;
+    /**
+     * Whether to round to 8 bits between the two passes, so two channels share the multiplications of both:
+     * about 15-25% faster, with more channel values a step off the exact result (10-25% instead of
+     * about 1%, never more than 1). Only affects opaque images with {@link Image.RESIZE_BILINEAR} and
+     * {@link Image.RESIZE_AREA}, down to about a third of the size. Default: `true`
+     */
+    fast?: boolean;
 }
 
 /**
@@ -585,15 +592,16 @@ export class Image {
      */
     scale(factor: number, mode?: ResizeMode): this;
     scale(factor: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
-        const image = this.__scale__(factor, resizeMode(modeOrOptions));
+        const { mode, fast } = resizeOptions(modeOrOptions);
+        const image = this.__scale__(factor, mode, fast);
         return this.__apply__(image);
     }
 
     /** @private */
     /** @internal */
-    protected __scale__(factor: number, mode: ResizeMode = Image.RESIZE_BILINEAR): Image {
+    protected __scale__(factor: number, mode: ResizeMode = Image.RESIZE_BILINEAR, fast = true): Image {
         if (factor === 1) return this;
-        return this.__resize__(this.width * factor, this.height * factor, mode);
+        return this.__resize__(this.width * factor, this.height * factor, mode, fast);
     }
 
     /**
@@ -615,8 +623,8 @@ export class Image {
      */
     resize(width: number, height: number, mode?: ResizeMode): this;
     resize(width: number, height: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
-        const mode = resizeMode(modeOrOptions);
-        const image = this.__resize__(width, height, mode);
+        const { mode, fast } = resizeOptions(modeOrOptions);
+        const image = this.__resize__(width, height, mode, fast);
         return this.__apply__(image);
     }
 
@@ -639,12 +647,12 @@ export class Image {
      */
     contain(width: number, height: number, mode?: ResizeMode): this;
     contain(width: number, height: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
-        const mode = resizeMode(modeOrOptions);
+        const options = resizeOptions(modeOrOptions);
         width = Math.floor(width);
         height = Math.floor(height);
         // round instead of flooring the scaled size, so the limiting axis matches the box exactly
         const scale = Math.min(width / this.width, height / this.height);
-        return this.resize(Math.max(1, Math.min(width, Math.round(this.width * scale))), Math.max(1, Math.min(height, Math.round(this.height * scale))), mode);
+        return this.resize(Math.max(1, Math.min(width, Math.round(this.width * scale))), Math.max(1, Math.min(height, Math.round(this.height * scale))), options);
     }
 
     /**
@@ -666,9 +674,9 @@ export class Image {
      */
     fit(width: number, height: number, mode?: ResizeMode): this;
     fit(width: number, height: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
-        const mode = resizeMode(modeOrOptions);
+        const options = resizeOptions(modeOrOptions);
         const result = new Image(width, height);
-        this.contain(width, height, mode);
+        this.contain(width, height, options);
         result.composite(this, (width - this.width) / 2, (height - this.height) / 2);
         return this.__apply__(result);
     }
@@ -692,17 +700,17 @@ export class Image {
      */
     cover(width: number, height: number, mode?: ResizeMode): this;
     cover(width: number, height: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
-        const mode = resizeMode(modeOrOptions);
+        const options = resizeOptions(modeOrOptions);
         width = Math.floor(width);
         height = Math.floor(height);
         const scale = Math.max(width / this.width, height / this.height);
-        this.resize(Math.max(width, Math.round(this.width * scale)), Math.max(height, Math.round(this.height * scale)), mode);
+        this.resize(Math.max(width, Math.round(this.width * scale)), Math.max(height, Math.round(this.height * scale)), options);
         return this.crop((this.width - width) / 2, (this.height - height) / 2, width, height);
     }
 
     /** @private */
     /** @internal */
-    protected __resize__(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR): Image {
+    protected __resize__(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR, fast = true): Image {
         if (width === Image.RESIZE_AUTO && height === Image.RESIZE_AUTO) throw new Error('RESIZE_AUTO can only be used for either width or height, not for both');
         else if (width === Image.RESIZE_AUTO) width = Math.max(1, Math.round(this.width / this.height * Math.floor(height)));
         else if (height === Image.RESIZE_AUTO) height = Math.max(1, Math.round(this.height / this.width * Math.floor(width)));
@@ -720,7 +728,7 @@ export class Image {
         if (!filter) throw new Error('Invalid resize mode');
 
         const image = new Image(width, height);
-        resample(this.bitmap, this.width, this.height, width, height, filter, image.bitmap);
+        resample(this.bitmap, this.width, this.height, width, height, filter, image.bitmap, fast);
         return image;
     }
 
@@ -2129,8 +2137,9 @@ function hue2rgb(p: number, q: number, t: number): number {
 }
 
 // the resize mode of a positional argument or options object
-function resizeMode(modeOrOptions?: ResizeMode | ResizeOptions): ResizeMode {
-    return (isOptions(modeOrOptions) ? modeOrOptions.mode : modeOrOptions) ?? Image.RESIZE_BILINEAR;
+function resizeOptions(modeOrOptions?: ResizeMode | ResizeOptions): { mode: ResizeMode, fast: boolean } {
+    const options = isOptions(modeOrOptions) ? modeOrOptions : { mode: modeOrOptions };
+    return { mode: options.mode ?? Image.RESIZE_BILINEAR, fast: options.fast ?? true };
 }
 
 // separable blend functions of normalized channel values (W3C Compositing and Blending Level 1)
