@@ -7,6 +7,7 @@ import { Font, PathCommand } from './font.ts';
 import { Hinter } from './hinting.ts';
 import { ColorLayer, BitmapGlyph, parseColorLayers, parseBitmaps } from './color.ts';
 import { GlyphBuffer, parseGSUB } from './gsub.ts';
+import { PaintGlyphs, parsePaintGlyphs, paintExtent, renderPaintGlyph } from './colr.ts';
 import { decode as decodePNG } from '../codecs/png.ts';
 import { resample, TRIANGLE } from '../util/resample.ts';
 
@@ -46,6 +47,7 @@ interface SizedFont {
     hinter: Hinter | null;
     layers: ((glyph: number) => ColorLayer[] | null) | null;
     bitmaps: ((glyph: number) => BitmapGlyph | null) | null;
+    paints: PaintGlyphs | null;
     gsub: ((buffer: GlyphBuffer) => void) | null;
     glyphs: Map<number, Glyph>;
 }
@@ -62,8 +64,8 @@ interface Glyph {
     ink: { left: number, right: number } | null;
     /** bitmaps per subpixel offset */
     bitmaps: Array<GlyphBitmap | null>;
-    /** the layers or the bitmap of color glyphs */
-    color: { layers: ColorLayer[] } | { bitmap: BitmapGlyph } | null;
+    /** the paint graph (COLR version 1), the layers (version 0) or the bitmap of color glyphs */
+    color: { paint: true } | { layers: ColorLayer[] } | { bitmap: BitmapGlyph } | null;
     /** color bitmaps by subpixel offset and text color (bitmap glyphs only have the one for offset 0) */
     colors: Map<string, ColorBitmap | null>;
 }
@@ -86,7 +88,7 @@ const SUBPIXELS = 4;
 // parsed fonts are cached per memory region, so new views of the same font data (e.g. from node Buffers) hit the cache
 const fonts = new WeakMap<ArrayBufferLike, Map<string, Font>>();
 const hinters = new WeakMap<Font, Hinter>();
-const substitutions = new WeakMap<Font, { gsub: ((buffer: GlyphBuffer) => void) | null, layers: ((glyph: number) => ColorLayer[] | null) | null }>();
+const substitutions = new WeakMap<Font, { gsub: ((buffer: GlyphBuffer) => void) | null, layers: ((glyph: number) => ColorLayer[] | null) | null, paints: PaintGlyphs | null }>();
 // sizes (and hinting) per font, a few of them
 const sizes = new WeakMap<Font, Map<string, SizedFont>>();
 const SIZES = 16;
@@ -116,10 +118,10 @@ function sizedFont(data: Uint8Array, size: number, hinting: boolean): SizedFont 
         if (!hinter.hasInstructions) hinter = null;
     }
     let shared = substitutions.get(font);
-    if (!shared) substitutions.set(font, shared = { gsub: parseGSUB(font), layers: parseColorLayers(font) });
+    if (!shared) substitutions.set(font, shared = { gsub: parseGSUB(font), layers: parseColorLayers(font), paints: parsePaintGlyphs(font) });
 
     if (bySize.size >= SIZES) bySize.clear();
-    bySize.set(key, sized = { font, scale: size / font.unitsPerEm, hinter, layers: shared.layers, bitmaps: parseBitmaps(font, size), gsub: shared.gsub, glyphs: new Map() });
+    bySize.set(key, sized = { font, scale: size / font.unitsPerEm, hinter, layers: shared.layers, bitmaps: parseBitmaps(font, size), paints: shared.paints, gsub: shared.gsub, glyphs: new Map() });
     return sized;
 }
 
@@ -129,10 +131,16 @@ function glyphOf(f: SizedFont, index: number, size: number): Glyph {
     if (g) return g;
 
     const { font, scale, hinter } = f;
-    const bitmap = f.bitmaps?.(index) ?? null, layers = bitmap ? null : f.layers?.(index) ?? null;
+    // renderers that support COLR version 1 prefer it over the other color glyphs
+    const paint = f.paints !== null && f.paints.paint(index) !== null;
+    const bitmap = paint ? null : f.bitmaps?.(index) ?? null, layers = paint || bitmap ? null : f.layers?.(index) ?? null;
     const advance = font.advance(index) * scale;
     g = { index, font: f, path: [], scale, advance: hinter ? Math.round(advance) : advance, ink: null, bitmaps: [], color: null, colors: new Map() };
-    if (bitmap) {
+    if (paint) {
+        g.color = { paint: true };
+        const extent = paintExtent(font, f.paints as PaintGlyphs, index, glyph => font.outline(glyph));
+        g.ink = extent && { left: extent.left * scale, right: extent.right * scale };
+    } else if (bitmap) {
         const s = size / bitmap.ppem;
         g.color = { bitmap };
         g.ink = { left: bitmap.left * s, right: (bitmap.left + bitmap.width) * s };
@@ -222,7 +230,8 @@ export async function render(fonts: Uint8Array[], size: number, text: string, la
                 let bitmap = g.colors.get(key);
                 if (bitmap === undefined) g.colors.set(key, bitmap = 'bitmap' in g.color
                     ? await scaledBitmap(g.color.bitmap, size / g.color.bitmap.ppem)
-                    : layeredGlyph(g, g.color.layers, subpixel / SUBPIXELS, foreground));
+                    : 'layers' in g.color ? layeredGlyph(g, g.color.layers, subpixel / SUBPIXELS, foreground)
+                        : paintedGlyph(g, subpixel / SUBPIXELS, foreground));
                 if (bitmap) blitColor(color ??= new Uint8ClampedArray(width * height * 4), width, height, bitmap, pixel + bitmap.left, baseline - bitmap.top);
                 continue;
             }
@@ -246,7 +255,7 @@ function shape(paragraph: string, count: number, font: (i: number) => SizedFont,
     const has = (f: SizedFont, codepoint: number): boolean => f.font.glyphIndex(codepoint) !== 0;
     const isColor = (f: SizedFont, codepoint: number): boolean => {
         const index = f.font.glyphIndex(codepoint);
-        return !!(f.bitmaps?.(index) || f.layers?.(index));
+        return !!(f.paints && f.paints.paint(index) !== null || f.bitmaps?.(index) || f.layers?.(index));
     };
 
     // the font of a grapheme (later fonts are only loaded when the earlier ones miss a character)
@@ -371,6 +380,12 @@ function layeredGlyph(g: Glyph, layers: ColorLayer[], offset: number, foreground
             }
     }
     return { data, width, height, left, top };
+}
+
+// a COLR version 1 glyph, its outlines rasterized like the others
+function paintedGlyph(g: Glyph, offset: number, foreground: number): ColorBitmap | null {
+    const { font } = g.font;
+    return renderPaintGlyph(font, g.font.paints as PaintGlyphs, g.index, g.scale, offset, foreground, glyph => font.outline(glyph), path => rasterizeGlyph(path, 1));
 }
 
 function premultiply(rgba: Uint8ClampedArray): void {

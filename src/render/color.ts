@@ -23,6 +23,19 @@ export interface BitmapGlyph {
 }
 
 /**
+ * The colors of the font's first CPAL palette as RGBA (0xrrggbbaa), null for the text color (index 0xffff) and
+ * indices outside the palette
+ */
+export function parsePalette(font: Font, cpal: number): (index: number) => number | null {
+    const entries = font.u16(cpal + 2), records = cpal + font.u32(cpal + 8), first = font.u16(cpal + 12);
+    return index => {
+        if (index === 0xffff || index >= entries) return null;
+        const o = records + (first + index) * 4; // blue, green, red, alpha
+        return (font.u8(o + 2) << 24 | font.u8(o + 1) << 16 | font.u8(o) << 8 | font.u8(o + 3)) >>> 0;
+    };
+}
+
+/**
  * The layers of the font's color glyphs (COLR version 0 records, with the colors of the first CPAL palette), null if the
  * font has none. The lookup returns null for glyphs without layers
  */
@@ -32,14 +45,7 @@ export function parseColorLayers(font: Font): ((glyph: number) => ColorLayer[] |
 
     const baseCount = font.u16(colr + 2), bases = colr + font.u32(colr + 4), layers = colr + font.u32(colr + 8);
     if (!baseCount) return null;
-
-    // the first palette
-    const entries = font.u16(cpal + 2), records = cpal + font.u32(cpal + 8), first = font.u16(cpal + 12);
-    const color = (index: number): number | null => {
-        if (index === 0xffff || index >= entries) return null;
-        const o = records + (first + index) * 4; // blue, green, red, alpha
-        return (font.u8(o + 2) << 24 | font.u8(o + 1) << 16 | font.u8(o) << 8 | font.u8(o + 3)) >>> 0;
-    };
+    const color = parsePalette(font, cpal);
 
     const cache = new Map<number, ColorLayer[] | null>();
     return glyph => {
