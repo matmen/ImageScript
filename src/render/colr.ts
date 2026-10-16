@@ -38,7 +38,7 @@ export interface PaintGlyphs {
 
 const MAX_DEPTH = 64;
 // samples per pixel axis
-const SAMPLES = 2;
+const SAMPLES = 4;
 
 const multiply = (m: Matrix, n: Matrix): Matrix => [
     m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1],
@@ -232,33 +232,37 @@ export function renderPaintGlyph(font: Font, glyphs: PaintGlyphs, glyph: number,
     const S = SAMPLES, canvas: Canvas = { left: left * S, top: top * S, width: width * S, height: height * S };
     const layer = render(p, root, [scale * S, 0, 0, scale * S, offset * S, 0], canvas, [0, 0, canvas.width, canvas.height], foreground, outline, rasterize, 0);
     const sum = new Float32Array(width * height * 4);
-    if (layer)
-        for (let y = 0; y < canvas.height; y++)
-            for (let x = 0; x < canvas.width; x++) {
-                const i = (y * canvas.width + x) * 4, o = ((y / S | 0) * width + (x / S | 0)) * 4;
+    if (layer) {
+        const [x0, y0, x1, y1] = layer.box, stride = x1 - x0;
+        for (let y = y0; y < y1; y++)
+            for (let x = x0, i = (y - y0) * stride * 4; x < x1; x++, i += 4) {
+                const o = ((y / S | 0) * width + (x / S | 0)) * 4;
                 sum[o] += layer.data[i];
                 sum[o + 1] += layer.data[i + 1];
                 sum[o + 2] += layer.data[i + 2];
                 sum[o + 3] += layer.data[i + 3];
             }
+    }
     const data = new Uint8ClampedArray(width * height * 4), share = 255 / (S * S);
     for (let i = 0; i < data.length; i++) data[i] = sum[i] * share;
     return { data, width, height, left, top };
 }
 
-/** a rendered paint: premultiplied RGBA (0-1) of the whole canvas, transparent outside of the box it drew in */
+/** a rendered paint: premultiplied RGBA (0-1) of a box [x0, y0, x1, y1) of the canvas, transparent outside of it */
 interface Layer {
     data: Float32Array;
     box: Box;
 }
 
+const blank = (box: Box): Layer => ({ data: new Float32Array((box[2] - box[0]) * (box[3] - box[1]) * 4), box });
 const unionBox = (a: Box, b: Box): Box => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+const empty = (box: Box): boolean => box[0] >= box[2] || box[1] >= box[3];
 
 // renders a paint into a new layer, only within the region [x0, y0, x1, y1) of the canvas, null if it draws nothing
 // there
 function render(p: Paints, paint: number, m: Matrix, canvas: Canvas, region: Box, foreground: number,
     outline: (glyph: number) => PathCommand[], rasterize: (path: PathCommand[]) => Coverage | null, depth: number): Layer | null {
-    if (depth > MAX_DEPTH || region[0] >= region[2] || region[1] >= region[3]) return null;
+    if (depth > MAX_DEPTH || empty(region)) return null;
     const font = p.font, format = font.u8(paint);
     const next = (child: number, matrix: Matrix, r: Box): Layer | null => render(p, child, matrix, canvas, r, foreground, outline, rasterize, depth + 1);
 
@@ -269,21 +273,16 @@ function render(p: Paints, paint: number, m: Matrix, canvas: Canvas, region: Box
             const first = font.u32(paint + 2);
             for (let i = 0, n = font.u8(paint + 1); i < n; i++) {
                 const layer = next(p.layer(first + i), m, region);
-                if (!layer) continue;
-                if (!out) out = layer;
-                else {
-                    composite(3, layer.data, out.data, canvas.width, layer.box);
-                    out.box = unionBox(out.box, layer.box);
-                }
+                if (layer) out = out ? composite(3, layer, out) : layer;
             }
             return out;
         }
 
         case 2: case 3: {
             const color = colorOf(p, font.u16(paint + 1), p.f2dot14(paint + 3), foreground);
-            const out = new Float32Array(canvas.width * canvas.height * 4);
-            fill(out, canvas.width, region, () => color);
-            return { data: out, box: region };
+            const out = blank(region);
+            for (let o = 0; o < out.data.length; o += 4) out.data.set(color, o);
+            return out;
         }
 
         case 4: case 5: case 6: case 7: case 8: case 9:
@@ -297,18 +296,30 @@ function render(p: Paints, paint: number, m: Matrix, canvas: Canvas, region: Box
             // the mask's pixels on the canvas
             const mx = mask.left - canvas.left, my = canvas.top - mask.top;
             const inner: Box = [Math.max(region[0], mx), Math.max(region[1], my), Math.min(region[2], mx + mask.width), Math.min(region[3], my + mask.height)];
-            const child = next(p.child(paint), m, inner);
-            if (!child) return null;
-            const layer = child.data;
-            for (let y = inner[1]; y < inner[3]; y++)
-                for (let x = inner[0]; x < inner[2]; x++) {
-                    const c = mask.data[(y - my) * mask.width + x - mx] / 255, o = (y * canvas.width + x) * 4;
-                    layer[o] *= c;
-                    layer[o + 1] *= c;
-                    layer[o + 2] *= c;
-                    layer[o + 3] *= c;
+            if (empty(inner)) return null;
+
+            // a solid color (the common case) is the mask in that color, anything else is masked
+            const child = p.child(paint), childFormat = font.u8(child);
+            const solid = childFormat === 2 || childFormat === 3 ? colorOf(p, font.u16(child + 1), p.f2dot14(child + 3), foreground) : null;
+            const layer = solid ? blank(inner) : next(child, m, inner);
+            if (!layer) return null;
+            const [x0, y0, x1, y1] = layer.box, data = layer.data;
+            for (let y = y0, o = 0; y < y1; y++)
+                for (let x = x0, k = (y - my) * mask.width + x0 - mx; x < x1; x++, k++, o += 4) {
+                    const c = mask.data[k] / 255;
+                    if (solid) {
+                        data[o] = solid[0] * c;
+                        data[o + 1] = solid[1] * c;
+                        data[o + 2] = solid[2] * c;
+                        data[o + 3] = solid[3] * c;
+                    } else {
+                        data[o] *= c;
+                        data[o + 1] *= c;
+                        data[o + 2] *= c;
+                        data[o + 3] *= c;
+                    }
                 }
-            return { data: layer, box: inner };
+            return layer;
         }
 
         // another base glyph's paint
@@ -321,13 +332,9 @@ function render(p: Paints, paint: number, m: Matrix, canvas: Canvas, region: Box
         case 32: {
             const backdrop = next(p.child(paint, 5), m, region);
             const source = next(p.child(paint), m, region);
-            const mode = font.u8(paint + 4);
             if (!backdrop && !source) return null;
-            // outside both boxes, every mode leaves the result transparent
-            const box = backdrop && source ? unionBox(backdrop.box, source.box) : (backdrop ?? source as Layer).box;
-            const out = backdrop?.data ?? new Float32Array(canvas.width * canvas.height * 4);
-            composite(mode, source?.data ?? new Float32Array(out.length), out, canvas.width, box);
-            return { data: out, box };
+            const box = (backdrop ?? source as Layer).box;
+            return composite(font.u8(paint + 4), source ?? blank(box), backdrop ?? blank(box));
         }
 
         default:
@@ -350,20 +357,6 @@ function colorOf(p: Paints, index: number, alpha: number, foreground: number): [
     const rgba = p.palette(index) ?? foreground;
     const a = (rgba & 255) / 255 * Math.min(1, Math.max(0, alpha));
     return [(rgba >>> 24) / 255 * a, (rgba >>> 16 & 255) / 255 * a, (rgba >>> 8 & 255) / 255 * a, a];
-}
-
-// sets every pixel of the region to the color at its center
-function fill(out: Float32Array, width: number, region: Box, color: (x: number, y: number) => ArrayLike<number> | null): void {
-    for (let y = region[1]; y < region[3]; y++)
-        for (let x = region[0]; x < region[2]; x++) {
-            const c = color(x, y);
-            if (!c) continue;
-            const o = (y * width + x) * 4;
-            out[o] = c[0];
-            out[o + 1] = c[1];
-            out[o + 2] = c[2];
-            out[o + 3] = c[3];
-        }
 }
 
 const LUT = 256;
@@ -390,20 +383,10 @@ function gradient(p: Paints, paint: number, format: number, m: Matrix, canvas: C
         const f = b.offset > a.offset ? Math.min(1, Math.max(0, (t - a.offset) / (b.offset - a.offset))) : t >= b.offset ? 1 : 0;
         for (let c = 0; c < 4; c++) table[i * 4 + c] = a.color[c] + (b.color[c] - a.color[c]) * f;
     }
-    // a position on the color line, extended past its stops
-    const lookup = (t: number): Float32Array => {
-        let u = span > 0 ? (t - start) / span : t >= start ? 1 : 0;
-        if (extend === 1) u -= Math.floor(u);
-        else if (extend === 2) {
-            u = Math.abs(u) % 2;
-            if (u > 1) u = 2 - u;
-        }
-        const i = Math.round(Math.min(1, Math.max(0, u)) * (LUT - 1)) * 4;
-        return table.subarray(i, i + 4);
-    };
 
     const x0 = font.i16(paint + 4), y0 = font.i16(paint + 6);
-    let position: (x: number, y: number) => number | null;
+    // the position on the color line (NaN where the gradient is undefined)
+    let position: (x: number, y: number) => number;
     if (format <= 5) {
         // p1 projected onto the perpendicular of p0-p2 through p0 (p2 rotates the gradient)
         let dx = font.i16(paint + 8) - x0, dy = font.i16(paint + 10) - y0;
@@ -424,15 +407,14 @@ function gradient(p: Paints, paint: number, format: number, m: Matrix, canvas: C
             const px = x - x0, py = y - y0;
             const b = px * cx + py * cy + r0 * dr, c = px * px + py * py - r0 * r0;
             if (Math.abs(a) < 1e-9) {
-                if (!b) return null;
                 const t = c / (2 * b);
-                return r0 + t * dr >= 0 ? t : null;
+                return b && r0 + t * dr >= 0 ? t : NaN;
             }
             const discriminant = b * b - a * c;
-            if (discriminant < 0) return null;
+            if (discriminant < 0) return NaN;
             const root = Math.sqrt(discriminant), t1 = (b + root) / a, t2 = (b - root) / a;
             const high = Math.max(t1, t2), low = Math.min(t1, t2);
-            return r0 + high * dr >= 0 ? high : r0 + low * dr >= 0 ? low : null;
+            return r0 + high * dr >= 0 ? high : r0 + low * dr >= 0 ? low : NaN;
         };
     } else {
         // counterclockwise angles, the stored ones are biased by 180 degrees
@@ -444,14 +426,27 @@ function gradient(p: Paints, paint: number, format: number, m: Matrix, canvas: C
         };
     }
 
-    const out = new Float32Array(canvas.width * canvas.height * 4);
-    fill(out, canvas.width, region, (px, py) => {
-        // the pixel center, back in the paint's space
-        const x = canvas.left + px + 0.5, y = canvas.top - py - 0.5;
-        const t = position(inverse[0] * x + inverse[2] * y + inverse[4], inverse[1] * x + inverse[3] * y + inverse[5]);
-        return t === null ? null : lookup(t);
-    });
-    return { data: out, box: region };
+    const out = blank(region), data = out.data;
+    for (let py = region[1], o = 0; py < region[3]; py++)
+        for (let px = region[0]; px < region[2]; px++, o += 4) {
+            // the pixel center, back in the paint's space
+            const x = canvas.left + px + 0.5, y = canvas.top - py - 0.5;
+            const t = position(inverse[0] * x + inverse[2] * y + inverse[4], inverse[1] * x + inverse[3] * y + inverse[5]);
+            if (t !== t) continue;
+            // the color line extended past its stops
+            let u = span > 0 ? (t - start) / span : t >= start ? 1 : 0;
+            if (extend === 1) u -= Math.floor(u);
+            else if (extend === 2) {
+                u = Math.abs(u) % 2;
+                if (u > 1) u = 2 - u;
+            }
+            const i = Math.round(Math.min(1, Math.max(0, u)) * (LUT - 1)) * 4;
+            data[o] = table[i];
+            data[o + 1] = table[i + 1];
+            data[o + 2] = table[i + 2];
+            data[o + 3] = table[i + 3];
+        }
+    return out;
 }
 
 // separable blend functions of unpremultiplied backdrop and source channels (W3C Compositing and Blending)
@@ -494,25 +489,40 @@ const NON_SEPARABLE: Record<number, (b: number[], s: number[]) => number[]> = {
     27: (b, s) => setLum(b, lum(s))
 };
 
-// composites the source onto the backdrop (in place) within the region, both premultiplied
-function composite(mode: number, source: Float32Array, backdrop: Float32Array, width: number, region: Box): void {
-    // source over, the common case
-    if (mode === 3) {
-        for (let y = region[1]; y < region[3]; y++)
-            for (let o = (y * width + region[0]) * 4, end = (y * width + region[2]) * 4; o < end; o += 4) {
-                const keep = 1 - source[o + 3];
-                if (keep === 1) continue;
-                backdrop[o] = source[o] + backdrop[o] * keep;
-                backdrop[o + 1] = source[o + 1] + backdrop[o + 1] * keep;
-                backdrop[o + 2] = source[o + 2] + backdrop[o + 2] * keep;
-                backdrop[o + 3] = source[o + 3] + backdrop[o + 3] * keep;
-            }
-        return;
+// composites the source onto the backdrop: the result covers both boxes (in the backdrop's layer where it does)
+function composite(mode: number, source: Layer, backdrop: Layer): Layer {
+    const box = unionBox(source.box, backdrop.box);
+    let out = backdrop;
+    if (box[0] < backdrop.box[0] || box[1] < backdrop.box[1] || box[2] > backdrop.box[2] || box[3] > backdrop.box[3]) {
+        out = blank(box);
+        const [x0, y0, x1] = backdrop.box, w = x1 - x0, ow = box[2] - box[0];
+        for (let y = y0; y < backdrop.box[3]; y++) out.data.set(backdrop.data.subarray((y - y0) * w * 4, (y - y0 + 1) * w * 4), ((y - box[1]) * ow + x0 - box[0]) * 4);
     }
+    const d = out.data, s = source.data, ow = box[2] - box[0];
+    const [sx0, sy0, sx1, sy1] = source.box, sw = sx1 - sx0;
+
+    // source over, the common case: only where the source is
+    if (mode === 3) {
+        for (let y = sy0; y < sy1; y++)
+            for (let x = sx0, i = (y - sy0) * sw * 4, o = ((y - box[1]) * ow + sx0 - box[0]) * 4; x < sx1; x++, i += 4, o += 4) {
+                const keep = 1 - s[i + 3];
+                if (keep === 1) continue;
+                d[o] = s[i] + d[o] * keep;
+                d[o + 1] = s[i + 1] + d[o + 1] * keep;
+                d[o + 2] = s[i + 2] + d[o + 2] * keep;
+                d[o + 3] = s[i + 3] + d[o + 3] * keep;
+            }
+        return out;
+    }
+
     const blend = BLEND[mode], nonSeparable = NON_SEPARABLE[mode];
-    for (let y = region[1]; y < region[3]; y++)
-        for (let x = region[0]; x < region[2]; x++) {
-            const o = (y * width + x) * 4, as = source[o + 3], ab = backdrop[o + 3];
+    const src = new Float32Array(4);
+    for (let y = box[1]; y < box[3]; y++)
+        for (let x = box[0], o = (y - box[1]) * ow * 4; x < box[2]; x++, o += 4) {
+            // the source pixel, transparent outside of its box
+            if (x >= sx0 && x < sx1 && y >= sy0 && y < sy1) src.set(s.subarray(((y - sy0) * sw + x - sx0) * 4, ((y - sy0) * sw + x - sx0) * 4 + 4));
+            else src.fill(0);
+            const as = src[3], ab = d[o + 3];
             // Porter-Duff: result = source * fa + backdrop * fb
             let fa = 0, fb = 0;
             switch (mode) {
@@ -531,13 +541,14 @@ function composite(mode: number, source: Float32Array, backdrop: Float32Array, w
                 default: {
                     // source over, with the blended color where both are
                     if (!blend && !nonSeparable || !as || !ab) { fa = 1; fb = 1 - as; break; }
-                    const s = [source[o] / as, source[o + 1] / as, source[o + 2] / as], b = [backdrop[o] / ab, backdrop[o + 1] / ab, backdrop[o + 2] / ab];
-                    const mixed = nonSeparable ? nonSeparable(b, s) : [blend(b[0], s[0]), blend(b[1], s[1]), blend(b[2], s[2])];
-                    for (let c = 0; c < 3; c++) backdrop[o + c] = source[o + c] * (1 - ab) + backdrop[o + c] * (1 - as) + as * ab * mixed[c];
-                    backdrop[o + 3] = as + ab - as * ab;
+                    const sc = [src[0] / as, src[1] / as, src[2] / as], b = [d[o] / ab, d[o + 1] / ab, d[o + 2] / ab];
+                    const mixed = nonSeparable ? nonSeparable(b, sc) : [blend(b[0], sc[0]), blend(b[1], sc[1]), blend(b[2], sc[2])];
+                    for (let c = 0; c < 3; c++) d[o + c] = src[c] * (1 - ab) + d[o + c] * (1 - as) + as * ab * mixed[c];
+                    d[o + 3] = as + ab - as * ab;
                     continue;
                 }
             }
-            for (let c = 0; c < 4; c++) backdrop[o + c] = Math.min(1, source[o + c] * fa + backdrop[o + c] * fb);
+            for (let c = 0; c < 4; c++) d[o + c] = Math.min(1, src[c] * fa + d[o + c] * fb);
         }
+    return out;
 }
