@@ -1,8 +1,5 @@
-old/
-.idea/
-coverage/
-.DS_Store
-.nyc_output/
 node_modules/
 dist/
 docs/
+.idea/
+.DS_Store

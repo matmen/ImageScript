@@ -47,7 +47,14 @@
     "bitmap",
     "gif",
     "picture",
-    "thumbnail"
+    "thumbnail",
+    "webp",
+    "apng",
+    "tiff",
+    "tga",
+    "animation",
+    "text rendering",
+    "font"
   ],
   "author": "Mathis Mensing <mathis@matmen.dev>",
   "license": "(AGPL-3.0-or-later OR MIT)",

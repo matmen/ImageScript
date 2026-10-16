@@ -9,7 +9,7 @@
 
 **ImageScript** is a zero-dependency alternative to common JavaScript bitmap image manipulation tools. Every codec and
 renderer is written in TypeScript: no WebAssembly, no native binaries, no npm dependencies, no install scripts. The
-package is about 140 kB (compressed) and runs in Node.js 22.13 or newer (including Alpine/musl, ARM and bundled
+package is about 160 kB (compressed) and runs in Node.js 22.13 or newer (including Alpine/musl, ARM and bundled
 serverless functions), Deno, Bun and browsers. It works with both `import` and `require()`, type definitions are included.
 
 ```sh
@@ -38,7 +38,8 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
 - Image manipulation functions ([crop](https://imagescript.matmen.dev/classes/Image.html#crop)
   , [rotate](https://imagescript.matmen.dev/classes/Image.html#rotate)
   , [cropCircle](https://imagescript.matmen.dev/classes/Image.html#cropcircle)
-  , [roundCorners](https://imagescript.matmen.dev/classes/Image.html#roundcorners), ...)
+  , [roundCorners](https://imagescript.matmen.dev/classes/Image.html#roundcorners)
+  , [trim](https://imagescript.matmen.dev/classes/Image.html#trim), ...)
 - Filters and color adjustments ([blur](https://imagescript.matmen.dev/classes/Image.html#blur)
   , [sharpen](https://imagescript.matmen.dev/classes/Image.html#sharpen)
   , [brightness](https://imagescript.matmen.dev/classes/Image.html#brightness)
@@ -53,7 +54,7 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   and [TGAs](https://imagescript.matmen.dev/classes/Image.html#encodetga)
 - Encoding animations as [GIF](https://imagescript.matmen.dev/classes/Animation.html#encodegif),
   [APNG](https://imagescript.matmen.dev/classes/Animation.html#encodeapng) and lossless
-  [WebP](https://imagescript.matmen.dev/classes/Animation.html#encodewebp)
+  [WebP](https://imagescript.matmen.dev/classes/Animation.html#encodewebp), storing only what changes from frame to frame
 
 ---
 
@@ -77,7 +78,7 @@ const { Image } = require('imagescript');
 All coordinates are 0-based, `(0, 0)` is the top left pixel.
 
 A bigger example is the [README image generation](https://github.com/matmen/ImageScript/blob/master/tests/readme.js).
-Upgrading from 1.x? Version 3 has breaking changes (0-based coordinates, removed WebP encoding, Node.js 22.13+, ...),
+Upgrading from 1.x? Version 3 has breaking changes (0-based coordinates, removed lossy WebP encoding, Node.js 22.13+, ...),
 see the [changelog](https://github.com/matmen/ImageScript/blob/master/CHANGELOG.md). There is no 2.x release, the number was skipped because of the old experimental
 `imagescript/v2` API.
 
