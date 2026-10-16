@@ -17,7 +17,8 @@ const fromPlays = (plays: number): number => plays === 0 ? -1 : plays - 1;
 function canvasFrames(width: number, height: number, frames: Array<{ pixels: Uint8Array, duration: number }>): Frame[] {
     return frames.map(({ pixels, duration }) => {
         const frame = new Frame(width, height, duration, 0, 0, Frame.DISPOSAL_BACKGROUND);
-        frame.bitmap.set(pixels);
+        // the composited frames are copies already, the frame can keep them
+        frame.bitmap = pixels;
         return frame;
     });
 }
