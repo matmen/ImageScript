@@ -2212,44 +2212,100 @@ const BLEND_MODES: Record<BlendMode, (backdrop: number, source: number) => numbe
 
 /**
  * Grows a coverage mask by a radius, using the distance of every pixel to the glyphs (an exact euclidean distance
- * transform, so the cost doesn't depend on the radius)
+ * transform, so the cost doesn't depend on the radius). Near the outline's edge, the distance goes to the glyph edge
+ * within the pixels around the nearest covered one (estimated from their coverage and its gradient, like Gustavson's
+ * antialiased distance transform), so the outline follows the antialiased edge instead of the pixels
  * @return the outline's coverage (0..1) per pixel, including the area under the glyphs
  */
+// covered pixels around the nearest one (on either side) whose edge points the outline's edge is measured to
+const OUTLINE_WINDOW = 1;
+
 function outline(coverage: Uint8Array, width: number, height: number, radius: number): Float32Array {
     const count = width * height;
-    // squared distance to the nearest pixel that is at least half covered
+    // squared distance to the nearest pixel that is at least half covered, and that pixel's coordinates
     const distance = new Float64Array(count);
     for (let i = 0; i < count; i++) distance[i] = coverage[i] >= 128 ? 0 : Infinity;
+    const nearestY = new Int32Array(count), nearestX = new Int32Array(count);
 
     const size = Math.max(width, height);
-    const line = new Float64Array(size), result = new Float64Array(size);
+    const line = new Float64Array(size), result = new Float64Array(size), nearest = new Int32Array(size);
     const parabolas = new Int32Array(size), bounds = new Float64Array(size + 1);
 
     for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) line[y] = distance[y * width + x];
-        distanceTransform(line, height, result, parabolas, bounds);
-        for (let y = 0; y < height; y++) distance[y * width + x] = result[y];
+        distanceTransform(line, height, result, parabolas, bounds, nearest);
+        for (let y = 0; y < height; y++) {
+            distance[y * width + x] = result[y];
+            nearestY[y * width + x] = nearest[y];
+        }
     }
 
+    // distances beyond the outline don't matter: leaving them out of the rows saves most of their work
+    const far = (radius + 2) ** 2;
     for (let y = 0; y < height; y++) {
         const row = y * width;
-        for (let x = 0; x < width; x++) line[x] = distance[row + x];
-        distanceTransform(line, width, result, parabolas, bounds);
-        for (let x = 0; x < width; x++) distance[row + x] = result[x];
+        for (let x = 0; x < width; x++) line[x] = distance[row + x] < far ? distance[row + x] : Infinity;
+        distanceTransform(line, width, result, parabolas, bounds, nearest);
+        for (let x = 0; x < width; x++) {
+            distance[row + x] = result[x];
+            nearestX[row + x] = nearest[x];
+        }
     }
 
+    // where the glyph edge crosses an edge pixel (partly covered, or covered next to an uncovered one): from its
+    // center along the outward normal (the coverage gradient) to where a straight edge would cover it as much. The
+    // coverage has an empty border (the outline's room), so covered pixels have all their neighbors
+    const pointX = new Float32Array(count), pointY = new Float32Array(count), isEdge = new Uint8Array(count);
+    for (let y = 1; y < height - 1; y++)
+        for (let x = 1, e = y * width + 1; x < width - 1; x++, e++) {
+            const c = coverage[e];
+            if (!c || c === 255 && coverage[e - 1] >= 128 && coverage[e + 1] >= 128 && coverage[e - width] >= 128 && coverage[e + width] >= 128) continue;
+            // Sobel gradient, pointing inwards
+            const above = e - width, below = e + width;
+            const gx = coverage[above + 1] + 2 * coverage[e + 1] + coverage[below + 1] - coverage[above - 1] - 2 * coverage[e - 1] - coverage[below - 1];
+            const gy = coverage[below - 1] + 2 * coverage[below] + coverage[below + 1] - coverage[above - 1] - 2 * coverage[above] - coverage[above + 1];
+            const length = Math.sqrt(gx * gx + gy * gy);
+            if (!length) continue;
+            // the center lies 1/2 - c outside the edge
+            const outside = 0.5 - c / 255;
+            pointX[e] = x + outside * gx / length;
+            pointY[e] = y + outside * gy / length;
+            isEdge[e] = 1;
+        }
+
+    // the distance to the nearest covered pixel's center is within a pixel of the distance to the edge: outside of that
+    // band around the outline's edge, a pixel is fully covered or not at all
+    // (pixels next to the glyph edge are covered by the glyph's own antialiasing)
     const out = new Float32Array(count);
-    for (let i = 0; i < count; i++) {
-        // pixels next to the glyph edge are covered by the glyph's own antialiasing
-        const d = Math.sqrt(distance[i]);
-        out[i] = Math.max(coverage[i] / 255, Math.min(1, Math.max(0, radius + 0.5 - d)));
-    }
+    const inner = radius - 1.5, near = inner > 0 ? inner * inner : -1;
+    for (let y = 0, i = 0; y < height; y++)
+        for (let x = 0; x < width; x++, i++) {
+            const d2 = distance[i];
+            if (d2 <= near) out[i] = 1;
+            if (d2 <= near || d2 >= far) {
+                if (d2 >= far) out[i] = coverage[i] / 255;
+                continue;
+            }
+
+            // the closest edge point around the nearest covered pixel
+            const qx = nearestX[i], qy = nearestY[y * width + qx];
+            let closest = Infinity;
+            for (let wy = Math.max(0, qy - OUTLINE_WINDOW); wy <= Math.min(height - 1, qy + OUTLINE_WINDOW); wy++)
+                for (let wx = Math.max(0, qx - OUTLINE_WINDOW), e = wy * width + wx; wx <= Math.min(width - 1, qx + OUTLINE_WINDOW); wx++, e++) {
+                    if (!isEdge[e]) continue;
+                    const ex = x - pointX[e], ey = y - pointY[e];
+                    closest = Math.min(closest, ex * ex + ey * ey);
+                }
+            closest = closest === Infinity ? Math.sqrt(d2) - 0.5 : Math.sqrt(closest);
+            out[i] = Math.max(coverage[i] / 255, Math.min(1, Math.max(0, radius + 0.5 - closest)));
+        }
 
     return out;
 }
 
-// 1D squared euclidean distance transform (Felzenszwalb & Huttenlocher): lower envelope of parabolas
-function distanceTransform(f: Float64Array, n: number, d: Float64Array, v: Int32Array, z: Float64Array): void {
+// 1D squared euclidean distance transform (Felzenszwalb & Huttenlocher): lower envelope of parabolas, also the index
+// of the nearest sample
+function distanceTransform(f: Float64Array, n: number, d: Float64Array, v: Int32Array, z: Float64Array, nearest: Int32Array): void {
     let k = -1;
     for (let q = 0; q < n; q++) {
         if (f[q] === Infinity) continue;
@@ -2273,5 +2329,6 @@ function distanceTransform(f: Float64Array, n: number, d: Float64Array, v: Int32
     for (let q = 0, j = 0; q < n; q++) {
         while (z[j + 1] < q) j++;
         d[q] = (q - v[j]) ** 2 + f[v[j]];
+        nearest[q] = v[j];
     }
 }

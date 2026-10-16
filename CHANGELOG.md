@@ -39,6 +39,8 @@
 
 - The outline of `Image.renderText` (`strokeWidth`) showed through translucent text, it now only shows around the
   glyphs (opaque text renders as before).
+- The outline of `Image.renderText` follows the glyphs' antialiased edges instead of their pixels, so it is smooth
+  rather than stepped, and it reaches exactly `strokeWidth` beyond the edge.
 
 ## 3.2.1
 
