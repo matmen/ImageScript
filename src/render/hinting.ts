@@ -120,6 +120,9 @@ const MAX_INSTRUCTIONS = 1_000_000;
 /**
  * Executes TrueType instructions for one font
  */
+// the most points of a glyph with its components
+const MAX_POINTS = 65536;
+
 export class Hinter {
     font: Font;
     fpgm: Uint8Array;
@@ -131,6 +134,9 @@ export class Hinter {
     sizes = new Map<number, SizeState>();
     /** 26.6 units per font unit (16.16 fixed point) of the glyph being loaded */
     private scaleFixed = 0;
+    /** the composite glyphs being loaded, and the points loaded so far (damaged composites can contain each other) */
+    private loading = new Set<number>();
+    private points = 0;
 
     constructor(font: Font) {
         this.font = font;
@@ -201,6 +207,8 @@ export class Hinter {
         if (state.broken) return null;
 
         try {
+            this.loading.clear();
+            this.points = 0;
             const outline = this.load(glyph, state, 0);
             if (!outline) return { path: [], advance: Math.round(this.font.advance(glyph) * state.scale / 64) };
             const { zone, count } = outline;
@@ -232,9 +240,12 @@ export class Hinter {
      */
     private load(glyph: number, size: SizeState, depth: number): { zone: Zone, count: number } | null {
         if (depth > 8) throw new HintError('composite glyphs nested too deep');
+        if (this.loading.has(glyph)) throw new HintError('composite glyph containing itself');
         const font = this.font;
         const data: GlyfPoints | null = font.glyfPoints(glyph);
         if (!data) return null;
+        this.points += data.xs.length;
+        if (this.points > MAX_POINTS) throw new HintError('too many points');
 
         const scale = size.scale, scaleFixed = this.scaleFixed = size.scaleFixed;
         const lsb = font.leftSideBearing(glyph), advance = font.advance(glyph);
@@ -248,6 +259,7 @@ export class Hinter {
             const xsAll: number[] = [], ysAll: number[] = [], on: number[] = [], ends: number[] = [];
             let useMetrics: { zone: Zone, count: number } | null = null;
 
+            this.loading.add(glyph);
             for (const component of data.components) {
                 const part = this.load(component.glyph, size, depth + 1);
                 if (!part) continue;
@@ -281,6 +293,7 @@ export class Hinter {
                 if (component.useMetrics) useMetrics = part;
             }
 
+            this.loading.delete(glyph);
             count = total;
             zone = makeZone(count + 4);
             zone.ends = ends;

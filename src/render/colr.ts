@@ -20,6 +20,14 @@ export interface Coverage {
     top: number;
 }
 
+/** an area to rasterize within, in pixels (y up) */
+export interface Clip {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+}
+
 /** premultiplied RGBA (0-1) of a canvas whose pixel (0, 0) has its top left corner at (left, top), y up */
 interface Canvas {
     left: number;
@@ -37,8 +45,9 @@ export interface PaintGlyphs {
 }
 
 const MAX_DEPTH = 64;
-// samples per pixel axis
+// samples per pixel axis, fewer where the canvas would get larger than MAX_PIXELS (16 MB per layer)
 const SAMPLES = 4;
+const MAX_PIXELS = 1 << 20;
 
 const multiply = (m: Matrix, n: Matrix): Matrix => [
     m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1],
@@ -209,11 +218,11 @@ export function paintExtent(font: Font, glyphs: PaintGlyphs, glyph: number, outl
  * @param offset horizontal subpixel offset
  * @param foreground the text color (RGBA, 0xrrggbbaa) for paints in it
  * @param outline the outline of a glyph (font units)
- * @param rasterize coverage of an outline at pixel coordinates (y up)
+ * @param rasterize coverage of an outline at pixel coordinates (y up), within a clip
  * @return the pixels and their placement relative to the pen position on the baseline (top measured upwards)
  */
 export function renderPaintGlyph(font: Font, glyphs: PaintGlyphs, glyph: number, scale: number, offset: number, foreground: number,
-    outline: (glyph: number) => PathCommand[], rasterize: (path: PathCommand[]) => Coverage | null): { data: Uint8ClampedArray, width: number, height: number, left: number, top: number } | null {
+    outline: (glyph: number) => PathCommand[], rasterize: (path: PathCommand[], clip: Clip) => Coverage | null): { data: Uint8ClampedArray, width: number, height: number, left: number, top: number } | null {
     const root = glyphs.paint(glyph);
     if (root === null) return null;
     const p = paintsFor(font, glyphs);
@@ -223,13 +232,16 @@ export function renderPaintGlyph(font: Font, glyphs: PaintGlyphs, glyph: number,
     const clip = glyphs.clip(glyph);
     const box = clip ? [clip[0] * scale + offset, clip[1] * scale, clip[2] * scale + offset, clip[3] * scale] as Box : p.bounds(root, base, outline);
     if (!box) return null;
-    const left = Math.floor(box[0]), top = Math.ceil(box[3]);
-    const width = Math.ceil(box[2]) - left, height = top - Math.floor(box[1]);
-    if (width <= 0 || height <= 0 || width * height * SAMPLES * SAMPLES > 1 << 24) return null;
+    // within two ems around the em box (damaged fonts can have huge clip boxes and transforms)
+    const em = font.unitsPerEm * scale;
+    const left = Math.floor(Math.max(box[0], -2 * em)), top = Math.ceil(Math.min(box[3], 3 * em));
+    const width = Math.ceil(Math.min(box[2], 3 * em)) - left, height = top - Math.floor(Math.max(box[1], -3 * em));
+    if (!(width > 0 && height > 0) || width * height > MAX_PIXELS) return null;
 
-    // rendered at SAMPLES times the size and averaged down: layers sharing an edge would otherwise each be antialiased
-    // there, and the ones below would show through
-    const S = SAMPLES, canvas: Canvas = { left: left * S, top: top * S, width: width * S, height: height * S };
+    // rendered at up to SAMPLES times the size and averaged down: layers sharing an edge would otherwise each be
+    // antialiased there, and the ones below would show through
+    const S = Math.max(1, Math.min(SAMPLES, Math.floor(Math.sqrt(MAX_PIXELS / (width * height)))));
+    const canvas: Canvas = { left: left * S, top: top * S, width: width * S, height: height * S };
     const layer = render(p, root, [scale * S, 0, 0, scale * S, offset * S, 0], canvas, [0, 0, canvas.width, canvas.height], foreground, outline, rasterize, 0);
     const sum = new Float32Array(width * height * 4);
     if (layer) {
@@ -261,7 +273,7 @@ const empty = (box: Box): boolean => box[0] >= box[2] || box[1] >= box[3];
 // renders a paint into a new layer, only within the region [x0, y0, x1, y1) of the canvas, null if it draws nothing
 // there
 function render(p: Paints, paint: number, m: Matrix, canvas: Canvas, region: Box, foreground: number,
-    outline: (glyph: number) => PathCommand[], rasterize: (path: PathCommand[]) => Coverage | null, depth: number): Layer | null {
+    outline: (glyph: number) => PathCommand[], rasterize: (path: PathCommand[], clip: Clip) => Coverage | null, depth: number): Layer | null {
     if (depth > MAX_DEPTH || empty(region)) return null;
     const font = p.font, format = font.u8(paint);
     const next = (child: number, matrix: Matrix, r: Box): Layer | null => render(p, child, matrix, canvas, r, foreground, outline, rasterize, depth + 1);
@@ -290,8 +302,9 @@ function render(p: Paints, paint: number, m: Matrix, canvas: Canvas, region: Box
 
         // the child paint within a glyph's outline
         case 10: {
+            // rasterized within the region only
             const path = outline(font.u16(paint + 4)).map(command => transformCommand(command, m));
-            const mask = rasterize(path);
+            const mask = rasterize(path, { left: canvas.left + region[0], right: canvas.left + region[2], top: canvas.top - region[1], bottom: canvas.top - region[3] });
             if (!mask) return null;
             // the mask's pixels on the canvas
             const mx = mask.left - canvas.left, my = canvas.top - mask.top;
