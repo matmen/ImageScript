@@ -2031,17 +2031,21 @@ export class Image {
 
     /**
      * Creates a new image containing the rendered text.
-     * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use
+     * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use, or several by priority: every character
+     *     comes from the first font that has it (e.g. `[text, emoji]`), the first one sets the line height. Color
+     *     glyphs (COLR version 0 layers and CBDT bitmaps, as in emoji fonts) keep their colors
      * @param size Font size in pixels (per em)
      * @param text Text to render
      * @param options Color, layout and style, see {@link TextOptions}; the image grows by the outline width on every
      *     side
      * @return The rendered text
      */
-    static renderText(font: BinaryData, size: number, text: string, options?: TextOptions): Promise<Image>;
+    static renderText(font: BinaryData | BinaryData[], size: number, text: string, options?: TextOptions): Promise<Image>;
     /**
      * Creates a new image containing the rendered text.
-     * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use
+     * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use, or several by priority: every character
+     *     comes from the first font that has it (e.g. `[text, emoji]`), the first one sets the line height. Color
+     *     glyphs (COLR version 0 layers and CBDT bitmaps, as in emoji fonts) keep their colors
      * @param size Font size in pixels (per em)
      * @param text Text to render
      * @param [color=0xffffffff] Text color to use
@@ -2049,15 +2053,18 @@ export class Image {
      * @param style Outline, see {@link TextStyle}; the image grows by the outline width on every side
      * @return The rendered text
      */
-    static renderText(font: BinaryData, size: number, text: string, color?: Color, layout?: TextLayout, style?: TextStyle): Promise<Image>;
-    static async renderText(font: BinaryData, size: number, text: string, colorOrOptions: Color | TextOptions = 0xffffffff, layoutArgument?: TextLayout, styleArgument: TextStyle = {}): Promise<Image> {
+    static renderText(font: BinaryData | BinaryData[], size: number, text: string, color?: Color, layout?: TextLayout, style?: TextStyle): Promise<Image>;
+    static async renderText(font: BinaryData | BinaryData[], size: number, text: string, colorOrOptions: Color | TextOptions = 0xffffffff, layoutArgument?: TextLayout, styleArgument: TextStyle = {}): Promise<Image> {
         const options: TextOptions = isOptions(colorOrOptions) ? colorOrOptions : { ...styleArgument, color: colorOrOptions, layout: layoutArgument };
         const { color = 0xffffffff, layout = new TextLayout(), strokeWidth = 0, strokeColor = 0x000000ff, hinting = true } = options;
         if (isNaN(strokeWidth) || strokeWidth < 0)
             throw new RangeError('Invalid stroke width');
+        const fonts = Array.isArray(font) ? font : [font];
+        if (!fonts.length) throw new RangeError('No font given');
 
-        const rendered = textRenderer.render(view(font), size, text, layout, hinting);
         const [r, g, b, a] = Image.colorToRGBA(color);
+        // color glyph layers in the text color take it without its alpha, which applies to the whole color glyph
+        const rendered = await textRenderer.render(fonts.map(view), size, text, layout, hinting, (r << 24 | g << 16 | b << 8 | 255) >>> 0);
 
         // the outline needs room around the glyphs
         const pad = Math.ceil(strokeWidth);
@@ -2065,11 +2072,17 @@ export class Image {
         const coverage = new Uint8Array(width * height);
         for (let y = 0; y < rendered.height; y++)
             coverage.set(rendered.coverage.subarray(y * rendered.width, (y + 1) * rendered.width), (y + pad) * width + pad);
+        let colored: Uint8ClampedArray | null = null;
+        if (rendered.color) {
+            colored = new Uint8ClampedArray(width * height * 4);
+            for (let y = 0; y < rendered.height; y++)
+                colored.set(rendered.color.subarray(y * rendered.width * 4, (y + 1) * rendered.width * 4), ((y + pad) * width + pad) * 4);
+        }
 
         const image = new Image(width, height);
         const bitmap = image.bitmap;
 
-        if (!strokeWidth) {
+        if (!strokeWidth && !colored) {
             for (let i = 0; i < coverage.length; i++) {
                 if (!coverage[i]) continue;
                 bitmap[i * 4] = r;
@@ -2080,19 +2093,38 @@ export class Image {
             return image;
         }
 
-        const stroke = outline(coverage, width, height, strokeWidth);
+        // the outline goes around the color glyphs as well
+        let shape = coverage;
+        if (colored && strokeWidth) {
+            shape = coverage.slice();
+            for (let i = 0; i < shape.length; i++) shape[i] = Math.max(shape[i], colored[i * 4 + 3]);
+        }
+        const stroke = strokeWidth ? outline(shape, width, height, strokeWidth) : null;
         const [sr, sg, sb, sa] = Image.colorToRGBA(strokeColor);
 
-        // the glyphs drawn over their outline
+        // color glyphs over the text (premultiplied, with the text's alpha), both over their outline
         for (let i = 0; i < coverage.length; i++) {
-            const af = coverage[i] / 255 * a / 255, as = stroke[i] * sa / 255;
-            const ao = af + as * (1 - af);
-            if (ao <= 0) continue;
+            let af = coverage[i] / 255 * a / 255, pr = r * af, pg = g * af, pb = b * af;
+            if (colored && colored[i * 4 + 3]) {
+                const ca = colored[i * 4 + 3] / 255 * a / 255, keep = 1 - ca, f = a / 255;
+                pr = colored[i * 4] * f + pr * keep;
+                pg = colored[i * 4 + 1] * f + pg * keep;
+                pb = colored[i * 4 + 2] * f + pb * keep;
+                af = ca + af * keep;
+            }
+            if (stroke) {
+                const as = stroke[i] * sa / 255 * (1 - af);
+                pr += sr * as;
+                pg += sg * as;
+                pb += sb * as;
+                af += as;
+            }
+            if (af <= 0) continue;
 
-            bitmap[i * 4] = (r * af + sr * as * (1 - af)) / ao;
-            bitmap[i * 4 + 1] = (g * af + sg * as * (1 - af)) / ao;
-            bitmap[i * 4 + 2] = (b * af + sb * as * (1 - af)) / ao;
-            bitmap[i * 4 + 3] = ao * 255;
+            bitmap[i * 4] = pr / af;
+            bitmap[i * 4 + 1] = pg / af;
+            bitmap[i * 4 + 2] = pb / af;
+            bitmap[i * 4 + 3] = af * 255;
         }
 
         return image;

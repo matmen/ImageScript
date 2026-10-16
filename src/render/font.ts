@@ -42,7 +42,8 @@ export class Font {
     lineGap: number;
     numberOfHMetrics: number;
     numGlyphs: number;
-    outlines: 'glyf' | 'cff';
+    /** where the glyph outlines come from ('none' for fonts with only bitmap glyphs) */
+    outlines: 'glyf' | 'cff' | 'none';
     cff: CFF | null = null;
     cmap: (codepoint: number) => number;
     outlineCache: Map<number, PathCommand[]>;
@@ -89,6 +90,7 @@ export class Font {
             this.outlines = 'cff';
             this.cff = parseCFF(this, this.tables['CFF '].offset);
         } else if (this.tables.CFF2) throw new Error('Font: CFF2 outlines are not supported');
+        else if (this.tables.CBDT && this.tables.CBLC) this.outlines = 'none';
         else throw new Error('Font: no supported glyph outlines');
 
         this.cmap = parseCmap(this, this.tables.cmap.offset);
@@ -221,7 +223,7 @@ export class Font {
         if (glyph >= this.numGlyphs) glyph = 0;
         let path = this.outlineCache.get(glyph);
         if (!path) {
-            path = this.outlines === 'glyf' ? this.glyfOutline(glyph, 0) : this.cffOutline(glyph);
+            path = this.outlines === 'glyf' ? this.glyfOutline(glyph, 0) : this.outlines === 'cff' ? this.cffOutline(glyph) : [];
             this.outlineCache.set(glyph, path);
         }
         return path;
