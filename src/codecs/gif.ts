@@ -28,6 +28,30 @@ export interface GIFData {
     frames: GIFFrame[];
 }
 
+/** A decoded frame: color indices (in display order) and what they stand for */
+export interface DecodedGIFFrame {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    /** Frame delay in centiseconds */
+    delay: number;
+    /** ImageScript disposal mode (0 any, 1 keep, 2 previous, 3 background) */
+    dispose: number;
+    indices: Uint8Array;
+    /** RGBA of every index as a 32-bit word (indices past the color table are opaque black) */
+    colors: Uint32Array;
+    /** -1 if none */
+    transparentIndex: number;
+}
+
+export interface DecodedGIF {
+    width: number;
+    height: number;
+    loopCount: number;
+    frames: DecodedGIFFrame[];
+}
+
 interface GraphicControl {
     dispose: number;
     delay: number;
@@ -182,7 +206,7 @@ function writeSubBlocks(out: ByteWriter, data: Uint8Array): void {
  * @param {boolean} [onlyFirstFrame=false]
  * @return {{width: number, height: number, loopCount: number, frames: GIFFrame[]}}
  */
-export function decode(data: Uint8Array, onlyFirstFrame = false): GIFData {
+export function decode(data: Uint8Array, onlyFirstFrame = false): DecodedGIF {
     const reader = new ByteReader(data);
 
     const signature = reader.string(6);
@@ -195,7 +219,7 @@ export function decode(data: Uint8Array, onlyFirstFrame = false): GIFData {
 
     const globalTable = flags & 0x80 ? reader.slice(3 << (flags & 7) + 1) : null;
 
-    const frames: GIFFrame[] = [];
+    const frames: DecodedGIFFrame[] = [];
     let loopCount = 0;
     let control: GraphicControl | null = null;
 
@@ -269,24 +293,22 @@ export function decode(data: Uint8Array, onlyFirstFrame = false): GIFData {
             control = null;
             if (!fw || !fh) continue;
 
-            const pixels = new Uint8Array(fw * fh * 4);
-            const rows = interlaced ? interlacedRows(fh) : null;
-
-            // the RGBA value of every index: transparent stays 0, indices past the color table are opaque black
-            const colors = new Uint8Array(256 * 4);
+            // the RGBA value of every index: indices past the color table are opaque black (the transparent one is
+            // skipped when compositing)
+            const colors = new Uint32Array(256), bytes = new Uint8Array(colors.buffer);
             for (let index = 0; index < 256; index++) {
-                if (index === transparentIndex) continue;
-                if (table && index * 3 + 2 < table.length) colors.set(table.subarray(index * 3, index * 3 + 3), index * 4);
-                colors[index * 4 + 3] = 0xff;
-            }
-            const lookup = new Uint32Array(colors.buffer), out = new Uint32Array(pixels.buffer);
-
-            for (let row = 0; row < fh; row++) {
-                const target = (rows ? rows[row] : row) * fw, source = row * fw;
-                for (let column = 0; column < fw; column++) out[target + column] = lookup[indices[source + column]];
+                if (table && index * 3 + 2 < table.length) bytes.set(table.subarray(index * 3, index * 3 + 3), index * 4);
+                bytes[index * 4 + 3] = 0xff;
             }
 
-            frames.push({ x, y, width: fw, height: fh, delay, dispose, pixels });
+            let ordered = indices;
+            if (interlaced) {
+                const rows = interlacedRows(fh);
+                ordered = new Uint8Array(indices.length);
+                for (let row = 0; row < fh; row++) ordered.set(indices.subarray(row * fw, (row + 1) * fw), rows[row] * fw);
+            }
+
+            frames.push({ x, y, width: fw, height: fh, delay, dispose, indices: ordered, colors, transparentIndex });
             if (onlyFirstFrame) break;
         }
     }
@@ -294,16 +316,15 @@ export function decode(data: Uint8Array, onlyFirstFrame = false): GIFData {
 
 /**
  * Composites decoded frames onto the logical screen, applying their disposal modes
- * @param {{width: number, height: number, frames: GIFFrame[]}} gif output of {@link decode}
- * @return {Array<{pixels: Uint8Array, delay: number}>} full screen RGBA frames
+ * @return full screen RGBA frames
  */
-export function composite({ width, height, frames }: GIFData): Array<{ pixels: Uint8Array, delay: number }> {
+export function composite({ width, height, frames }: DecodedGIF): Array<{ pixels: Uint8Array, delay: number }> {
     const canvas = new Uint32Array(width * height);
     const output = [];
 
     for (const frame of frames) {
         const previous = frame.dispose === 2 ? canvas.slice() : null;
-        const src = new Uint32Array(frame.pixels.buffer, frame.pixels.byteOffset, frame.width * frame.height);
+        const { indices, colors, transparentIndex } = frame;
 
         // clip the frame to the logical screen
         const x0 = Math.min(frame.x, width), x1 = Math.min(frame.x + frame.width, width);
@@ -313,8 +334,11 @@ export function composite({ width, height, frames }: GIFData): Array<{ pixels: U
             const srcRow = (y - frame.y) * frame.width - frame.x;
             const dstRow = y * width;
 
-            for (let x = x0; x < x1; x++)
-                if (frame.pixels[(srcRow + x) * 4 + 3] !== 0) canvas[dstRow + x] = src[srcRow + x];
+            if (transparentIndex < 0) for (let x = x0; x < x1; x++) canvas[dstRow + x] = colors[indices[srcRow + x]];
+            else for (let x = x0; x < x1; x++) {
+                const index = indices[srcRow + x];
+                if (index !== transparentIndex) canvas[dstRow + x] = colors[index];
+            }
         }
 
         output.push({ pixels: new Uint8Array(canvas.slice().buffer), delay: frame.delay });

@@ -13,6 +13,8 @@
   32-bit words, two channels per sum. Results differ from 3.2.0 by at most 1 per channel (2 for radii above 10).
   Transparent images are blurred premultiplied in 8 bits, like browsers do: the color of pixels that are almost
   transparent can differ more, what shows when they're composited stays within 2 steps.
+- Decoding GIF animations is about 35% faster, with identical results: frames are composited from their color
+  indices instead of an RGBA copy of each, and the composited frames aren't copied again.
 
 ### Fixes
 
