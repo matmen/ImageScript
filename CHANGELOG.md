@@ -9,9 +9,15 @@
   `fast: false` keeps the more precise results of 3.2.1.
   - Opaque images: halving a 1920×1080 photo takes 12 instead of 15 ms, doubling it 61 instead of 80 ms. About 10-25%
     of the channel values differ from 3.2.1, by at most 1.
-  - Transparent images are premultiplied to 8 bits, like browsers do: halving takes 24 instead of 43 ms, doubling 119
+  - Transparent images are premultiplied to 8 bits, like browsers do: halving takes 24 instead of 43 ms, doubling 103
     instead of 260 ms. What shows once they're composited differs from 3.2.1 by up to about 2 steps (alpha by at most 2),
     the color of pixels that are almost transparent can differ more.
+
+### Performance
+
+- Lossless WebP encoding is about 40% faster and decoding about 15% faster (1920×1080 photo: 735 instead of 1220 ms,
+  82 instead of 95 ms), with identical output: the predictors run as one loop per mode instead of a switch per pixel,
+  residual costs come from a table, and the LZ77 search hashes every pixel pair once.
 
 ## 3.2.1
 

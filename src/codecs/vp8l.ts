@@ -370,24 +370,28 @@ function select(l: number, t: number, tl: number): number {
 // adds two ARGB pixels per channel, modulo 256
 const addPixels = (a: number, b: number): number => ((a & 0xff00ff00) + (b & 0xff00ff00) & 0xff00ff00 | (a & 0x00ff00ff) + (b & 0x00ff00ff) & 0x00ff00ff) >>> 0;
 
-function predict(mode: number, p: Uint32Array, i: number, width: number): number {
-    const l = p[i - 1], t = p[i - width], tl = p[i - width - 1], tr = p[i - width + 1];
+// predictions of `n` pixels from index i on (not in the first row or column) into out, from the pixels in p; with
+// out === p, every pixel is the residual plus its prediction from the pixels already restored (decoding)
+function predictRun(mode: number, p: Uint32Array, i: number, n: number, width: number, out: Uint32Array, o: number): void {
+    const restore = out === p;
+    const end = i + n;
+    // the switch runs once per run instead of once per pixel
     switch (mode) {
-        case 0: return 0xff000000;
-        case 1: return l;
-        case 2: return t;
-        case 3: return tr;
-        case 4: return tl;
-        case 5: return average2(average2(l, tr), t);
-        case 6: return average2(l, tl);
-        case 7: return average2(l, t);
-        case 8: return average2(tl, t);
-        case 9: return average2(t, tr);
-        case 10: return average2(average2(l, tl), average2(t, tr));
-        case 11: return select(l, t, tl);
-        case 12: return clampAddSubtractFull(l, t, tl);
-        case 13: return clampAddSubtractHalf(average2(l, t), tl);
-        default: return 0xff000000; // modes 14 and 15 aren't defined, libwebp predicts black like mode 0
+        case 1: for (; i < end; i++, o++) out[o] = restore ? addPixels(p[i], p[i - 1]) : p[i - 1]; return;
+        case 2: for (; i < end; i++, o++) out[o] = restore ? addPixels(p[i], p[i - width]) : p[i - width]; return;
+        case 3: for (; i < end; i++, o++) out[o] = restore ? addPixels(p[i], p[i - width + 1]) : p[i - width + 1]; return;
+        case 4: for (; i < end; i++, o++) out[o] = restore ? addPixels(p[i], p[i - width - 1]) : p[i - width - 1]; return;
+        case 5: for (; i < end; i++, o++) { const v = average2(average2(p[i - 1], p[i - width + 1]), p[i - width]); out[o] = restore ? addPixels(p[i], v) : v; } return;
+        case 6: for (; i < end; i++, o++) { const v = average2(p[i - 1], p[i - width - 1]); out[o] = restore ? addPixels(p[i], v) : v; } return;
+        case 7: for (; i < end; i++, o++) { const v = average2(p[i - 1], p[i - width]); out[o] = restore ? addPixels(p[i], v) : v; } return;
+        case 8: for (; i < end; i++, o++) { const v = average2(p[i - width - 1], p[i - width]); out[o] = restore ? addPixels(p[i], v) : v; } return;
+        case 9: for (; i < end; i++, o++) { const v = average2(p[i - width], p[i - width + 1]); out[o] = restore ? addPixels(p[i], v) : v; } return;
+        case 10: for (; i < end; i++, o++) { const v = average2(average2(p[i - 1], p[i - width - 1]), average2(p[i - width], p[i - width + 1])); out[o] = restore ? addPixels(p[i], v) : v; } return;
+        case 11: for (; i < end; i++, o++) { const v = select(p[i - 1], p[i - width], p[i - width - 1]); out[o] = restore ? addPixels(p[i], v) : v; } return;
+        case 12: for (; i < end; i++, o++) { const v = clampAddSubtractFull(p[i - 1], p[i - width], p[i - width - 1]); out[o] = restore ? addPixels(p[i], v) : v; } return;
+        case 13: for (; i < end; i++, o++) { const v = clampAddSubtractHalf(average2(p[i - 1], p[i - width]), p[i - width - 1]); out[o] = restore ? addPixels(p[i], v) : v; } return;
+        // mode 0, and modes 14 and 15 (not defined, libwebp predicts black like mode 0)
+        default: for (; i < end; i++, o++) out[o] = restore ? addPixels(p[i], 0xff000000) : 0xff000000;
     }
 }
 
@@ -403,10 +407,10 @@ function inversePredictor(p: Uint32Array, width: number, height: number, bits: n
         // first column: top
         p[row] = addPixels(p[row], p[row - width]);
         const modeRow = (y >> bits) * blocksPerRow;
-        for (let x = 1; x < width; x++) {
-            const mode = modes[modeRow + (x >> bits)] >> 8 & 15;
-            const i = row + x;
-            p[i] = addPixels(p[i], predict(mode, p, i, width));
+        for (let x = 1; x < width;) {
+            const end = Math.min(width, (x >> bits) + 1 << bits);
+            predictRun(modes[modeRow + (x >> bits)] >> 8 & 15, p, row + x, end - x, width, p, row + x);
+            x = end;
         }
     }
 }
@@ -780,10 +784,12 @@ function tokenize(pixels: Uint32Array, width: number, cacheBits: number): Stream
     const HASH_BITS = 15, CHAIN = 24, MAX_LENGTH = 4096, MIN_LENGTH = 3, WINDOW = (1 << 20) - 120;
     const head = new Int32Array(1 << HASH_BITS).fill(-1);
     const chain = new Int32Array(n);
-    const hash = (i: number): number => Math.imul(Math.imul(pixels[i], 0x1e35a7bd) ^ pixels[i + 1], 0x9e3779b1) >>> 32 - HASH_BITS;
+    // hashes of the pixel pairs starting at every index (but the last)
+    const hashes = new Int32Array(n);
+    for (let i = 0; i + 1 < n; i++) hashes[i] = Math.imul(Math.imul(pixels[i], 0x1e35a7bd) ^ pixels[i + 1], 0x9e3779b1) >>> 32 - HASH_BITS;
     const insert = (i: number): void => {
         if (i + 1 >= n) return;
-        const h = hash(i);
+        const h = hashes[i];
         chain[i] = head[h];
         head[h] = i;
     };
@@ -811,7 +817,7 @@ function tokenize(pixels: Uint32Array, width: number, cacheBits: number): Stream
             if (l > bestLength) { bestLength = l; bestDistance = width; }
         }
         if (i + 1 < n && bestLength < MAX_LENGTH) {
-            for (let j = head[hash(i)], k = 0; j >= 0 && k < CHAIN && i - j <= WINDOW; j = chain[j], k++) {
+            for (let j = head[hashes[i]], k = 0; j >= 0 && k < CHAIN && i - j <= WINDOW; j = chain[j], k++) {
                 // the chain goes from near to far: a candidate no closer than the best one only wins by being
                 // longer, which it can't be if it differs right after the best length
                 if (i - j >= bestDistance && (i + bestLength >= n || pixels[j + bestLength] !== pixels[i + bestLength])) continue;
@@ -901,11 +907,11 @@ function writeImage(w: BitWriter, pixels: Uint32Array, width: number, isMain: bo
 // subtracts two ARGB pixels per channel, modulo 256
 const subPixels = (a: number, b: number): number => ((a | 0x00ff00ff) - (b & 0xff00ff00) & 0xff00ff00 | (a | 0xff00ff00) - (b & 0x00ff00ff) & 0x00ff00ff) >>> 0;
 
-// cost estimate of a residual: sum of the channels' distances to zero (as signed bytes)
-function residualCost(r: number): number {
-    const c0 = r & 255, c1 = r >>> 8 & 255, c2 = r >>> 16 & 255, c3 = r >>> 24;
-    return (c0 < 128 ? c0 : 256 - c0) + (c1 < 128 ? c1 : 256 - c1) + (c2 < 128 ? c2 : 256 - c2) + (c3 < 128 ? c3 : 256 - c3);
-}
+// distance of a residual byte to zero (as a signed byte)
+const BYTE_COST = Uint8Array.from({ length: 256 }, (_, c) => c < 128 ? c : 256 - c);
+
+// cost estimate of a residual: sum of the channels' distances to zero
+const residualCost = (r: number): number => BYTE_COST[r & 255] + BYTE_COST[r >>> 8 & 255] + BYTE_COST[r >>> 16 & 255] + BYTE_COST[r >>> 24];
 
 /**
  * Picks a predictor per block and replaces the pixels with their residuals
@@ -916,10 +922,19 @@ function applyPredictor(p: Uint32Array, width: number, height: number, bits: num
     const modes = new Uint32Array(blocksX * blocksY);
     const size = 1 << bits;
 
-    // predictions use the original pixels, so modes are chosen and residuals computed on a copy
-    const src = p.slice();
-    const predictAt = (mode: number, i: number, x: number, y: number): number =>
-        y === 0 ? (x === 0 ? 0xff000000 : src[i - 1]) : x === 0 ? src[i - width] : predict(mode, src, i, width);
+    // predictions use the original pixels, so modes are chosen and residuals computed on a copy. A block's rows are
+    // predicted into `predicted` (the first row from the left, the first column from the top, whatever the mode)
+    const src = p.slice(), predicted = new Uint32Array(size);
+    const predictRow = (mode: number, x0: number, x1: number, y: number): void => {
+        const row = y * width;
+        if (y === 0) {
+            for (let x = x0; x < x1; x++) predicted[x - x0] = x === 0 ? 0xff000000 : src[row + x - 1];
+            return;
+        }
+        let x = x0;
+        if (x === 0) predicted[x++] = src[row - width];
+        predictRun(mode, src, row + x, x1 - x, width, predicted, x - x0);
+    };
 
     for (let by = 0; by < blocksY; by++)
         for (let bx = 0; bx < blocksX; bx++) {
@@ -927,19 +942,17 @@ function applyPredictor(p: Uint32Array, width: number, height: number, bits: num
             const x0 = bx * size, y0 = by * size, x1 = Math.min(width, x0 + size), y1 = Math.min(height, y0 + size);
             for (let mode = 0; mode < 14; mode++) {
                 let cost = 0;
-                for (let y = y0; y < y1 && cost < bestCost; y++)
-                    for (let x = x0; x < x1; x++) {
-                        const i = y * width + x;
-                        cost += residualCost(subPixels(src[i], predictAt(mode, i, x, y)));
-                    }
+                for (let y = y0; y < y1 && cost < bestCost; y++) {
+                    predictRow(mode, x0, x1, y);
+                    for (let x = x0, i = y * width + x0; x < x1; x++, i++) cost += residualCost(subPixels(src[i], predicted[x - x0]));
+                }
                 if (cost < bestCost) { bestCost = cost; best = mode; }
             }
             modes[by * blocksX + bx] = (0xff000000 | best << 8) >>> 0;
-            for (let y = y0; y < y1; y++)
-                for (let x = x0; x < x1; x++) {
-                    const i = y * width + x;
-                    p[i] = subPixels(src[i], predictAt(best, i, x, y));
-                }
+            for (let y = y0; y < y1; y++) {
+                predictRow(best, x0, x1, y);
+                for (let x = x0, i = y * width + x0; x < x1; x++, i++) p[i] = subPixels(src[i], predicted[x - x0]);
+            }
         }
 
     return modes;
