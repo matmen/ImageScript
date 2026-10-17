@@ -253,8 +253,6 @@ export class Hinter {
 
         if (data.components) {
             // hint the components on their own, then place them
-            const parts: Array<{ zone: Zone, count: number }> = [];
-            const placed: Array<{ dx: number, dy: number }> = [];
             let total = 0;
             const xsAll: number[] = [], ysAll: number[] = [], on: number[] = [], ends: number[] = [];
             let useMetrics: { zone: Zone, count: number } | null = null;
@@ -279,8 +277,6 @@ export class Hinter {
                     dy = mulFix(component.dy, scaleFixed);
                     if (component.round) { dx = Math.round(dx / 64) * 64; dy = Math.round(dy / 64) * 64; }
                 }
-                placed.push({ dx, dy });
-
                 for (let i = 0; i < part.count; i++) {
                     const x = part.zone.curX[i], y = part.zone.curY[i];
                     xsAll.push(transformed ? a * x + c * y + dx : x + dx);
@@ -289,7 +285,6 @@ export class Hinter {
                 }
                 for (const end of part.zone.ends) ends.push(end + total);
                 total += part.count;
-                parts.push(part);
                 if (component.useMetrics) useMetrics = part;
             }
 

@@ -350,7 +350,7 @@ function resampleFast(src: Uint8ClampedArray, width: number, height: number, out
         rows = new Int32Array(width * outHeight);
         if (verticalFast(pixels, rows, width, outHeight, vertical) >>> 24 !== 255 && opaque) {
             opaque = false;
-            verticalFast(pixels = premultiplied(), rows, width, outHeight, vertical);
+            verticalFast(premultiplied(), rows, width, outHeight, vertical);
         }
     }
 

@@ -108,72 +108,71 @@ function inflate(dat: Uint8Array, buf: Uint8Array): Uint8Array {
 
     const tbts = sl * 8;
     let final = 0, pos = 0, bt = 0;
-    let lm: Uint16Array | null = null, dm: Uint16Array | null = null, lbt = 0, dbt = 0;
 
     do {
-        if (!lm) {
-            final = bits(dat, pos, 1);
-            const type = bits(dat, pos + 1, 3);
-            pos += 3;
+        let lm: Uint16Array, dm: Uint16Array | null = null, lbt: number, dbt = 0;
+        // a block's header (every block is decoded to its end before the next one)
+        final = bits(dat, pos, 1);
+        const type = bits(dat, pos + 1, 3);
+        pos += 3;
 
-            if (!type) {
-                // stored block
-                const s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
-                if (t > sl) throw new Error('zlib: unexpected end of data');
-                if (bt < buf.length) buf.set(dat.subarray(s, Math.min(t, s + buf.length - bt)), bt);
-                bt += l;
-                pos = t * 8;
-                continue;
-            } else if (type === 1) {
-                lm = flrm;
-                dm = fdrm;
-                lbt = 9;
-                dbt = 5;
-            } else if (type === 2) {
-                // dynamic huffman tables
-                const hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
-                const tl = hLit + bits(dat, pos + 5, 31) + 1;
-                pos += 14;
+        if (!type) {
+            // stored block
+            const s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
+            if (t > sl) throw new Error('zlib: unexpected end of data');
+            if (bt < buf.length) buf.set(dat.subarray(s, Math.min(t, s + buf.length - bt)), bt);
+            bt += l;
+            pos = t * 8;
+            continue;
+        } else if (type === 1) {
+            lm = flrm;
+            dm = fdrm;
+            lbt = 9;
+            dbt = 5;
+        } else if (type === 2) {
+            // dynamic huffman tables
+            const hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
+            const tl = hLit + bits(dat, pos + 5, 31) + 1;
+            pos += 14;
 
-                const ldt = new u8(tl);
-                const clt = new u8(19);
-                for (let i = 0; i < hcLen; ++i) clt[clim[i]] = bits(dat, pos + i * 3, 7);
-                pos += hcLen * 3;
+            const ldt = new u8(tl);
+            const clt = new u8(19);
+            for (let i = 0; i < hcLen; ++i) clt[clim[i]] = bits(dat, pos + i * 3, 7);
+            pos += hcLen * 3;
 
-                const clb = max(clt), clbmsk = (1 << clb) - 1;
-                const clm = hMap(clt, clb, true);
-                for (let i = 0; i < tl;) {
-                    const r = clm[bits(dat, pos, clbmsk)];
-                    pos += r & 15;
-                    const s = r >> 4;
+            const clb = max(clt), clbmsk = (1 << clb) - 1;
+            const clm = hMap(clt, clb, true);
+            for (let i = 0; i < tl;) {
+                const r = clm[bits(dat, pos, clbmsk)];
+                pos += r & 15;
+                const s = r >> 4;
 
-                    if (s < 16) ldt[i++] = s;
-                    else {
-                        let c = 0, n = 0;
-                        if (s === 16) {
-                            n = 3 + bits(dat, pos, 3);
-                            pos += 2;
-                            c = ldt[i - 1];
-                        } else if (s === 17) {
-                            n = 3 + bits(dat, pos, 7);
-                            pos += 3;
-                        } else if (s === 18) {
-                            n = 11 + bits(dat, pos, 127);
-                            pos += 7;
-                        }
-                        while (n--) ldt[i++] = c;
+                if (s < 16) ldt[i++] = s;
+                else {
+                    let c = 0, n = 0;
+                    if (s === 16) {
+                        n = 3 + bits(dat, pos, 3);
+                        pos += 2;
+                        c = ldt[i - 1];
+                    } else if (s === 17) {
+                        n = 3 + bits(dat, pos, 7);
+                        pos += 3;
+                    } else if (s === 18) {
+                        n = 11 + bits(dat, pos, 127);
+                        pos += 7;
                     }
+                    while (n--) ldt[i++] = c;
                 }
+            }
 
-                const lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
-                lbt = max(lt);
-                dbt = max(dt);
-                lm = hMap(lt, lbt, true);
-                dm = hMap(dt, dbt, true);
-            } else throw new Error('zlib: invalid block type');
+            const lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
+            lbt = max(lt);
+            dbt = max(dt);
+            lm = hMap(lt, lbt, true);
+            dm = hMap(dt, dbt, true);
+        } else throw new Error('zlib: invalid block type');
 
-            if (pos > tbts) throw new Error('zlib: unexpected end of data');
-        }
+        if (pos > tbts) throw new Error('zlib: unexpected end of data');
 
         const lms = (1 << lbt) - 1, dms = (1 << dbt) - 1;
         for (; ;) {
@@ -183,10 +182,8 @@ function inflate(dat: Uint8Array, buf: Uint8Array): Uint8Array {
             if (!c) throw new Error('zlib: invalid length/literal');
 
             if (sym < 256) buf[bt++] = sym;
-            else if (sym === 256) {
-                lm = null;
-                break;
-            } else {
+            else if (sym === 256) break;
+            else {
                 let add = sym - 254;
                 if (sym > 264) {
                     const i = sym - 257, b = fleb[i];
