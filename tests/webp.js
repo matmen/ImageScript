@@ -7,7 +7,7 @@ const panic = message => {
     process.exit(1);
 };
 
-const sha256 = data => crypto.createHash('sha256').update(data).digest('hex');
+const sha256 = data => crypto.createHash('sha256').update(new Uint8Array(data)).digest('hex');
 
 // sha256 of the RGBA output of libwebp (through Pillow) for files written by libwebp
 const expected = {

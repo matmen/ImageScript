@@ -24,7 +24,7 @@ const expected = {
 (async () => {
     for (const [name, hash] of Object.entries(expected)) {
         const image = await Image.decode(await fs.readFile(`./tests/pngsuite/${name}.png`));
-        const actual = crypto.createHash('sha256').update(image.bitmap).digest('hex');
+        const actual = crypto.createHash('sha256').update(new Uint8Array(image.bitmap)).digest('hex');
         if (actual !== hash) panic(`${name}: decoded pixels don't match`);
     }
 

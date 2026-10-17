@@ -27,6 +27,6 @@ const expected = {
 
         const image = await Image.decode(binary);
         if (image.width !== 157 || image.height !== 101) panic(`${name}: dimensions don't match`);
-        if (crypto.createHash('sha256').update(image.bitmap).digest('hex') !== hash) panic(`${name}: decoded pixels don't match`);
+        if (crypto.createHash('sha256').update(new Uint8Array(image.bitmap)).digest('hex') !== hash) panic(`${name}: decoded pixels don't match`);
     }
 })();

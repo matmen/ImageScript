@@ -29,7 +29,7 @@ const expected = {
 
 	for (const [name, hash] of Object.entries(expected)) {
 		const decoded = await Image.decode(await fs.readFile(`./tests/jpegs/${name}.jpg`));
-		if (crypto.createHash('sha256').update(decoded.bitmap).digest('hex') !== hash)
+		if (crypto.createHash('sha256').update(new Uint8Array(decoded.bitmap)).digest('hex') !== hash)
 			panic(`${name}: decoded pixels don't match`);
 	}
 

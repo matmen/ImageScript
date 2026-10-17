@@ -1,13 +1,17 @@
 const fs = require('fs');
 const child_process = require('child_process');
 
+// runs every test with the runtime running this script: node, deno or bun
+const runtime = `"${process.execPath}"`;
+const command = typeof Deno !== 'undefined' ? `${runtime} run -A` : typeof Bun !== 'undefined' ? runtime : `${runtime} --unhandled-rejections=strict`;
+
 (async () => {
     for (const file of fs.readdirSync('./tests/')) {
         if (file === 'run.js' || file.slice(-3) !== '.js') continue;
 
         console.log(`running test ${file}`);
         const start = Date.now();
-        const proc = child_process.exec(`node --unhandled-rejections=strict ./tests/${file}`);
+        const proc = child_process.exec(`${command} ./tests/${file}`);
         proc.stderr.pipe(process.stderr);
         proc.stdout.pipe(process.stdout);
         await new Promise(resolve => {
