@@ -47,7 +47,10 @@ export class TextLayout {
     /** Whether to break lines at newline characters */
     wrapHardBreaks: boolean;
 
-    /** @param options See {@link TextLayoutOptions} */
+    /**
+     * Creates a layout, missing options take their defaults
+     * @param options See {@link TextLayoutOptions}
+     */
     constructor(options: TextLayoutOptions = {}) {
         const { maxWidth, maxHeight, wrapStyle, verticalAlign, horizontalAlign, wrapHardBreaks } = options;
 

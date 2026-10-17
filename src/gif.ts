@@ -21,6 +21,7 @@ export class GIF extends Animation {
         super(frames, loopCountOrOptions as number);
     }
 
+    /** A short description for debugging, e.g. `GIF<64x64x1000ms>` */
     override toString(): string {
         return `GIF<${this.width}x${this.height}x${this.duration}ms>`;
     }

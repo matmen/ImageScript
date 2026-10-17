@@ -215,15 +215,30 @@ export type PNGMetadata = Metadata;
  * and return it, so calls can be chained
  */
 export class Image {
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __width__: number;
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __height__: number;
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __view__!: DataView;
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __u32__!: Uint32Array;
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __bitmap__!: Uint8ClampedArray;
 
     /**
@@ -266,6 +281,7 @@ export class Image {
     /**
      * Sets the pixel data and the views on it
      * @internal
+     * @ignore
      */
     protected __set_bitmap__(bitmap: Uint8ClampedArray): void {
         // 32-bit views need an aligned offset
@@ -275,9 +291,7 @@ export class Image {
         this.__u32__ = new Uint32Array(bitmap.buffer, bitmap.byteOffset, bitmap.length >> 2);
     }
 
-    /**
-     * @private
-     */
+    /** A short description for debugging, e.g. `Image<64x64>` */
     toString(): string {
         return `Image<${this.width}x${this.height}>`;
     }
@@ -497,7 +511,10 @@ export class Image {
      * @param y
      * @param pixelColor
      */
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __set_pixel__(x: number, y: number, pixelColor: Color): void {
         this.__view__.setUint32((y * this.width + x) * 4, pixelColor, false);
     }
@@ -507,7 +524,10 @@ export class Image {
      * @param x
      * @param y
      */
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __check_boundaries__(x: number, y: number): void {
         if (isNaN(x)) throw new TypeError(`Invalid pixel coordinates (x=${x})`);
         if (isNaN(y)) throw new TypeError(`Invalid pixel coordinates (y=${y})`);
@@ -524,7 +544,10 @@ export class Image {
     /**
      * @private
      */
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected static get __out_of_bounds__(): string {
         return 'Tried referencing a pixel outside of the images boundaries:';
     }
@@ -625,7 +648,10 @@ export class Image {
     }
 
     /** @private */
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __scale__(factor: number, mode: ResizeMode = Image.RESIZE_BILINEAR, fast = true): Image {
         if (factor === 1) return this;
         return this.__resize__(this.width * factor, this.height * factor, mode, fast);
@@ -736,7 +762,10 @@ export class Image {
     }
 
     /** @private */
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __resize__(width: number, height: number, mode: ResizeMode = Image.RESIZE_BILINEAR, fast = true): Image {
         if (width === Image.RESIZE_AUTO && height === Image.RESIZE_AUTO) throw new Error('RESIZE_AUTO can only be used for either width or height, not for both');
         else if (width === Image.RESIZE_AUTO) width = Math.max(1, Math.round(this.width / this.height * Math.floor(height)));
@@ -764,7 +793,10 @@ export class Image {
      * @param width The new width
      * @param height The new height
      */
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __resize_nearest_neighbor__(width: number, height: number): Image {
         const image = new Image(width, height);
         const src = this.__u32__;
@@ -818,6 +850,7 @@ export class Image {
     /**
      * The area that remains after trimming as [x, y, width, height], null if nothing would remain
      * @internal
+     * @ignore
      */
     protected __trim_bounds__(color: Color | undefined, { tolerance = 0 }: TrimOptions): [number, number, number, number] | null {
         if (!(tolerance >= 0 && tolerance <= 1)) throw new RangeError('Invalid tolerance, it has to be between 0 and 1');
@@ -860,7 +893,10 @@ export class Image {
      * @param height
      * @private
      */
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __crop__(x: number, y: number, width: number, height: number): Image {
         x = ~~x;
         y = ~~y;
@@ -906,7 +942,10 @@ export class Image {
      * @param height
      * @param color
      */
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __fast_box__(x: number, y: number, width: number, height: number, color: Color): this {
         const left = Math.max(0, x), top = Math.max(0, y);
         const right = Math.min(this.width, x + width), bottom = Math.min(this.height, y + height);
@@ -956,6 +995,7 @@ export class Image {
     /**
      * Moves a pixel towards a color by the given amount (with premultiplied alpha)
      * @internal
+     * @ignore
      */
     protected __blend_pixel__(x: number, y: number, color: Color, amount: number): void {
         const i = (y * this.width + x) * 4, b = this.bitmap;
@@ -1107,7 +1147,10 @@ export class Image {
      * @param absolute
      * @param offset
      */
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __set_channel_value__(value: number, absolute: boolean, offset: number): void {
         for (let i = offset; i < this.bitmap.length; i += 4)
             this.bitmap[i] = value * (absolute ? 255 : this.bitmap[i]);
@@ -1219,6 +1262,7 @@ export class Image {
     /**
      * Composites with opacity and a blend mode (the W3C compositing model: the blended color is drawn source-over)
      * @internal
+     * @ignore
      */
     protected __blend__(source: Image, x: number, y: number, opacity: number, blend: (backdrop: number, source: number) => number): this {
         const left = Math.max(0, x), top = Math.max(0, y);
@@ -1306,6 +1350,7 @@ export class Image {
      * Converts every pixel to HSLA, lets `map` adjust the components in place and converts back
      * (the same math as {@link Image.rgbaToHSLA} and {@link Image.hslaToColor}, without allocating per pixel)
      * @internal
+     * @ignore
      */
     protected __map_hsla__(map: (hsla: HSLA) => void): this {
         const bitmap = this.bitmap;
@@ -1516,6 +1561,7 @@ export class Image {
     /**
      * Maps every color channel value through a function (evaluated once per value 0..255), alpha is kept
      * @internal
+     * @ignore
      */
     protected __map_channels__(map: (value: number) => number): this {
         const lut = new Uint8ClampedArray(256);
@@ -1706,12 +1752,18 @@ export class Image {
      * @private
      * @param image
      */
-    /** @internal the bitmap as a plain byte view */
+    /**
+     * @internal the bitmap as a plain byte view
+     * @ignore
+     */
     protected __bytes__(): Uint8Array {
         return new Uint8Array(this.bitmap.buffer, this.bitmap.byteOffset, this.bitmap.byteLength);
     }
 
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __apply__(image: Image): this {
         this.__width__ = image.__width__;
         this.__height__ = image.__height__;
@@ -1808,7 +1860,10 @@ export class Image {
     /**
      * @private
      */
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected static __gradient__(startColor: Color, endColor: Color): (position: number) => Color {
         const sr = startColor >>> 24;
         const sg = startColor >> 16 & 0xff;
@@ -1907,7 +1962,16 @@ export class Image {
      * Encodes the image into a PNG, an alias of {@link Image.encode}
      */
     encodePNG(options?: PNGEncodeOptions): Promise<Uint8Array>;
+    /**
+     * Encodes the image into a PNG, an alias of {@link Image.encode}
+     * @param compression The compression level (0-9). Default: `1`
+     * @param metadata Metadata to include, see {@link Metadata}
+     */
     encodePNG(compression?: number, metadata?: Metadata): Promise<Uint8Array>;
+    /**
+     * Encodes the image into a PNG, an alias of {@link Image.encode}
+     * @param metadata Metadata to include, see {@link Metadata}
+     */
     encodePNG(metadata?: Metadata): Promise<Uint8Array>;
     encodePNG(compressionOrOptions?: number | PNGEncodeOptions | Metadata, metadata?: Metadata): Promise<Uint8Array> {
         return this.encode(compressionOrOptions as number, metadata);
@@ -1980,6 +2044,7 @@ export class Image {
     /**
      * Applies an Exif orientation (1-8), turning the stored pixels into the displayed ones
      * @internal
+     * @ignore
      */
     protected __orient__(orientation: number): this {
         if (orientation <= 1 || orientation > 8) return this;

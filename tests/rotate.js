@@ -4,7 +4,7 @@ const samePixels = require('./util/pixels');
 const panic = msg => {
     console.error(msg);
     process.exit(1);
-}
+};
 
 (async () => {
     {

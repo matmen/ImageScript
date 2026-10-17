@@ -38,7 +38,10 @@ export interface Metadata {
     comment?: string;
 }
 
-/** @internal metadata with the defaults applied and empty fields removed */
+/**
+ * @internal metadata with the defaults applied and empty fields removed
+ * @ignore
+ */
 export interface ResolvedMetadata {
     title?: string;
     author?: string;
@@ -54,7 +57,10 @@ export interface ResolvedMetadata {
 
 const TEXT_FIELDS = ['title', 'author', 'description', 'copyright', 'software', 'disclaimer', 'warning', 'source', 'comment'] as const;
 
-/** @internal */
+/**
+ * @internal
+ * @ignore
+ */
 export function resolveMetadata(metadata: Metadata = {}): ResolvedMetadata {
     const { creationTime, software } = metadata || {};
     const time = new Date(creationTime === undefined ? Date.now() : creationTime);
@@ -68,7 +74,10 @@ export function resolveMetadata(metadata: Metadata = {}): ResolvedMetadata {
     return resolved;
 }
 
-/** @internal PNG tEXt chunks, keyed by their keywords */
+/**
+ * @internal PNG tEXt chunks, keyed by their keywords
+ * @ignore
+ */
 export function pngText(m: ResolvedMetadata): Record<string, string | undefined> {
     return {
         Title: m.title,
@@ -84,7 +93,10 @@ export function pngText(m: ResolvedMetadata): Record<string, string | undefined>
     };
 }
 
-/** @internal Exif data (a TIFF header and IFDs) for JPEG and WebP */
+/**
+ * @internal Exif data (a TIFF header and IFDs) for JPEG and WebP
+ * @ignore
+ */
 export function exifData(m: ResolvedMetadata): Uint8Array {
     return exif.encode({
         description: m.description,
@@ -95,7 +107,10 @@ export function exifData(m: ResolvedMetadata): Uint8Array {
     });
 }
 
-/** @internal GIF comment extensions */
+/**
+ * @internal GIF comment extensions
+ * @ignore
+ */
 export function gifComments(m: ResolvedMetadata): Uint8Array[] {
     return [m.software, m.comment].filter((c): c is string => !!c).map(utf8);
 }

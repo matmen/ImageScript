@@ -33,7 +33,10 @@ export class Frame extends Image {
     xOffset: number;
     /** The frame's vertical offset in the animation */
     yOffset: number;
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     private __disposalMode__: FrameDisposalModeId = 1;
 
     /** Frame disposal mode ANY: the decoder decides (in practice like KEEP). For use with {@link Frame} */
@@ -56,7 +59,10 @@ export class Frame extends Image {
         return 'background';
     }
 
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     private static __convert_disposal_mode__(mode: FrameDisposalModeName | FrameDisposalModeId): FrameDisposalModeId {
         const id = typeof mode === 'string' ? DISPOSAL_MODES.indexOf(mode) : mode;
         if (!(id >= 0 && id <= 3))
@@ -101,6 +107,7 @@ export class Frame extends Image {
     /**
      * The frame's disposal mode as id (0 any, 1 keep, 2 previous, 3 background)
      * @internal
+     * @ignore
      */
     get __disposal_id__(): FrameDisposalModeId {
         return this.__disposalMode__;
@@ -111,6 +118,7 @@ export class Frame extends Image {
         this.__disposalMode__ = Frame.__convert_disposal_mode__(disposalMode);
     }
 
+    /** A short description for debugging, e.g. `Frame<64x64x100ms>` */
     override toString(): string {
         return `Frame<${this.width}x${this.height}x${this.duration}ms>`;
     }

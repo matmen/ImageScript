@@ -105,7 +105,10 @@ export class Animation extends Array<Frame> {
         this.loopCount = loopCount;
     }
 
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     static override get [Symbol.species](): ArrayConstructor {
         return Array;
     }
@@ -149,6 +152,7 @@ export class Animation extends Array<Frame> {
         return duration;
     }
 
+    /** A short description for debugging, e.g. `Animation<64x64x1000ms>` */
     override toString(): string {
         return `Animation<${this.width}x${this.height}x${this.duration}ms>`;
     }
@@ -193,7 +197,10 @@ export class Animation extends Array<Frame> {
         return this;
     }
 
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     protected __validate__(): void {
         for (const frame of this)
             if (!(frame instanceof Frame)) throw new Error('Animation contains invalid frames');
@@ -276,7 +283,10 @@ export class Animation extends Array<Frame> {
         return webp.encodeAnimation(frames, this.width, this.height, toPlays(this.loopCount), exifData(resolveMetadata(metadata)));
     }
 
-    /** @internal the frames as they are, in the WebP codec's terms */
+    /**
+     * @internal the frames as they are, in the WebP codec's terms
+     * @ignore
+     */
     __webpFrames__(): webp.WebPEncodeFrame[] {
         const width = this.width, height = this.height;
         // WebP knows no "previous" disposal and stores offsets halved: such animations are stored as full frames
@@ -304,12 +314,16 @@ export class Animation extends Array<Frame> {
      * The frames as the encoders store them: each frame only covers what changed since the one before (see
      * util/optimize.ts)
      * @internal
+     * @ignore
      */
     __optimized__(options: OptimizeOptions): OptimizedFrame[] {
         return optimize(this.__apngFrames__(), this.width, this.height, options);
     }
 
-    /** @internal frames in the APNG codec's terms (alpha blended, disposal 0 none, 1 background, 2 previous) */
+    /**
+     * @internal frames in the APNG codec's terms (alpha blended, disposal 0 none, 1 background, 2 previous)
+     * @ignore
+     */
     __apngFrames__(): png.APNGFrame[] {
         const dispose = [0, 0, 2, 1];
         return Array.from(this, frame => ({
@@ -340,7 +354,10 @@ export class Animation extends Array<Frame> {
         return decoding(() => Animation.__decode__(input, onlyFirstFrameOrOptions));
     }
 
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     private static async __decode__(input: BinaryData, onlyFirstFrameOrOptions: boolean | AnimationDecodeOptions): Promise<Animation> {
         const { onlyFirstFrame: onlyExtractFirstFrame = false, maxPixels = MAX_PIXELS } = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions : { onlyFirstFrame: onlyFirstFrameOrOptions };
         const data = view(input);
@@ -369,12 +386,18 @@ export class Animation extends Array<Frame> {
         throw new Error('Unsupported image type');
     }
 
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     static __fromGIF__<T extends Animation>(data: Uint8Array, onlyExtractFirstFrame: boolean, Class: new (frames: Frame[], loopCount: number) => T, maxPixels = MAX_PIXELS): Promise<T> {
         return decoding(() => Animation.__gifFrames__(data, onlyExtractFirstFrame, Class, maxPixels));
     }
 
-    /** @internal */
+    /**
+     * @internal
+     * @ignore
+     */
     private static __gifFrames__<T extends Animation>(data: Uint8Array, onlyExtractFirstFrame: boolean, Class: new (frames: Frame[], loopCount: number) => T, maxPixels: number): T {
         const decoded = gifCodec.decode(data, onlyExtractFirstFrame, maxPixels);
         const frames = gifCodec.composite(decoded).map(({ pixels, delay }) => ({ pixels, duration: 10 * delay }));
