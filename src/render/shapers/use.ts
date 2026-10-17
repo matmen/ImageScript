@@ -9,7 +9,7 @@ import { FeatureFlags } from '../layout.ts';
 import { Plan, Planner, Shaper, ShapeFont, Normalization, ZeroMarks, compose, unicodeCategory } from '../shape.ts';
 import { useCategory } from '../unicode-data.ts';
 import { value } from '../unicode.ts';
-import { scanner, cat, seq, alt, opt, star, plus, any } from './machine.ts';
+import { lazyScanner, cat, seq, alt, opt, star, plus, any } from './machine.ts';
 import { forEachSyllable, insertDottedCircles, vowelConstraintsPreprocess } from './syllabic.ts';
 import { ArabicPlan, dataCreate as arabicDataCreate, setupMasksArabic } from './arabic.ts';
 
@@ -27,10 +27,7 @@ const CATEGORIES: Record<string, number> = {
 
 const enum Syllable { VIRAMA_TERMINATED, SAKOT_TERMINATED, STANDARD, NUMBER_JOINER_TERMINATED, NUMERAL, SYMBOL, HIEROGLYPH, BROKEN, NON_CLUSTER }
 
-// (the scanner is built when first used)
-let scan: ((categories: number[]) => Array<[number, number, number]>) | null = null;
-const findSyllables = (categories: number[]): Array<[number, number, number]> => (scan ??= buildScanner())(categories);
-function buildScanner(): (categories: number[]) => Array<[number, number, number]> {
+const findSyllables = lazyScanner(() => {
     const s = (...c: number[]) => star(cat(...c));
     const h = cat(U.H, U.HVM, U.IS, U.Sk);
     const consonantModifiers = seq(s(U.CMAbv), s(U.CMBlw), star(alt(seq(h, cat(U.B)), cat(U.SUB)), s(U.CMAbv), s(U.CMBlw)));
@@ -58,7 +55,7 @@ function buildScanner(): (categories: number[]) => Array<[number, number, number
     const g = seq(cat(U.G), opt(cat(U.HR)), opt(cat(U.HM)), s(U.SE));
     const hieroglyphCluster = seq(s(U.SB), g, star(cat(U.J), s(U.SB), opt(g)));
     const zwnj = opt(cat(U.ZWNJ));
-    return scanner([
+    return [
         [seq(viramaTerminatedCluster, zwnj), Syllable.VIRAMA_TERMINATED],
         [seq(sakotTerminatedCluster, zwnj), Syllable.SAKOT_TERMINATED],
         [seq(standardCluster, zwnj), Syllable.STANDARD],
@@ -69,8 +66,8 @@ function buildScanner(): (categories: number[]) => Array<[number, number, number
         [cat(U.FMPst), Syllable.NON_CLUSTER],
         [seq(brokenCluster, zwnj), Syllable.BROKEN],
         [any, Syllable.NON_CLUSTER],
-    ]);
-}
+    ];
+});
 
 // syllables over the categories without CGJ (and ZWNJ before marks): the ignored characters join the syllable before
 function setupSyllables(plan: Plan, _font: ShapeFont, buffer: Buffer): void {

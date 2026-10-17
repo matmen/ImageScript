@@ -2069,7 +2069,8 @@ export class Image {
      * Creates a new image containing the rendered text.
      * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use, or several by priority: every character
      *     comes from the first font that has it (e.g. `[text, emoji]`), the first one sets the line height. Color
-     *     glyphs (COLR version 0 layers and CBDT bitmaps, as in emoji fonts) keep their colors
+     *     glyphs (COLR layers and paints, CBDT and sbix bitmaps, as in emoji fonts) keep their colors. Text in any script
+     *     is shaped like browsers do (right to left and bidirectional text, Arabic joining, Indic conjuncts, marks)
      * @param size Font size in pixels (per em)
      * @param text Text to render
      * @param options Color, layout and style, see {@link TextOptions}; the image grows by the outline width on every
@@ -2081,7 +2082,8 @@ export class Image {
      * Creates a new image containing the rendered text.
      * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use, or several by priority: every character
      *     comes from the first font that has it (e.g. `[text, emoji]`), the first one sets the line height. Color
-     *     glyphs (COLR version 0 layers and CBDT bitmaps, as in emoji fonts) keep their colors
+     *     glyphs (COLR layers and paints, CBDT and sbix bitmaps, as in emoji fonts) keep their colors. Text in any script
+     *     is shaped like browsers do (right to left and bidirectional text, Arabic joining, Indic conjuncts, marks)
      * @param size Font size in pixels (per em)
      * @param text Text to render
      * @param [color=0xffffffff] Text color to use
@@ -2120,13 +2122,11 @@ export class Image {
         const bitmap = image.bitmap;
 
         if (!strokeWidth && !colored) {
-            for (let i = 0; i < coverage.length; i++) {
-                if (!coverage[i]) continue;
-                bitmap[i * 4] = r;
-                bitmap[i * 4 + 1] = g;
-                bitmap[i * 4 + 2] = b;
-                bitmap[i * 4 + 3] = coverage[i] * a / 255;
-            }
+            // the pixel for each coverage value, written as one word
+            const pixels = new Uint32Array(bitmap.buffer, bitmap.byteOffset, bitmap.length >> 2), lut = new Uint32Array(256);
+            const bytes = new Uint8ClampedArray(lut.buffer);
+            for (let v = 1; v < 256; v++) bytes.set([r, g, b, v * a / 255], v * 4);
+            for (let i = 0; i < coverage.length; i++) if (coverage[i]) pixels[i] = lut[coverage[i]];
             return image;
         }
 

@@ -6,16 +6,13 @@
 import { Buffer, GlyphInfo } from '../buffer.ts';
 import { FeatureFlags } from '../layout.ts';
 import { Plan, Planner, Shaper, ShapeFont, Normalization, ZeroMarks } from '../shape.ts';
-import { scanner, cat, seq, alt, opt, star, any } from './machine.ts';
+import { lazyScanner, cat, seq, alt, opt, star, any } from './machine.ts';
 import { forEachSyllable, insertDottedCircles } from './syllabic.ts';
 import { I, Pos, indicProperties, isOneOf, setSyllables } from './indic.ts';
 
 const enum Syllable { CONSONANT, BROKEN, NON_MYANMAR }
 
-// (the scanner is built when first used)
-let scan: ((categories: number[]) => Array<[number, number, number]>) | null = null;
-const findSyllables = (categories: number[]): Array<[number, number, number]> => (scan ??= buildScanner())(categories);
-function buildScanner(): (categories: number[]) => Array<[number, number, number]> {
+const findSyllables = lazyScanner(() => {
     const j = cat(I.ZWJ, I.ZWNJ);
     const k = seq(cat(I.Ra), cat(I.As), cat(I.H));
     const sm = cat(I.SM, I.SMPst);
@@ -29,13 +26,13 @@ function buildScanner(): (categories: number[]) => Array<[number, number, number
     const syllableTail = seq(star(cat(I.H), alt(c, cat(I.IV)), opt(cat(I.VS))), alt(cat(I.H), complexSyllableTail));
     const consonantSyllable = seq(opt(alt(k, cat(I.CS))), alt(c, cat(I.IV), cat(I.GB), cat(I.DOTTEDCIRCLE)), opt(cat(I.VS)), syllableTail);
     const brokenCluster = seq(opt(k), opt(cat(I.VS)), syllableTail);
-    return scanner([
+    return [
         [consonantSyllable, Syllable.CONSONANT],
         [alt(j, cat(I.SMPst)), Syllable.NON_MYANMAR],
         [brokenCluster, Syllable.BROKEN],
         [any, Syllable.NON_MYANMAR],
-    ]);
-}
+    ];
+});
 
 const CONSONANTS = [I.C, I.CS, I.Ra, I.IV, I.GB, I.DOTTEDCIRCLE];
 const isConsonant = (info: GlyphInfo): boolean => isOneOf(info, CONSONANTS);

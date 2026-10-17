@@ -9,7 +9,7 @@ import { FeatureFlags } from '../layout.ts';
 import { Plan, Planner, Shaper, ShapeFont, Normalization, ZeroMarks, decompose, compose, unicodeCategory } from '../shape.ts';
 import { indicCategory } from '../unicode-data.ts';
 import { value } from '../unicode.ts';
-import { scanner, cat, seq, alt, opt, star, any } from './machine.ts';
+import { lazyScanner, cat, seq, alt, opt, star, any } from './machine.ts';
 import { forEachSyllable, insertDottedCircles, vowelConstraintsPreprocess } from './syllabic.ts';
 
 /** categories of the Indic, Khmer and Myanmar shapers */
@@ -63,10 +63,7 @@ const isHalant = (info: GlyphInfo): boolean => isOneOf(info, [I.H]);
 const enum Syllable { CONSONANT, VOWEL, STANDALONE, SYMBOL, BROKEN, NON_INDIC }
 
 // the syllable grammar (hb-ot-shaper-indic-machine.rl)
-// (the scanner is built when first used)
-let scan: ((categories: number[]) => Array<[number, number, number]>) | null = null;
-const findSyllables = (categories: number[]): Array<[number, number, number]> => (scan ??= buildScanner())(categories);
-function buildScanner(): (categories: number[]) => Array<[number, number, number]> {
+const findSyllables = lazyScanner(() => {
     const c = cat(I.C, I.Ra);
     const n = seq(opt(opt(cat(I.ZWNJ)), cat(I.RS)), opt(cat(I.N), opt(cat(I.N))));
     const z = cat(I.ZWJ, I.ZWNJ);
@@ -86,7 +83,7 @@ function buildScanner(): (categories: number[]) => Array<[number, number, number
     const standaloneCluster = seq(alt(seq(opt(cat(I.Repha, I.CS)), cat(I.PLACEHOLDER)), seq(opt(reph), cat(I.DOTTEDCIRCLE))), opt(n), complexSyllableTail);
     const symbolCluster = seq(symbol, syllableTail);
     const brokenCluster = seq(opt(reph), opt(n), complexSyllableTail);
-    return scanner([
+    return [
         [consonantSyllable, Syllable.CONSONANT],
         [vowelSyllable, Syllable.VOWEL],
         [standaloneCluster, Syllable.STANDALONE],
@@ -94,8 +91,8 @@ function buildScanner(): (categories: number[]) => Array<[number, number, number
         [cat(I.SMPst), Syllable.NON_INDIC],
         [brokenCluster, Syllable.BROKEN],
         [any, Syllable.NON_INDIC],
-    ]);
-}
+    ];
+});
 
 /** assigns syllables (serial << 4 | type) from a scanner, true if a broken one was found */
 export function setSyllables(buffer: Buffer, syllables: Array<[number, number, number]>, broken: number): void {

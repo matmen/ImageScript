@@ -6,16 +6,13 @@
 import { Buffer, isMark } from '../buffer.ts';
 import { FeatureFlags } from '../layout.ts';
 import { Plan, Planner, Shaper, ShapeFont, Normalization, ZeroMarks, decompose, compose, unicodeCategory } from '../shape.ts';
-import { scanner, cat, seq, alt, opt, star, any } from './machine.ts';
+import { lazyScanner, cat, seq, alt, opt, star, any } from './machine.ts';
 import { forEachSyllable, insertDottedCircles } from './syllabic.ts';
 import { I, indicProperties, setSyllables } from './indic.ts';
 
 const enum Syllable { CONSONANT, BROKEN, NON_KHMER }
 
-// (the scanner is built when first used)
-let scan: ((categories: number[]) => Array<[number, number, number]>) | null = null;
-const findSyllables = (categories: number[]): Array<[number, number, number]> => (scan ??= buildScanner())(categories);
-function buildScanner(): (categories: number[]) => Array<[number, number, number]> {
+const findSyllables = lazyScanner(() => {
     const c = cat(I.C, I.Ra, I.V);
     const joiner = cat(I.ZWJ, I.ZWNJ);
     const cn = seq(c, opt(opt(joiner), cat(I.Robatic)));
@@ -25,8 +22,8 @@ function buildScanner(): (categories: number[]) => Array<[number, number, number
     const syllableTail = seq(xgroup, matraGroup, xgroup, opt(cat(I.H), c), ygroup);
     const brokenCluster = seq(opt(cat(I.Robatic)), star(cat(I.H), cn), alt(cat(I.H), syllableTail));
     const consonantSyllable = seq(alt(cn, cat(I.PLACEHOLDER), cat(I.DOTTEDCIRCLE)), brokenCluster);
-    return scanner([[consonantSyllable, Syllable.CONSONANT], [brokenCluster, Syllable.BROKEN], [any, Syllable.NON_KHMER]]);
-}
+    return [[consonantSyllable, Syllable.CONSONANT], [brokenCluster, Syllable.BROKEN], [any, Syllable.NON_KHMER]];
+});
 
 const FEATURES: Array<[string, number]> = [
     ['pref', FeatureFlags.MANUAL_JOINERS | FeatureFlags.PER_SYLLABLE],

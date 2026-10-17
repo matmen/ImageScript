@@ -634,11 +634,12 @@ export class LayoutTable {
             coverages.push(parsed.coverage);
             woulds.push(parsed.would);
         }
-        const memo = new Map<number, boolean>();
+        // per glyph: 0 unknown, 1 not covered, 2 covered
+        const memo = new Uint8Array(f.numGlyphs);
         const covers = (glyph: number): boolean => {
-            let v = memo.get(glyph);
-            if (v === undefined) memo.set(glyph, v = coverages.some(c => c(glyph)));
-            return v;
+            if (glyph >= memo.length) return coverages.some(c => c(glyph));
+            if (!memo[glyph]) memo[glyph] = coverages.some(c => c(glyph)) ? 2 : 1;
+            return memo[glyph] === 2;
         };
         const would = (glyphs: number[], zeroContext: boolean): boolean =>
             glyphs.length > 0 && covers(glyphs[0]) && woulds.some(w => w !== undefined && w(glyphs, zeroContext));
@@ -848,34 +849,35 @@ export class LayoutTable {
                         return true;
                     } };
 
-                // ligature
-                case 4:
+                // ligature: the ligature sets parsed when first used, [ligature glyph, component count, the components
+                // after the first]
+                case 4: {
+                    const sets = new Map<number, Array<[number, number, number[]]>>();
+                    const ligatures = (index: number): Array<[number, number, number[]]> => {
+                        let list = sets.get(index);
+                        if (!list) {
+                            const set = offset + f.u16(offset + 6 + index * 2);
+                            list = Array.from({ length: f.u16(set) }, (_, i) => {
+                                const ligature = set + f.u16(set + 2 + i * 2), components = f.u16(ligature + 2);
+                                return [f.u16(ligature), components, values16(f, ligature + 4, Math.max(0, components - 1))];
+                            });
+                            sets.set(index, list);
+                        }
+                        return list;
+                    };
                     return { coverage: has, would: glyphs => {
                         const index = coverage(glyphs[0]);
                         if (index < 0 || index >= f.u16(offset + 4)) return false;
-                        const set = offset + f.u16(offset + 6 + index * 2);
-                        for (let i = 0, count = f.u16(set); i < count; i++) {
-                            const ligature = set + f.u16(set + 2 + i * 2), components = f.u16(ligature + 2);
-                            if (glyphs.length !== components) continue;
-                            let k = 1;
-                            while (k < components && glyphs[k] === f.u16(ligature + 2 + k * 2)) k++;
-                            if (k === components) return true;
-                        }
-                        return false;
+                        return ligatures(index).some(([, components, input]) => components === glyphs.length && input.every((g, k) => glyphs[k + 1] === g));
                     }, apply: c => {
                         const index = coverage(c.buffer.cur().codepoint);
                         if (index < 0 || index >= f.u16(offset + 4)) return false;
-                        const set = offset + f.u16(offset + 6 + index * 2);
-                        for (let i = 0, count = f.u16(set); i < count; i++) {
-                            const ligature = set + f.u16(set + 2 + i * 2);
-                            const glyph = f.u16(ligature), components = f.u16(ligature + 2);
-                            if (!components) continue;
+                        for (const [glyph, components, input] of ligatures(index)) {
+                            if (!components || components > MAX_CONTEXT_LENGTH) continue;
                             if (components === 1) {
                                 c.replaceGlyph(glyph);
                                 return true;
                             }
-                            if (components > MAX_CONTEXT_LENGTH) continue;
-                            const input = values16(f, ligature + 4, components - 1);
                             const end = [0], total = [0];
                             if (!matchInput(c, components, input, matchGlyph, end, total)) continue;
                             ligateInput(c, components, end[0], glyph, total[0]);
@@ -883,6 +885,7 @@ export class LayoutTable {
                         }
                         return false;
                     } };
+                }
 
                 // reverse chaining single
                 case 8: {
@@ -931,7 +934,7 @@ export class LayoutTable {
                 const valueFormat = f.u16(offset + 4), size = valueSize(valueFormat);
                 if (format === 1) return { coverage: has, apply: c => {
                     if (coverage(c.buffer.cur().codepoint) < 0) return false;
-                    applyValue(f, c, valueFormat, offset + 6, c.buffer.cur());
+                    applyValue(f, valueFormat, offset + 6, c.buffer.cur());
                     c.buffer.idx++;
                     return true;
                 } };
@@ -939,7 +942,7 @@ export class LayoutTable {
                 return { coverage: has, apply: c => {
                     const index = coverage(c.buffer.cur().codepoint);
                     if (index < 0 || index >= f.u16(offset + 6)) return false;
-                    applyValue(f, c, valueFormat, offset + 8 + index * size, c.buffer.cur());
+                    applyValue(f, valueFormat, offset + 8 + index * size, c.buffer.cur());
                     c.buffer.idx++;
                     return true;
                 } };
@@ -974,8 +977,8 @@ export class LayoutTable {
                             }
                         }
                         if (record < 0) return false;
-                        if (len1) applyValue(f, c, format1, record + 2, buffer.cur(), set);
-                        if (len2) applyValue(f, c, format2, record + 2 + len1, buffer.info[pos], set);
+                        if (len1) applyValue(f, format1, record + 2, buffer.cur());
+                        if (len2) applyValue(f, format2, record + 2 + len1, buffer.info[pos]);
                         buffer.idx = len2 ? pos + 1 : pos;
                         return true;
                     } };
@@ -994,8 +997,8 @@ export class LayoutTable {
                     const k1 = class1(buffer.cur().codepoint), k2 = class2(buffer.info[pos].codepoint);
                     if (k1 >= class1Count || k2 >= class2Count) return false;
                     const v = records + (k1 * class2Count + k2) * (len1 + len2);
-                    if (len1) applyValue(f, c, format1, v, buffer.cur());
-                    if (len2) applyValue(f, c, format2, v + len1, buffer.info[pos]);
+                    if (len1) applyValue(f, format1, v, buffer.cur());
+                    if (len2) applyValue(f, format2, v + len1, buffer.info[pos]);
                     buffer.idx = len2 ? pos + 1 : pos;
                     return true;
                 } };
@@ -1186,14 +1189,16 @@ const valueSize = (format: number): number => {
 };
 
 // a value record's placement and advance (device tables don't apply without a pixel size or variations)
-function applyValue(f: Font, c: ApplyContext, format: number, offset: number, info: GlyphInfo, _base?: number): void {
-    if (format & 1) info.xOffset += f.i16(offset), offset += 2;
-    if (format & 2) info.yOffset += f.i16(offset), offset += 2;
-    if (format & 4) {
-        info.xAdvance += f.i16(offset);
+function applyValue(f: Font, format: number, offset: number, info: GlyphInfo): void {
+    if (format & 1) {
+        info.xOffset += f.i16(offset);
         offset += 2;
     }
-    void c;
+    if (format & 2) {
+        info.yOffset += f.i16(offset);
+        offset += 2;
+    }
+    if (format & 4) info.xAdvance += f.i16(offset);
 }
 
 function anchor(f: Font, offset: number): [number, number] {

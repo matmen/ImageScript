@@ -1,3 +1,4 @@
+import { ByteWriter } from '../util/bytes.ts';
 import { quantize } from './quantize.ts';
 import { MAX_PIXELS, PixelBudget, checkPixels } from '../util/limits.ts';
 
@@ -69,7 +70,7 @@ interface GraphicControl {
  * @param comments written as comment extensions
  */
 export function encode({ width, height, loopCount = -1, frames }: Omit<GIFData, 'loopCount'> & { loopCount?: number }, quality = 95, comments: Uint8Array[] = []): Uint8Array {
-    const out = new ByteWriter();
+    const out = new GIFWriter();
 
     out.bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61); // GIF89a
     out.u16(width);
@@ -127,7 +128,7 @@ export function encode({ width, height, loopCount = -1, frames }: Omit<GIFData, 
 }
 
 function lzwEncode(indices: Uint8Array, minCodeSize: number): Uint8Array {
-    const out = new ByteWriter(indices.length);
+    const out = new GIFWriter(indices.length);
     const clear = 1 << minCodeSize;
     const eoi = clear + 1;
 
@@ -191,7 +192,7 @@ function lzwEncode(indices: Uint8Array, minCodeSize: number): Uint8Array {
     return out.finish();
 }
 
-function writeSubBlocks(out: ByteWriter, data: Uint8Array): void {
+function writeSubBlocks(out: GIFWriter, data: Uint8Array): void {
     for (let i = 0; i < data.length; i += 255) {
         const block = data.subarray(i, i + 255);
         out.byte(block.length);
@@ -514,48 +515,14 @@ class ByteReader {
     }
 }
 
-class ByteWriter {
-    buffer: Uint8Array;
-    length: number;
-
-    constructor(capacity = 1024) {
-        this.buffer = new Uint8Array(Math.max(16, capacity));
-        this.length = 0;
-    }
-
-    reserve(size: number): void {
-        if (this.length + size <= this.buffer.length) return;
-        const buffer = new Uint8Array(Math.max(this.buffer.length * 2, this.length + size));
-        buffer.set(this.buffer.subarray(0, this.length));
-        this.buffer = buffer;
-    }
-
-    byte(value: number): void {
-        this.reserve(1);
-        this.buffer[this.length++] = value;
-    }
-
-    bytes(...values: number[]): void {
-        for (const value of values) this.byte(value);
-    }
-
+// GIF data: little endian 16-bit values and ASCII strings
+class GIFWriter extends ByteWriter {
     u16(value: number): void {
-        this.byte(value & 0xff);
-        this.byte(value >> 8 & 0xff);
+        this.bytes(value & 0xff, value >> 8 & 0xff);
     }
 
     string(value: string): void {
         for (let i = 0; i < value.length; i++) this.byte(value.charCodeAt(i));
-    }
-
-    array(values: ArrayLike<number>): void {
-        this.reserve(values.length);
-        this.buffer.set(values, this.length);
-        this.length += values.length;
-    }
-
-    finish(): Uint8Array {
-        return this.buffer.slice(0, this.length);
     }
 }
 

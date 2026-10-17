@@ -5,6 +5,7 @@
  * (Copyright 2014 Mozilla Foundation, Apache License 2.0). See THIRD_PARTY_NOTICES.md
  */
 
+import { ByteWriter } from '../util/bytes.ts';
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { orientation as exifOrientation } from './exif.ts';
 import { concat } from '../util/mem.ts';
@@ -1184,30 +1185,9 @@ function fdctPass(d: Float64Array, o: number, s: number): void {
     d[o + 7 * s] = z11 - z4;
 }
 
-class BitWriter {
-    buffer: Uint8Array;
-    length: number;
-    bits: number;
-    count: number;
-
-    constructor(capacity: number) {
-        this.buffer = new Uint8Array(Math.max(1024, capacity));
-        this.length = 0;
-        this.bits = 0;
-        this.count = 0;
-    }
-
-    reserve(size: number): void {
-        if (this.length + size <= this.buffer.length) return;
-        const buffer = new Uint8Array(Math.max(this.buffer.length * 2, this.length + size));
-        buffer.set(this.buffer.subarray(0, this.length));
-        this.buffer = buffer;
-    }
-
-    bytes(...values: number[]): void {
-        this.reserve(values.length);
-        for (const value of values) this.buffer[this.length++] = value;
-    }
+class BitWriter extends ByteWriter {
+    bits = 0;
+    count = 0;
 
     // writes `size` bits MSB first, stuffing a zero after every 0xff byte
     write(value: number, size: number): void {
@@ -1230,8 +1210,5 @@ class BitWriter {
         if (this.count) this.write((1 << 8 - this.count) - 1, 8 - this.count);
     }
 
-    finish(): Uint8Array {
-        return this.buffer.slice(0, this.length);
-    }
 }
 

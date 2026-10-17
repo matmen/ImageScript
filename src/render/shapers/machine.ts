@@ -95,24 +95,50 @@ export function scanner(patterns: Array<[Expression, number]>): (categories: Arr
         }
         return out;
     };
-    const start = closure([root]);
+    // a DFA built as it is used: a state per set of NFA states, its transitions by category
+    interface DFAState {
+        next: Map<number, DFAState | null>;
+        /** the pattern it accepts (the first one), -1 if none */
+        accept: number;
+        states: number[];
+    }
+    const dfaStates = new Map<string, DFAState>();
+    const dfa = (set: number[]): DFAState => {
+        set.sort((a, b) => a - b);
+        const key = set.join(',');
+        let state = dfaStates.get(key);
+        if (!state) {
+            let accept = -1;
+            for (const s of set) if (states[s].accept >= 0 && (accept < 0 || states[s].accept < accept)) accept = states[s].accept;
+            dfaStates.set(key, state = { next: new Map(), accept, states: set });
+        }
+        return state;
+    };
+    const step = (state: DFAState, category: number): DFAState | null => {
+        let next = state.next.get(category);
+        if (next === undefined) {
+            const targets: number[] = [];
+            for (const s of state.states) {
+                const test = states[s].test;
+                if (test && test(category)) targets.push(...states[s].next);
+            }
+            next = targets.length ? dfa(closure(targets)) : null;
+            if (next && !next.states.length) next = null;
+            state.next.set(category, next);
+        }
+        return next;
+    };
+    const start = dfa(closure([root]));
 
     return categories => {
         const syllables: Array<[number, number, number]> = [];
         for (let p = 0; p < categories.length;) {
-            let current = start, bestLength = 0, bestPattern = -1;
-            for (let q = p; q < categories.length && current.length; q++) {
-                const next: number[] = [];
-                for (const s of current) {
-                    const test = states[s].test;
-                    if (test && test(categories[q])) next.push(...states[s].next);
-                }
-                current = closure(next);
-                let accepted = -1;
-                for (const s of current) if (states[s].accept >= 0 && (accepted < 0 || states[s].accept < accepted)) accepted = states[s].accept;
-                if (accepted >= 0) {
+            let state: DFAState | null = start, bestLength = 0, bestPattern = -1;
+            for (let q = p; q < categories.length && state; q++) {
+                state = step(state, categories[q]);
+                if (state && state.accept >= 0) {
                     bestLength = q - p + 1;
-                    bestPattern = accepted;
+                    bestPattern = state.accept;
                 }
             }
             // (patterns end with one that matches anything)
@@ -125,4 +151,10 @@ export function scanner(patterns: Array<[Expression, number]>): (categories: Arr
         }
         return syllables;
     };
+}
+
+/** a scanner built when first used */
+export function lazyScanner(patterns: () => Array<[Expression, number]>): (categories: ArrayLike<number>) => Array<[number, number, number]> {
+    let scan: ((categories: ArrayLike<number>) => Array<[number, number, number]>) | null = null;
+    return categories => (scan ??= scanner(patterns()))(categories);
 }

@@ -8,7 +8,7 @@
 import { Font } from './font.ts';
 import {
     Buffer, GlyphInfo, GlyphProps, UnicodeProps, Category, CATEGORY_NAMES, Direction, isMark, generalCategory, setGeneralCategory, isUnicodeMark,
-    combiningClass, setCombiningClass, isUnicodeSpace, spaceFallback, setSpaceFallback, isDefaultIgnorable, isHidden, isContinuation, isVariationSelector,
+    combiningClass, setCombiningClass, isUnicodeSpace, spaceFallback, setSpaceFallback, isDefaultIgnorable, isHidden, isContinuation,
     isMarkGlyph, isLigated, ligId, ligComp, ligNumComps,
 } from './buffer.ts';
 import { GDEF, LayoutTable, MapBuilder, OTMap, FeatureFlags, LookupFlag, ApplyContext, propagateAttachmentOffsets } from './layout.ts';
@@ -792,7 +792,7 @@ function glyphExtents(font: ShapeFont, glyph: number): Extents | null {
     return { xBearing: Math.min(e.xMin, e.xMax), yBearing: e.yMax, width: e.xMax - e.xMin, height: e.yMin - e.yMax };
 }
 
-function positionMark(plan: Plan, font: ShapeFont, buffer: Buffer, base: Extents, i: number, klass: number): void {
+function positionMark(font: ShapeFont, buffer: Buffer, base: Extents, i: number, klass: number): void {
     const info = buffer.info[i];
     const mark = glyphExtents(font, info.codepoint);
     if (!mark) return;
@@ -848,7 +848,6 @@ function positionMark(plan: Plan, font: ShapeFont, buffer: Buffer, base: Extents
         base.yBearing -= mark.height;
         base.height += mark.height;
     }
-    void plan;
 }
 
 function positionAroundBase(plan: Plan, font: ShapeFont, buffer: Buffer, base: number, end: number, adjustOffsets: boolean): void {
@@ -896,7 +895,7 @@ function positionAroundBase(plan: Plan, font: ShapeFont, buffer: Buffer, base: n
                 lastClass = thisClass;
                 clusterExtents = { ...componentExtents };
             }
-            positionMark(plan, font, buffer, clusterExtents, i, thisClass);
+            positionMark(font, buffer, clusterExtents, i, thisClass);
             info[i].xAdvance = info[i].yAdvance = 0;
             info[i].xOffset += xOffset;
             info[i].yOffset += yOffset;
@@ -1014,4 +1013,3 @@ export function shapeRun(font: ShapeFont, codepoints: ArrayLike<number>, script:
     return buffer.info;
 }
 
-export { isVariationSelector };

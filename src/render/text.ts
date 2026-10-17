@@ -172,8 +172,9 @@ function glyphOf(f: SizedFont, index: number, size: number): Glyph {
  * Lays out and rasterizes text
  * Lines start at ceil(ascender) and advance by ceil(ascender - descender + lineGap) of the first font. Every grapheme
  * (a character with its joined, modifying and combining ones, like an emoji sequence) comes from the first font that
- * has all of it; runs of a font are shaped with its substitutions (GSUB). Glyphs are placed with subpixel precision
- * using their advance widths and the font's kerning; the canvas spans from the origin to the furthest glyph edge
+ * has all of it. Paragraphs are ordered by the bidirectional algorithm, runs of one direction, script and font shaped
+ * like HarfBuzz (see shape.ts), lines broken at UAX #14 opportunities. Glyphs are placed with subpixel precision; the
+ * canvas spans from the origin to the furthest glyph edge
  * @param fonts TrueType/OpenType fonts, by priority (later ones are only loaded when the text needs them)
  * @param size font size in pixels per em
  * @param text
@@ -312,9 +313,9 @@ function analyze(text: string, count: number, font: (i: number) => SizedFont): P
         while (end < n && !graphemes[end]) end++;
         const grapheme = codepoints.slice(start, end);
         // (shaping composes and decomposes like the font needs)
-        let chosen = -1;
-        for (const candidate of grapheme.length > 1 ? [normalized(grapheme, 'NFC'), grapheme] : [grapheme, normalized(grapheme, 'NFD')])
-            if ((chosen = choose(candidate)) >= 0) break;
+        // (the other form only when needed)
+        let chosen = grapheme.length > 1 ? choose(normalized(grapheme, 'NFC')) : choose(grapheme);
+        if (chosen < 0) chosen = choose(grapheme.length > 1 ? grapheme : normalized(grapheme, 'NFD'));
         if (chosen >= 0) fontOf.fill(chosen, start, end);
         else for (let k = start; k < end; k++) fontOf[k] = Math.max(0, choose([codepoints[k]]));
         start = end;
@@ -535,43 +536,33 @@ function inkExtent(path: PathCommand[], scale: number): Glyph['ink'] {
     return right > left ? { left, right } : null;
 }
 
+// the part of a bitmap placed at x0, y0 that lies in the target: [x start, x end, y start, y end] in the bitmap
+function clipped(width: number, height: number, bitmap: { width: number, height: number }, x0: number, y0: number): [number, number, number, number] {
+    return [Math.max(0, -x0), Math.min(bitmap.width, width - x0), Math.max(0, -y0), Math.min(bitmap.height, height - y0)];
+}
+
 function blit(target: Uint8Array, width: number, height: number, bitmap: GlyphBitmap, x0: number, y0: number): void {
-    for (let y = 0; y < bitmap.height; y++) {
-        const ty = y0 + y;
-        if (ty < 0 || ty >= height) continue;
-
-        for (let x = 0; x < bitmap.width; x++) {
-            const tx = x0 + x;
-            if (tx < 0 || tx >= width) continue;
-
-            const v = bitmap.data[y * bitmap.width + x];
-            if (v) {
-                const o = ty * width + tx;
-                target[o] = Math.min(255, target[o] + v);
-            }
+    const [xs, xe, ys, ye] = clipped(width, height, bitmap, x0, y0);
+    for (let y = ys; y < ye; y++)
+        for (let x = xs, s = y * bitmap.width + xs, o = (y0 + y) * width + x0 + xs; x < xe; x++, s++, o++) {
+            const v = bitmap.data[s];
+            if (v) target[o] = Math.min(255, target[o] + v);
         }
-    }
 }
 
 // draws premultiplied RGBA over the target (premultiplied RGBA as well)
 function blitColor(target: Uint8ClampedArray, width: number, height: number, bitmap: ColorBitmap, x0: number, y0: number): void {
-    for (let y = 0; y < bitmap.height; y++) {
-        const ty = y0 + y;
-        if (ty < 0 || ty >= height) continue;
-
-        for (let x = 0; x < bitmap.width; x++) {
-            const tx = x0 + x;
-            if (tx < 0 || tx >= width) continue;
-
-            const s = (y * bitmap.width + x) * 4, sa = bitmap.data[s + 3];
+    const [xs, xe, ys, ye] = clipped(width, height, bitmap, x0, y0);
+    for (let y = ys; y < ye; y++)
+        for (let x = xs, s = (y * bitmap.width + xs) * 4, o = ((y0 + y) * width + x0 + xs) * 4; x < xe; x++, s += 4, o += 4) {
+            const sa = bitmap.data[s + 3];
             if (!sa) continue;
-            const o = (ty * width + tx) * 4, keep = 1 - sa / 255;
+            const keep = 1 - sa / 255;
             target[o] = bitmap.data[s] + target[o] * keep;
             target[o + 1] = bitmap.data[s + 1] + target[o + 1] * keep;
             target[o + 2] = bitmap.data[s + 2] + target[o + 2] * keep;
             target[o + 3] = sa + target[o + 3] * keep;
         }
-    }
 }
 
 /**

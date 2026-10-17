@@ -4,6 +4,7 @@
  * Revised BSD License (see THIRD_PARTY_NOTICES.md)
  */
 
+import { ByteWriter } from '../util/bytes.ts';
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 
 /** decoded VP8L image: ARGB pixels (0xAARRGGBB) */
@@ -543,35 +544,32 @@ export function decodeStream(reader: BitReader, width: number, height: number): 
 /**
  * LSB-first bit writer
  */
-class BitWriter {
-    private bytes = new Uint8Array(1 << 16);
-    private length = 0;
-    private buffer = 0;
+class BitWriter extends ByteWriter {
+    private bits = 0;
     private count = 0;
 
-    write(value: number, bits: number): void {
-        while (bits > 0) {
-            const take = Math.min(bits, 24 - this.count);
-            this.buffer |= (value & (1 << take) - 1) << this.count;
+    constructor() {
+        super(1 << 16);
+    }
+
+    write(value: number, size: number): void {
+        while (size > 0) {
+            const take = Math.min(size, 24 - this.count);
+            this.bits |= (value & (1 << take) - 1) << this.count;
             this.count += take;
             value >>>= take;
-            bits -= take;
+            size -= take;
             while (this.count >= 8) {
-                if (this.length === this.bytes.length) {
-                    const grown = new Uint8Array(this.bytes.length * 2);
-                    grown.set(this.bytes);
-                    this.bytes = grown;
-                }
-                this.bytes[this.length++] = this.buffer & 255;
-                this.buffer >>>= 8;
+                this.byte(this.bits & 255);
+                this.bits >>>= 8;
                 this.count -= 8;
             }
         }
     }
 
-    finish(): Uint8Array {
+    override finish(): Uint8Array {
         if (this.count > 0) this.write(0, 8 - this.count);
-        return this.bytes.slice(0, this.length);
+        return super.finish();
     }
 }
 

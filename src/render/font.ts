@@ -138,11 +138,8 @@ export class Font {
     /** a glyph's ink box in font units (the glyf header's for TrueType outlines), null if it has none */
     extents(glyph: number): { xMin: number, yMin: number, xMax: number, yMax: number } | null {
         if (this.outlines === 'glyf' && glyph < this.numGlyphs) {
-            const loca = this.tables.loca.offset;
-            const start = this.indexToLocFormat ? this.u32(loca + glyph * 4) : this.u16(loca + glyph * 2) * 2;
-            const end = this.indexToLocFormat ? this.u32(loca + glyph * 4 + 4) : this.u16(loca + glyph * 2 + 2) * 2;
-            if (end <= start) return { xMin: 0, yMin: 0, xMax: 0, yMax: 0 };
-            const o = this.tables.glyf.offset + start;
+            const o = this.glyfOffset(glyph);
+            if (o < 0) return { xMin: 0, yMin: 0, xMax: 0, yMax: 0 };
             return { xMin: this.i16(o + 2), yMin: this.i16(o + 4), xMax: this.i16(o + 6), yMax: this.i16(o + 8) };
         }
         let xMin = Infinity, yMin = Infinity, xMax = -Infinity, yMax = -Infinity;
@@ -169,52 +166,42 @@ export class Font {
      */
     glyfPoints(glyph: number): GlyfPoints | null {
         if (this.outlines !== 'glyf' || glyph >= this.numGlyphs) return null;
-        const loca = this.tables.loca.offset;
-        const start = this.indexToLocFormat ? this.u32(loca + glyph * 4) : this.u16(loca + glyph * 2) * 2;
-        const end = this.indexToLocFormat ? this.u32(loca + glyph * 4 + 4) : this.u16(loca + glyph * 2 + 2) * 2;
-        if (end <= start) return null;
-
-        const offset = this.tables.glyf.offset + start;
+        const offset = this.glyfOffset(glyph);
+        if (offset < 0) return null;
         const contourCount = this.i16(offset);
         const xMin = this.i16(offset + 2);
 
         if (contourCount < 0) {
-            const components: NonNullable<GlyfPoints['components']> = [];
-            let p = offset + 10, flags = 0;
-            do {
-                flags = this.u16(p);
-                const component = this.u16(p + 2);
-                p += 4;
-                let arg1, arg2;
-                if (flags & 1) {
-                    arg1 = flags & 2 ? this.i16(p) : this.u16(p);
-                    arg2 = flags & 2 ? this.i16(p + 2) : this.u16(p + 2);
-                    p += 4;
-                } else {
-                    arg1 = flags & 2 ? this.i8(p) : this.u8(p);
-                    arg2 = flags & 2 ? this.i8(p + 1) : this.u8(p + 1);
-                    p += 2;
-                }
-                let matrix: [number, number, number, number] = [1, 0, 0, 1];
-                const f2dot14 = (o: number): number => this.i16(o) / 16384;
-                if (flags & 8) { const s = f2dot14(p); matrix = [s, 0, 0, s]; p += 2; }
-                else if (flags & 0x40) { matrix = [f2dot14(p), 0, 0, f2dot14(p + 2)]; p += 4; }
-                else if (flags & 0x80) { matrix = [f2dot14(p), f2dot14(p + 2), f2dot14(p + 4), f2dot14(p + 6)]; p += 8; }
-                components.push({
-                    glyph: component,
-                    dx: flags & 2 ? arg1 : 0,
-                    dy: flags & 2 ? arg2 : 0,
-                    matrix,
-                    round: (flags & 4) !== 0,
-                    match: flags & 2 ? null : [arg1, arg2],
-                    useMetrics: (flags & 0x200) !== 0
-                });
-            } while (flags & 0x20);
-            const instructions = flags & 0x100 ? this.data.subarray(p + 2, p + 2 + this.u16(p)) : new Uint8Array(0);
-            return { xs: [], ys: [], on: [], ends: [], instructions, xMin, components };
+            const { components, end } = this.components(offset);
+            const instructions = components[components.length - 1].flags & 0x100 ? this.data.subarray(end + 2, end + 2 + this.u16(end)) : new Uint8Array(0);
+            return {
+                xs: [], ys: [], on: [], ends: [], instructions, xMin,
+                components: components.map(({ glyph, flags, arg1, arg2, matrix }) => ({
+                    glyph, dx: flags & 2 ? arg1 : 0, dy: flags & 2 ? arg2 : 0, matrix,
+                    round: (flags & 4) !== 0, match: flags & 2 ? null : [arg1, arg2], useMetrics: (flags & 0x200) !== 0,
+                })),
+            };
         }
 
-        // contours end at increasing points (see simpleGlyph)
+        const points = this.simplePoints(offset, contourCount);
+        if (!points) return null;
+        const { xs, ys, flags, ends, instructions } = points;
+        return { xs: Array.from(xs), ys: Array.from(ys), on: Array.from(flags, f => (f & 1) === 1), ends, instructions, xMin, components: null };
+    }
+
+    /** where a glyph's glyf data starts, -1 for empty glyphs */
+    private glyfOffset(glyph: number): number {
+        const loca = this.tables.loca.offset;
+        const start = this.indexToLocFormat ? this.u32(loca + glyph * 4) : this.u16(loca + glyph * 2) * 2;
+        const end = this.indexToLocFormat ? this.u32(loca + glyph * 4 + 4) : this.u16(loca + glyph * 2 + 2) * 2;
+        return end > start ? this.tables.glyf.offset + start : -1;
+    }
+
+    /**
+     * A simple glyph's points: coordinates, flags, the last point of every contour and the instructions; null for
+     * damaged glyphs whose contours don't end at increasing points (FreeType rejects them)
+     */
+    private simplePoints(offset: number, contourCount: number): { xs: Int32Array, ys: Int32Array, flags: Uint8Array, ends: number[], instructions: Uint8Array } | null {
         const ends: number[] = [];
         for (let i = 0; i < contourCount; i++) {
             const end = this.u16(offset + 10 + i * 2);
@@ -235,8 +222,8 @@ export class Font {
             if (flag & 8) for (let repeat = this.u8(p++); repeat > 0 && i < pointCount; repeat--) flags[i++] = flag;
         }
 
-        const xs: number[] = [], ys: number[] = [];
-        for (const [coords, short, same] of [[xs, 2, 16], [ys, 4, 32]] as Array<[number[], number, number]>) {
+        const xs = new Int32Array(pointCount), ys = new Int32Array(pointCount);
+        for (const [coords, short, same] of [[xs, 2, 16], [ys, 4, 32]] as Array<[Int32Array, number, number]>) {
             let value = 0;
             for (let i = 0; i < pointCount; i++) {
                 const flag = flags[i];
@@ -247,11 +234,46 @@ export class Font {
                     value += this.i16(p);
                     p += 2;
                 }
-                coords.push(value);
+                coords[i] = value;
             }
         }
+        return { xs, ys, flags, ends, instructions };
+    }
 
-        return { xs, ys, on: Array.from(flags, f => (f & 1) === 1), ends, instructions, xMin, components: null };
+    /** a composite glyph's components (flags, arguments and transform), and where its instructions start */
+    private components(offset: number): { components: Array<{ glyph: number, flags: number, arg1: number, arg2: number, matrix: [number, number, number, number] }>, end: number } {
+        const components = [];
+        const f2dot14 = (o: number): number => this.i16(o) / 16384;
+        let p = offset + 10, flags = 0;
+        do {
+            flags = this.u16(p);
+            const glyph = this.u16(p + 2);
+            p += 4;
+            let arg1, arg2;
+            if (flags & 1) {
+                arg1 = flags & 2 ? this.i16(p) : this.u16(p);
+                arg2 = flags & 2 ? this.i16(p + 2) : this.u16(p + 2);
+                p += 4;
+            } else {
+                arg1 = flags & 2 ? this.i8(p) : this.u8(p);
+                arg2 = flags & 2 ? this.i8(p + 1) : this.u8(p + 1);
+                p += 2;
+            }
+            let matrix: [number, number, number, number] = [1, 0, 0, 1];
+            if (flags & 8) {
+                const scale = f2dot14(p);
+                matrix = [scale, 0, 0, scale];
+                p += 2;
+            } else if (flags & 0x40) {
+                matrix = [f2dot14(p), 0, 0, f2dot14(p + 2)];
+                p += 4;
+            } else if (flags & 0x80) {
+                matrix = [f2dot14(p), f2dot14(p + 2), f2dot14(p + 4), f2dot14(p + 6)];
+                p += 8;
+            }
+            components.push({ glyph, flags, arg1, arg2, matrix });
+        } while (flags & 0x20);
+        return { components, end: p };
     }
 
     /**
@@ -274,13 +296,8 @@ export class Font {
      */
     glyfOutline(glyph: number, expanding: { expanding: Set<number>, budget: number }): PathCommand[] {
         if (expanding.expanding.has(glyph) || expanding.expanding.size > 8 || expanding.budget <= 0) return [];
-
-        const loca = this.tables.loca.offset;
-        const start = this.indexToLocFormat ? this.u32(loca + glyph * 4) : this.u16(loca + glyph * 2) * 2;
-        const end = this.indexToLocFormat ? this.u32(loca + glyph * 4 + 4) : this.u16(loca + glyph * 2 + 2) * 2;
-        if (end <= start) return [];
-
-        const offset = this.tables.glyf.offset + start;
+        const offset = this.glyfOffset(glyph);
+        if (offset < 0) return [];
         const contours = this.i16(offset);
 
         if (contours >= 0) {
@@ -295,94 +312,23 @@ export class Font {
     }
 
     simpleGlyph(offset: number, contourCount: number): PathCommand[] {
-        // contours end at increasing points, damaged glyphs (as FreeType rejects them) are left empty
-        const endPoints = [];
-        for (let i = 0; i < contourCount; i++) {
-            const end = this.u16(offset + 10 + i * 2);
-            if (i && end <= endPoints[i - 1]) return [];
-            endPoints.push(end);
-        }
-        const pointCount = contourCount ? endPoints[contourCount - 1] + 1 : 0;
-
-        let p = offset + 10 + contourCount * 2;
-        p += 2 + this.u16(p); // skip instructions
-
-        const flags = new Uint8Array(pointCount);
-        for (let i = 0; i < pointCount;) {
-            const flag = this.u8(p++);
-            flags[i++] = flag;
-            if (flag & 8) {
-                for (let repeat = this.u8(p++); repeat > 0 && i < pointCount; repeat--) flags[i++] = flag;
-            }
-        }
-
-        const xs = new Int32Array(pointCount);
-        const ys = new Int32Array(pointCount);
-        for (const [coords, short, same] of [[xs, 2, 16], [ys, 4, 32]] as Array<[Int32Array, number, number]>) {
-            let value = 0;
-            for (let i = 0; i < pointCount; i++) {
-                const flag = flags[i];
-                if (flag & short) {
-                    const delta = this.u8(p++);
-                    value += flag & same ? delta : -delta;
-                } else if (!(flag & same)) {
-                    value += this.i16(p);
-                    p += 2;
-                }
-                coords[i] = value;
-            }
-        }
-
+        // (damaged glyphs are left empty)
+        const points = this.simplePoints(offset, contourCount);
+        if (!points) return [];
         const path: PathCommand[] = [];
         let first = 0;
-        for (const last of endPoints) {
-            contourToPath(path, xs, ys, flags, first, last);
+        for (const last of points.ends) {
+            contourToPath(path, points.xs, points.ys, points.flags, first, last);
             first = last + 1;
         }
-
         return path;
     }
 
     compositeGlyph(offset: number, expanding: { expanding: Set<number>, budget: number }): PathCommand[] {
         const path: PathCommand[] = [];
-        let p = offset + 10;
-
-        for (let more = true; more;) {
-            const flags = this.u16(p);
-            const glyph = this.u16(p + 2);
-            p += 4;
-
-            let dx, dy;
-            if (flags & 1) {
-                dx = flags & 2 ? this.i16(p) : this.u16(p);
-                dy = flags & 2 ? this.i16(p + 2) : this.u16(p + 2);
-                p += 4;
-            } else {
-                dx = flags & 2 ? this.i8(p) : this.u8(p);
-                dy = flags & 2 ? this.i8(p + 1) : this.u8(p + 1);
-                p += 2;
-            }
-
-            // point matching (ARGS_ARE_XY_VALUES unset) is rare, treat it as no offset
-            if (!(flags & 2)) dx = dy = 0;
-
-            let a = 1, b = 0, c = 0, d = 1;
-            const f2dot14 = (o: number): number => this.i16(o) / 16384;
-            if (flags & 8) {
-                a = d = f2dot14(p);
-                p += 2;
-            } else if (flags & 0x40) {
-                a = f2dot14(p);
-                d = f2dot14(p + 2);
-                p += 4;
-            } else if (flags & 0x80) {
-                a = f2dot14(p);
-                b = f2dot14(p + 2);
-                c = f2dot14(p + 4);
-                d = f2dot14(p + 6);
-                p += 8;
-            }
-
+        for (const { glyph, flags, arg1, arg2, matrix: [a, b, c, d] } of this.components(offset).components) {
+            // point matching (ARGS_ARE_XY_VALUES unset) is rare, treated as no offset
+            const dx = flags & 2 ? arg1 : 0, dy = flags & 2 ? arg2 : 0;
             for (const command of this.glyfOutline(glyph, expanding)) {
                 const transformed: PathCommand = [command[0]];
                 for (let i = 1; i < command.length; i += 2) {
@@ -391,10 +337,7 @@ export class Font {
                 }
                 path.push(transformed);
             }
-
-            more = !!(flags & 0x20);
         }
-
         return path;
     }
 
