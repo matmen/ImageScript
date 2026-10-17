@@ -50,8 +50,10 @@ export class Font {
     cff: CFF | null = null;
     cmap: (codepoint: number) => number;
     outlineCache: Map<number, PathCommand[]>;
-    /** kerning between two glyphs in font units, null if the font has none */
-    kerning: ((left: number, right: number) => number) | null;
+    /** the kern table's kerning between two glyphs in font units (null without one) */
+    kernTable: ((left: number, right: number) => number) | null;
+    /** glyphs for variation sequences (cmap format 14): the glyph, -1 for the default one, 0 if the font has none */
+    variation: ((codepoint: number, selector: number) => number) | null;
 
     constructor(data: Uint8Array) {
         this.data = data;
@@ -98,7 +100,8 @@ export class Font {
 
         this.cmap = parseCmap(this, this.tables.cmap.offset);
         this.outlineCache = new Map();
-        this.kerning = (this.tables.GPOS && parseGPOSKerning(this, this.tables.GPOS.offset)) || (this.tables.kern && parseKern(this, this.tables.kern.offset)) || null;
+        this.kernTable = this.tables.kern && parseKern(this, this.tables.kern.offset) || null;
+        this.variation = parseVariations(this, this.tables.cmap.offset);
     }
 
     u8(o: number): number { return this.data[o]; }
@@ -124,6 +127,34 @@ export class Font {
         const hmtx = this.tables.hmtx.offset;
         const index = Math.min(glyph, this.numberOfHMetrics - 1);
         return this.u16(hmtx + index * 4);
+    }
+
+    /** the glyph for a variation sequence, 0 if the font has none */
+    variationGlyph(codepoint: number, selector: number): number {
+        const glyph = this.variation ? this.variation(codepoint, selector) : 0;
+        return glyph < 0 ? this.glyphIndex(codepoint) : glyph;
+    }
+
+    /** a glyph's ink box in font units (the glyf header's for TrueType outlines), null if it has none */
+    extents(glyph: number): { xMin: number, yMin: number, xMax: number, yMax: number } | null {
+        if (this.outlines === 'glyf' && glyph < this.numGlyphs) {
+            const loca = this.tables.loca.offset;
+            const start = this.indexToLocFormat ? this.u32(loca + glyph * 4) : this.u16(loca + glyph * 2) * 2;
+            const end = this.indexToLocFormat ? this.u32(loca + glyph * 4 + 4) : this.u16(loca + glyph * 2 + 2) * 2;
+            if (end <= start) return { xMin: 0, yMin: 0, xMax: 0, yMax: 0 };
+            const o = this.tables.glyf.offset + start;
+            return { xMin: this.i16(o + 2), yMin: this.i16(o + 4), xMax: this.i16(o + 6), yMax: this.i16(o + 8) };
+        }
+        let xMin = Infinity, yMin = Infinity, xMax = -Infinity, yMax = -Infinity;
+        for (const command of this.outline(glyph))
+            for (let i = 1; i < command.length; i += 2) {
+                const x = command[i] as number, y = command[i + 1] as number;
+                xMin = Math.min(xMin, x);
+                xMax = Math.max(xMax, x);
+                yMin = Math.min(yMin, y);
+                yMax = Math.max(yMax, y);
+            }
+        return xMax >= xMin ? { xMin, yMin, xMax, yMax } : { xMin: 0, yMin: 0, xMax: 0, yMax: 0 };
     }
 
     /** left side bearing in font units */
@@ -508,119 +539,58 @@ function parseCmap(font: Font, offset: number): (codepoint: number) => number {
     return symbol ? (c: number): number => lookup(c) || (c < 256 ? lookup(0xf000 + c) : 0) : lookup;
 }
 
-// ---------------------------------------------------------------------------
-// kerning
-// ---------------------------------------------------------------------------
-
-type PairLookup = (left: number, right: number) => number | undefined;
-
-// horizontal pair adjustments of the GPOS 'kern' feature (pair positioning lookups, also behind extension lookups)
-function parseGPOSKerning(font: Font, gpos: number): ((left: number, right: number) => number) | null {
-    const featureList = gpos + font.u16(gpos + 6);
-    const lookupList = gpos + font.u16(gpos + 8);
-
-    const lookups = new Set<number>();
-    for (let i = 0, count = font.u16(featureList); i < count; i++) {
-        const record = featureList + 2 + i * 6;
-        if (font.u32(record) !== 0x6b65726e) continue; // 'kern'
-        const feature = featureList + font.u16(record + 4);
-        for (let j = 0, n = font.u16(feature + 2); j < n; j++) lookups.add(font.u16(feature + 4 + j * 2));
-    }
-
-    // per lookup the subtables are tried in order, the first one covering the pair applies
-    const pairLookups: PairLookup[][] = [];
-    for (const index of [...lookups].sort((a, b) => a - b)) {
-        if (index >= font.u16(lookupList)) continue;
-        const lookup = lookupList + font.u16(lookupList + 2 + index * 2);
-        const type = font.u16(lookup);
-        const subtables: PairLookup[] = [];
-
-        for (let i = 0, count = font.u16(lookup + 4); i < count; i++) {
-            let subtable = lookup + font.u16(lookup + 6 + i * 2);
-            if (type === 9) {
-                if (font.u16(subtable + 2) !== 2) continue;
-                subtable += font.u32(subtable + 4);
-            } else if (type !== 2) continue;
-
-            const pair = parsePairPos(font, subtable);
-            if (pair) subtables.push(pair);
+// the variation sequences subtable (platform 0, encoding 5, format 14): for a code point and selector, the glyph,
+// -1 for the default glyph, 0 if not listed
+function parseVariations(font: Font, offset: number): ((codepoint: number, selector: number) => number) | null {
+    let table = -1;
+    for (let i = 0, count = font.u16(offset + 2); i < count; i++) {
+        const record = offset + 4 + i * 8;
+        if (font.u16(record) === 0 && font.u16(record + 2) === 5) {
+            const t = offset + font.u32(record + 4);
+            if (font.u16(t) === 14) table = t;
         }
-
-        if (subtables.length) pairLookups.push(subtables);
     }
-
-    if (!pairLookups.length) return null;
-    return (left, right) => {
-        let total = 0;
-        for (const subtables of pairLookups) {
-            for (const subtable of subtables) {
-                const value = subtable(left, right);
-                if (value === undefined) continue;
-                total += value;
-                break;
+    if (table < 0) return null;
+    const u24 = (o: number): number => font.u8(o) << 16 | font.u16(o + 1);
+    const records = font.u32(table + 6);
+    return (codepoint, selector) => {
+        let lo = 0, hi = records - 1;
+        while (lo <= hi) {
+            const mid = lo + hi >> 1, record = table + 10 + mid * 11, vs = u24(record);
+            if (vs < selector) lo = mid + 1;
+            else if (vs > selector) hi = mid - 1;
+            else {
+                const defaults = font.u32(record + 3), others = font.u32(record + 7);
+                if (others) {
+                    const o = table + others;
+                    let l = 0, h = font.u32(o) - 1;
+                    while (l <= h) {
+                        const m = l + h >> 1, u = u24(o + 4 + m * 5);
+                        if (u < codepoint) l = m + 1;
+                        else if (u > codepoint) h = m - 1;
+                        else return font.u16(o + 4 + m * 5 + 3);
+                    }
+                }
+                if (defaults) {
+                    const o = table + defaults;
+                    let l = 0, h = font.u32(o) - 1;
+                    while (l <= h) {
+                        const m = l + h >> 1, start = u24(o + 4 + m * 4);
+                        if (codepoint < start) h = m - 1;
+                        else if (codepoint > start + font.u8(o + 4 + m * 4 + 3)) l = m + 1;
+                        else return -1;
+                    }
+                }
+                return 0;
             }
         }
-        return total;
+        return 0;
     };
 }
 
-// size of a value record and the offset of its XAdvance field (-1 if absent)
-function valueRecord(format: number): { size: number, xAdvance: number } {
-    let size = 0, xAdvance = -1;
-    for (let bit = 0; bit < 8; bit++) {
-        if (!(format & 1 << bit)) continue;
-        if (bit === 2) xAdvance = size;
-        size += 2;
-    }
-    return { size, xAdvance };
-}
-
-function parsePairPos(font: Font, table: number): PairLookup | null {
-    const format = font.u16(table);
-    const coverage = parseCoverage(font, table + font.u16(table + 2));
-    const first = valueRecord(font.u16(table + 4));
-    const second = valueRecord(font.u16(table + 6));
-    if (first.xAdvance === -1) return null;
-
-    if (format === 1) {
-        const sets = font.u16(table + 8);
-        const recordSize = 2 + first.size + second.size;
-
-        return (left, right) => {
-            const index = coverage(left);
-            if (index === -1 || index >= sets) return undefined;
-            const set = table + font.u16(table + 10 + index * 2);
-
-            // pair value records are sorted by the second glyph
-            let lo = 0, hi = font.u16(set) - 1;
-            while (lo <= hi) {
-                const mid = lo + hi >> 1;
-                const record = set + 2 + mid * recordSize;
-                const glyph = font.u16(record);
-                if (glyph < right) lo = mid + 1;
-                else if (glyph > right) hi = mid - 1;
-                else return font.i16(record + 2 + first.xAdvance);
-            }
-            return undefined;
-        };
-    }
-
-    if (format === 2) {
-        const classes1 = parseClassDef(font, table + font.u16(table + 8));
-        const classes2 = parseClassDef(font, table + font.u16(table + 10));
-        const class1Count = font.u16(table + 12), class2Count = font.u16(table + 14);
-        const recordSize = first.size + second.size;
-
-        return (left, right) => {
-            if (coverage(left) === -1) return undefined;
-            const c1 = classes1(left), c2 = classes2(right);
-            if (c1 >= class1Count || c2 >= class2Count) return undefined;
-            return font.i16(table + 16 + (c1 * class2Count + c2) * recordSize + first.xAdvance);
-        };
-    }
-
-    return null;
-}
+// ---------------------------------------------------------------------------
+// OpenType layout common tables, and the kern table
+// ---------------------------------------------------------------------------
 
 // returns the coverage index of a glyph, -1 if it isn't covered
 export function parseCoverage(font: Font, table: number): (glyph: number) => number {

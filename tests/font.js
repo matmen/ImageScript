@@ -3,6 +3,8 @@
  https://www.1001fonts.com/carbon-font.html
  https://www.1001fonts.com/ethnocentric-font.html
  https://github.com/adobe-fonts/source-sans (SIL OFL, see OFL-SourceSans3.md)
+ https://notofonts.github.io (subsets of Noto Sans Hebrew, Noto Naskh Arabic and Noto Sans Devanagari, SIL OFL, see
+   ../shaping/OFL-Noto.md)
  https://github.com/googlefonts/noto-emoji (subsets of Noto Color Emoji and Noto-COLRv1, SIL OFL, see OFL-NotoColorEmoji.md;
    damaged noto colrv1 subset.ttf is a damaged copy for tests/regressions.js)
  colrv1 paints.ttf is built by colrv1-paints.py, sbix.ttf by sbix.py
@@ -238,5 +240,28 @@ const panic = message => {
         // combining sequences are composed where the font has the composed character
         const composed = await Image.renderText(font, 32, 'Café Müller'), decomposed = await Image.renderText(font, 32, 'Cafe\u0301 Mu\u0308ller');
         if (!Buffer.from(composed.bitmap).equals(Buffer.from(decomposed.bitmap))) panic('combining sequences should render like the composed characters');
+    }
+
+    {
+        // bidirectional text with fallback fonts: Hebrew and Arabic in a left to right paragraph, a right to left
+        // paragraph with numbers and mirrored brackets, Devanagari conjuncts and reph, wrapped and right aligned
+        const fonts = await Promise.all(['opensans bold.ttf', 'noto sans hebrew subset.ttf', 'noto naskh arabic subset.ttf', 'noto sans devanagari subset.ttf']
+            .map(name => fs.readFile(`./tests/fonts/${name}`)));
+        const text = 'Hi שָׁלוֹם עוֹלָם (2024) and مرحبا بالعالم!\nمرحبا بالعالم، هذا نص (2024)!\nनमस्ते क्षत्रिय र्क्ष';
+        const font = await Image.renderText(fonts, 40, text, 0xffffffff, new TextLayout({maxWidth: 420, horizontalAlign: 'right'}));
+        const encoded = await font.encode(1, {creationTime: 0, software: ''});
+
+        if (process.env.OVERWRITE_TEST)
+            await fs.writeFile('./tests/targets/font-bidi.png', encoded);
+
+        const desired = await fs.readFile('./tests/targets/font-bidi.png');
+        if (!await samePixels(desired, encoded)) panic('bidirectional text doesn\'t match');
+
+        // a right to left paragraph's line starts on the right: its first word is the rightmost
+        const line = await Image.renderText(fonts, 40, 'مرحبا Hi', 0xffffffff);
+        const arabic = await Image.renderText(fonts, 40, 'مرحبا', 0xffffffff);
+        const right = line.clone().crop(line.width - arabic.width, 0, arabic.width, line.height);
+        if (!await samePixels(await arabic.encode(1, {creationTime: 0, software: ''}), await right.encode(1, {creationTime: 0, software: ''})))
+            panic('the right to left paragraph should start on the right');
     }
 })();

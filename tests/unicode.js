@@ -1,4 +1,5 @@
-// samples of the Unicode conformance tests (tests/unicode): the bidirectional algorithm and line breaking
+// the Unicode conformance tests (tests/unicode, samples of the bigger ones): the bidirectional algorithm, line
+// breaking and grapheme clusters
 const fs = require('fs');
 
 const panic = message => {
@@ -9,6 +10,7 @@ const panic = message => {
 (async () => {
     const {resolve, lineLevels, visualOrder, classOf, BIDI_CLASSES} = await import('../dist/render/bidi.js');
     const {lineBreaks} = await import('../dist/render/linebreak.js');
+    const {graphemeBoundaries} = await import('../dist/render/segment.js');
     const lines = file => fs.readFileSync(`./tests/unicode/${file}`, 'utf8').split('\n').filter(line => line.trim() && !line.startsWith('#'));
     const format = (levels, order) => `${Array.from(levels, l => l < 0 ? 'x' : l).join(' ')} / ${order.join(' ')}`;
 
@@ -47,6 +49,17 @@ const panic = message => {
         const breaks = lineBreaks(codepoints);
         for (let i = 1; i < codepoints.length; i++)
             if ((breaks[i] > 0) !== (tokens[2 * i] === '÷')) panic(`LineBreakTest ${line}: position ${i}`);
+        count++;
+    }
+
+    // GraphemeBreakTest.txt: × no boundary, ÷ boundary before each code point
+    for (const line of lines('GraphemeBreakTest.txt')) {
+        const tokens = line.split(/\s+/);
+        const codepoints = [];
+        for (let i = 1; i < tokens.length; i += 2) codepoints.push(parseInt(tokens[i], 16));
+        const boundaries = graphemeBoundaries(codepoints);
+        for (let i = 1; i < codepoints.length; i++)
+            if ((boundaries[i] === 1) !== (tokens[2 * i] === '÷')) panic(`GraphemeBreakTest ${line}: position ${i}`);
         count++;
     }
 

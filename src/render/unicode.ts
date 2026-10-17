@@ -26,17 +26,7 @@ function decode(property: EncodedProperty): Ranges {
     let ranges = decoded.get(property);
     if (ranges) return ranges;
 
-    const bytes = base64(property.data);
-    const numbers: number[] = [];
-    for (let i = 0, value = 0, shift = 1; i < bytes.length; i++) {
-        value += (bytes[i] & 127) * shift;
-        if (bytes[i] & 128) shift *= 128;
-        else {
-            numbers.push(value);
-            value = 0;
-            shift = 1;
-        }
-    }
+    const numbers = varints(property.data);
 
     // (gap to the previous range, length - 1, value) per range
     const count = numbers.length / 3;
@@ -68,4 +58,19 @@ export function valueIndex(property: EncodedProperty, codepoint: number): number
 /** A code point's value of the property (its short name, as in the Unicode Character Database) */
 export function value(property: EncodedProperty, codepoint: number): string {
     return property.names[valueIndex(property, codepoint)];
+}
+
+/** a list of numbers stored as base64 varints (see scripts/unicode.js) */
+export function varints(data: string): number[] {
+    const bytes = base64(data), numbers: number[] = [];
+    for (let i = 0, value = 0, shift = 1; i < bytes.length; i++) {
+        value += (bytes[i] & 127) * shift;
+        if (bytes[i] & 128) shift *= 128;
+        else {
+            numbers.push(value);
+            value = 0;
+            shift = 1;
+        }
+    }
+    return numbers;
 }

@@ -6,7 +6,12 @@
 import { Font, PathCommand } from './font.ts';
 import { Hinter } from './hinting.ts';
 import { ColorLayer, BitmapGlyph, parseColorLayers, parseBitmaps } from './color.ts';
-import { GlyphBuffer, parseGSUB } from './gsub.ts';
+import { Direction } from './buffer.ts';
+import { ShapeFont, shapeFont, shapeRun, isDefaultIgnorableCodepoint } from './shape.ts';
+import './shapers/index.ts';
+import { classOf, resolve, lineLevels, Paragraph as BidiParagraph } from './bidi.ts';
+import { lineBreaks, Break } from './linebreak.ts';
+import { graphemeBoundaries, scripts } from './segment.ts';
 import { PaintGlyphs, parsePaintGlyphs, paintExtent, renderPaintGlyph } from './colr.ts';
 import { decode as decodePNG } from '../codecs/png.ts';
 import { resample, TRIANGLE } from '../util/resample.ts';
@@ -48,7 +53,7 @@ interface SizedFont {
     layers: ((glyph: number) => ColorLayer[] | null) | null;
     bitmaps: ((glyph: number) => BitmapGlyph | null) | null;
     paints: PaintGlyphs | null;
-    gsub: ((buffer: GlyphBuffer) => void) | null;
+    shaping: ShapeFont;
     glyphs: Map<number, Glyph>;
 }
 
@@ -70,16 +75,18 @@ interface Glyph {
     colors: Map<string, ColorBitmap | null>;
 }
 
-/** a glyph of a shaped paragraph, and whether it is a space (a line can break after it) */
-interface ShapedGlyph {
+/** a glyph placed on a line: its pen position and the offset of its drawing (up is positive) in pixels */
+interface PlacedGlyph {
+    x: number;
+    dx: number;
+    dy: number;
     glyph: Glyph;
-    space: boolean;
 }
 
 interface Line {
-    glyphs: Array<{ x: number, glyph: Glyph }>;
+    glyphs: PlacedGlyph[];
+    /** the right edge of the ink */
     extent: number;
-    soft: boolean;
 }
 
 // glyphs are rasterized at quarter pixel offsets
@@ -90,7 +97,7 @@ const MAX_GLYPH_PIXELS = 1 << 26;
 // parsed fonts are cached per memory region, so new views of the same font data (e.g. from node Buffers) hit the cache
 const fonts = new WeakMap<ArrayBufferLike, Map<string, Font>>();
 const hinters = new WeakMap<Font, Hinter>();
-const substitutions = new WeakMap<Font, { gsub: ((buffer: GlyphBuffer) => void) | null, layers: ((glyph: number) => ColorLayer[] | null) | null, paints: PaintGlyphs | null }>();
+const colorTables = new WeakMap<Font, { layers: ((glyph: number) => ColorLayer[] | null) | null, paints: PaintGlyphs | null }>();
 // sizes (and hinting) per font, a few of them
 const sizes = new WeakMap<Font, Map<string, SizedFont>>();
 const SIZES = 16;
@@ -119,11 +126,11 @@ function sizedFont(data: Uint8Array, size: number, hinting: boolean): SizedFont 
         if (!hinter) hinters.set(font, hinter = new Hinter(font));
         if (!hinter.hasInstructions) hinter = null;
     }
-    let shared = substitutions.get(font);
-    if (!shared) substitutions.set(font, shared = { gsub: parseGSUB(font), layers: parseColorLayers(font), paints: parsePaintGlyphs(font) });
+    let shared = colorTables.get(font);
+    if (!shared) colorTables.set(font, shared = { layers: parseColorLayers(font), paints: parsePaintGlyphs(font) });
 
     if (bySize.size >= SIZES) bySize.clear();
-    bySize.set(key, sized = { font, scale: size / font.unitsPerEm, hinter, layers: shared.layers, bitmaps: parseBitmaps(font, size), paints: shared.paints, gsub: shared.gsub, glyphs: new Map() });
+    bySize.set(key, sized = { font, scale: size / font.unitsPerEm, hinter, layers: shared.layers, bitmaps: parseBitmaps(font, size), paints: shared.paints, shaping: shapeFont(font), glyphs: new Map() });
     return sized;
 }
 
@@ -198,17 +205,10 @@ async function layOut(fonts: Uint8Array[], size: number, text: string, layout: L
     // (at least a pixel, damaged fonts can have any metrics)
     const lineHeight = Math.max(1, Math.ceil((primary.font.ascender - primary.font.descender + primary.font.lineGap) * primary.scale));
 
-    const invisible: Glyph = { index: 0, font: primary, path: [], scale: primary.scale, advance: 0, ink: null, bitmaps: [], color: null, colors: new Map() };
-    const paragraphs = layout.wrapHardBreaks ? text.split(/\r\n|\r|\n/) : [text.replace(/\r\n|\r|\n/g, '')];
-    const shaped = paragraphs.map(paragraph => shape(paragraph, fonts.length, font, size, invisible));
-
-    const kern = (left: Glyph, right: Glyph): number => {
-        const kerning = left.font === right.font && left !== invisible && right !== invisible && left.font.font.kerning;
-        if (!kerning) return 0;
-        const k = kerning(left.index, right.index) * left.font.scale;
-        return left.font.hinter ? Math.round(k) : k;
-    };
-    const lines = wrap(shaped, layout, kern);
+    // paragraphs end at hard line breaks (CR LF, CR, LF, NEL, LS, PS) unless they are ignored
+    const paragraphs = layout.wrapHardBreaks ? text.split(/\r\n|[\r\n\u0085\u2028\u2029]/) : [text.replace(/\r\n|[\r\n\u0085\u2028\u2029]/g, '')];
+    const lines: Line[] = [];
+    for (const paragraph of paragraphs) lines.push(...layOutParagraph(analyze(paragraph, fonts.length, font), layout, font, size));
 
     // lines that fit into maxHeight, chosen by the vertical alignment
     let visible = lines;
@@ -234,11 +234,12 @@ async function layOut(fonts: Uint8Array[], size: number, text: string, layout: L
         if (primary.hinter) offset = Math.round(offset);
         const baseline = ascent + n * lineHeight;
 
-        for (const { x, glyph: g } of line.glyphs) {
+        for (const { x, dx, dy, glyph: g } of line.glyphs) {
             if (!g.ink) continue;
 
-            // whole pixels plus the closest subpixel offset (none for hinted glyphs)
-            const position = g.font.hinter ? Math.round(offset + x) : Math.round((offset + x) * SUBPIXELS) / SUBPIXELS;
+            // whole pixels plus the closest subpixel offset (none for hinted glyphs); vertical offsets on whole pixels
+            const position = g.font.hinter ? Math.round(offset + x + dx) : Math.round((offset + x + dx) * SUBPIXELS) / SUBPIXELS;
+            const y = baseline - Math.round(dy);
             const pixel = Math.floor(position);
             let subpixel = Math.round((position - pixel) * SUBPIXELS);
 
@@ -251,27 +252,39 @@ async function layOut(fonts: Uint8Array[], size: number, text: string, layout: L
                     ? await scaledBitmap(g.color.bitmap, size / g.color.bitmap.ppem)
                     : 'layers' in g.color ? layeredGlyph(g, g.color.layers, subpixel / SUBPIXELS, foreground)
                         : paintedGlyph(g, subpixel / SUBPIXELS, foreground));
-                if (bitmap) blitColor(color ??= new Uint8ClampedArray(width * height * 4), width, height, bitmap, pixel + bitmap.left, baseline - bitmap.top);
+                if (bitmap) blitColor(color ??= new Uint8ClampedArray(width * height * 4), width, height, bitmap, pixel + bitmap.left, y - bitmap.top);
                 continue;
             }
 
             if (g.bitmaps[subpixel] === undefined) g.bitmaps[subpixel] = rasterizeGlyph(g.path, g.scale, subpixel / SUBPIXELS);
             const bitmap = g.bitmaps[subpixel];
-            if (bitmap) blit(coverage, width, height, bitmap, pixel + bitmap.left, baseline - bitmap.top);
+            if (bitmap) blit(coverage, width, height, bitmap, pixel + bitmap.left, y - bitmap.top);
         }
     }
 
     return { width, height, coverage, color };
 }
 
+/** a paragraph's text with what laying it out needs */
+interface Paragraph {
+    codepoints: number[];
+    bidi: BidiParagraph;
+    /** per character: its font, its script for shaping */
+    fontOf: Int32Array;
+    scripts: string[];
+    /** UAX #14 break opportunities and grapheme boundaries before each character (and at the end) */
+    breaks: Uint8Array;
+    graphemes: Uint8Array;
+}
+
 /**
- * Turns a paragraph into glyphs: graphemes go to the first font that has all of their (visible) characters,
- * preferring color glyphs before an emoji variation selector and others before a text one (composed or decomposed
- * where that makes a font have them); each run of a font is mapped to glyphs and substituted. Invisible characters that
- * weren't substituted show nothing
+ * The analysis of a paragraph: its bidirectional levels, graphemes, scripts, line breaks, and fonts. Every grapheme
+ * comes from the first font that has all of its (visible) characters, composed or decomposed, preferring color glyphs
+ * before an emoji variation selector and others before a text one
  */
-function shape(paragraph: string, count: number, font: (i: number) => SizedFont, size: number, invisible: Glyph): ShapedGlyph[] {
-    const characters = Array.from(paragraph, char => char.codePointAt(0) as number);
+function analyze(text: string, count: number, font: (i: number) => SizedFont): Paragraph {
+    const codepoints = Array.from(text, char => char.codePointAt(0) as number);
+    const n = codepoints.length;
     const has = (f: SizedFont, codepoint: number): boolean => f.font.glyphIndex(codepoint) !== 0;
     const isColor = (f: SizedFont, codepoint: number): boolean => {
         const index = f.font.glyphIndex(codepoint);
@@ -280,7 +293,7 @@ function shape(paragraph: string, count: number, font: (i: number) => SizedFont,
 
     // the font of a grapheme (later fonts are only loaded when the earlier ones miss a character), -1 if none has all
     const choose = (grapheme: number[]): number => {
-        const needed = grapheme.filter(c => !defaultIgnorable(c));
+        const needed = grapheme.filter(c => !isDefaultIgnorableCodepoint(c));
         const variation = grapheme.find(c => c === 0xfe0f || c === 0xfe0e);
         let first = -1;
         for (let i = 0; i < count; i++) {
@@ -291,80 +304,162 @@ function shape(paragraph: string, count: number, font: (i: number) => SizedFont,
         }
         return first;
     };
-
-    // the characters to shape and their fonts: whole graphemes where a font has all of them, else character by
-    // character. Like HarfBuzz, combining sequences are composed where a font has the composed character, and
-    // characters no font has are decomposed where one has their parts
-    const codepoints: number[] = [], fontOf: number[] = [];
     const normalized = (grapheme: number[], form: string): number[] => Array.from(String.fromCodePoint(...grapheme).normalize(form), char => char.codePointAt(0) as number);
-    for (const [start, end] of graphemes(characters)) {
-        const grapheme = characters.slice(start, end);
-        let form = grapheme, chosen = -1;
+
+    const graphemes = graphemeBoundaries(codepoints), fontOf = new Int32Array(n);
+    for (let start = 0; start < n;) {
+        let end = start + 1;
+        while (end < n && !graphemes[end]) end++;
+        const grapheme = codepoints.slice(start, end);
+        // (shaping composes and decomposes like the font needs)
+        let chosen = -1;
         for (const candidate of grapheme.length > 1 ? [normalized(grapheme, 'NFC'), grapheme] : [grapheme, normalized(grapheme, 'NFD')])
-            if ((chosen = choose(candidate)) >= 0) {
-                form = candidate;
+            if ((chosen = choose(candidate)) >= 0) break;
+        if (chosen >= 0) fontOf.fill(chosen, start, end);
+        else for (let k = start; k < end; k++) fontOf[k] = Math.max(0, choose([codepoints[k]]));
+        start = end;
+    }
+
+    return {
+        codepoints, fontOf, graphemes,
+        bidi: resolve(codepoints.map(classOf), codepoints),
+        scripts: scripts(codepoints),
+        breaks: lineBreaks(codepoints),
+    };
+}
+
+// characters of context around a run for joining scripts
+const CONTEXT = 5;
+
+/**
+ * Shapes the characters start to end of a paragraph with the given embedding levels: runs of one level, script and
+ * font, in visual order. The glyphs are placed from x = 0; advances is the width by cluster (its first character)
+ */
+function shapeRange(p: Paragraph, start: number, end: number, levels: ArrayLike<number>, font: (i: number) => SizedFont, size: number): { glyphs: PlacedGlyph[], width: number, advances: Map<number, number> } {
+    // runs: [start, end, level], characters removed by bidi rule X9 take the level before them
+    const runs: Array<[number, number, number]> = [];
+    let lastLevel = p.bidi.level;
+    const levelAt = (i: number): number => levels[i] >= 0 ? lastLevel = levels[i] : lastLevel;
+    for (let i = start; i < end;) {
+        const level = levelAt(i), script = p.scripts[i], f = p.fontOf[i];
+        let j = i + 1;
+        while (j < end && (levels[j] < 0 || levels[j] === level) && p.scripts[j] === script && p.fontOf[j] === f) j++;
+        runs.push([i, j, level]);
+        i = j;
+    }
+
+    // L2: from the highest level to the lowest odd one, reverse sequences of runs at that level or higher
+    let highest = 0, lowestOdd = Infinity;
+    for (const [, , level] of runs) {
+        highest = Math.max(highest, level);
+        if (level & 1) lowestOdd = Math.min(lowestOdd, level);
+    }
+    for (let level = highest; level >= lowestOdd; level--)
+        for (let i = 0; i < runs.length;) {
+            if (runs[i][2] < level) {
+                i++;
+                continue;
+            }
+            let j = i;
+            while (j < runs.length && runs[j][2] >= level) j++;
+            const reversed = runs.slice(i, j).reverse();
+            for (let k = i; k < j; k++) runs[k] = reversed[k - i];
+            i = j;
+        }
+
+    const glyphs: PlacedGlyph[] = [], advances = new Map<number, number>();
+    // hinted glyphs: their hinted advances, with the positioning's adjustments rounded as they add up (so that a
+    // kerning split between two glyphs is rounded once)
+    let x = 0, adjustment = 0;
+    for (const [rs, re, level] of runs) {
+        const f = font(p.fontOf[rs]);
+        const before = p.codepoints.slice(Math.max(0, rs - CONTEXT), rs).reverse(), after = p.codepoints.slice(re, re + CONTEXT);
+        const clusters = Array.from({ length: re - rs }, (_, k) => rs + k);
+        const shaped = shapeRun(f.shaping, p.codepoints.slice(rs, re), p.scripts[rs], level & 1 ? Direction.RTL : Direction.LTR, clusters, { before, after });
+        for (const info of shaped) {
+            const g = glyphOf(f, info.codepoint, size);
+            let advance: number;
+            if (f.hinter) {
+                // (x already holds the rounded adjustment so far)
+                const before = Math.round(adjustment);
+                glyphs.push({ x, dx: Math.round(adjustment + info.xOffset * f.scale) - before, dy: Math.round(info.yOffset * f.scale), glyph: g });
+                adjustment += (info.xAdvance - f.font.advance(info.codepoint)) * f.scale;
+                advance = g.advance + Math.round(adjustment) - before;
+            } else {
+                advance = info.xAdvance * f.scale;
+                glyphs.push({ x, dx: info.xOffset * f.scale, dy: info.yOffset * f.scale, glyph: g });
+            }
+            advances.set(info.cluster, (advances.get(info.cluster) ?? 0) + advance);
+            x += advance;
+        }
+    }
+    return { glyphs, width: x, advances };
+}
+
+// whitespace that hangs at the end of a line (not counted when it fits)
+const isSpace = (codepoint: number): boolean => codepoint === 0x20 || codepoint === 0x09 || codepoint === 0x3000 || codepoint >= 0x2000 && codepoint <= 0x200a;
+
+/** breaks a paragraph into lines and shapes them (reordered by the bidirectional algorithm) */
+function layOutParagraph(p: Paragraph, layout: Layout, font: (i: number) => SizedFont, size: number): Line[] {
+    const n = p.codepoints.length;
+    if (!n) return [{ glyphs: [], extent: 0 }];
+
+    // the width of each character's cluster in the paragraph shaped as one line (characters within a cluster have
+    // none, and lines can't break inside clusters)
+    const whole = shapeRange(p, 0, n, p.bidi.levels, font, size);
+    const width = new Float64Array(n), starts = new Uint8Array(n + 1);
+    starts[n] = 1;
+    for (const [cluster, advance] of whole.advances) {
+        width[cluster] = advance;
+        starts[cluster] = 1;
+    }
+    // (characters the shaping removed belong to the cluster before them)
+    starts[0] = 1;
+
+    // where lines can end: break opportunities (or graphemes, for char wrapping) at cluster starts
+    const canBreak = (i: number): boolean => starts[i] === 1 && (layout.wrapStyle === 'char' ? p.graphemes[i] === 1 : p.breaks[i] !== Break.None);
+    const ranges: Array<[number, number]> = [];
+    let lineStart = 0;
+    while (lineStart < n) {
+        let fit = -1, emergency = -1, used = 0, trailing = 0;
+        for (let i = lineStart; i < n; i++) {
+            used += width[i];
+            trailing = isSpace(p.codepoints[i]) ? trailing + width[i] : 0;
+            const end = i + 1;
+            if (!starts[end]) continue;
+            // mandatory breaks (line separators) end the line
+            if (p.breaks[end] === Break.Mandatory && end < n && layout.wrapHardBreaks) {
+                fit = end;
                 break;
             }
-        for (const c of form) {
-            codepoints.push(c);
-            fontOf.push(chosen >= 0 ? chosen : Math.max(0, choose([c])));
+            const fits = used - trailing <= layout.maxWidth;
+            if (!fits) break;
+            if (canBreak(end)) fit = end;
+            if (p.graphemes[end]) emergency = end;
         }
+        // a line holds at least one grapheme: words wider than the line break between graphemes
+        if (fit < 0) {
+            fit = emergency;
+            if (fit < 0) {
+                fit = lineStart + 1;
+                while (fit < n && !(starts[fit] && p.graphemes[fit])) fit++;
+            }
+        }
+        ranges.push([lineStart, fit]);
+        lineStart = fit;
     }
 
-    const shaped: ShapedGlyph[] = [];
-    for (let start = 0; start < codepoints.length;) {
-        let end = start + 1;
-        while (end < codepoints.length && fontOf[end] === fontOf[start]) end++;
-        const f = font(fontOf[start]);
-
-        // invisible characters the font has no glyph for are left out of the run
-        const buffer: GlyphBuffer = { glyphs: [], clusters: [] };
-        for (let k = start; k < end; k++) {
-            const index = f.font.glyphIndex(codepoints[k]);
-            if (!index && defaultIgnorable(codepoints[k])) continue;
-            buffer.glyphs.push(index);
-            buffer.clusters.push(k);
-        }
-        f.gsub?.(buffer);
-
-        for (let j = 0; j < buffer.glyphs.length; j++) {
-            const codepoint = codepoints[buffer.clusters[j]], index = buffer.glyphs[j];
-            const hidden = defaultIgnorable(codepoint) && index === f.font.glyphIndex(codepoint);
-            shaped.push({ glyph: hidden ? invisible : glyphOf(f, index, size), space: codepoint === 0x20 || codepoint === 0x09 });
-        }
-        start = end;
-    }
-    return shaped;
+    // every line shaped by itself, with the levels of rule L1
+    return ranges.map(([start, end]) => {
+        const levels = lineLevels(p.bidi, start, end);
+        const shifted = new Int8Array(n);
+        shifted.set(levels, start);
+        const { glyphs } = ranges.length === 1 ? whole : shapeRange(p, start, end, shifted, font, size);
+        let extent = 0;
+        for (const { x, dx, glyph } of glyphs) if (glyph.ink) extent = Math.max(extent, x + dx + glyph.ink.right);
+        return { glyphs, extent };
+    });
 }
-
-// characters that extend the grapheme before them: combining marks, variation selectors, emoji modifiers, the keycap,
-// tags and joiners (which also join the next character)
-const EXTENDING = [0x300, 0x36f, 0x1ab0, 0x1aff, 0x1dc0, 0x1dff, 0x200d, 0x200d, 0x20d0, 0x20ff, 0xfe00, 0xfe0f, 0xfe20, 0xfe2f,
-    0x1f3fb, 0x1f3ff, 0xe0020, 0xe007f, 0xe0100, 0xe01ef];
-const inRanges = (ranges: number[], codepoint: number): boolean => {
-    for (let i = 0; i < ranges.length; i += 2) if (codepoint >= ranges[i] && codepoint <= ranges[i + 1]) return true;
-    return false;
-};
-const regionalIndicator = (codepoint: number): boolean => codepoint >= 0x1f1e6 && codepoint <= 0x1f1ff;
-
-// grapheme ranges (simplified UAX #29 for emoji): extensions, joined sequences and pairs of regional indicators
-function graphemes(codepoints: number[]): Array<[number, number]> {
-    const ranges: Array<[number, number]> = [];
-    for (let start = 0; start < codepoints.length;) {
-        let end = start + 1;
-        if (regionalIndicator(codepoints[start]) && end < codepoints.length && regionalIndicator(codepoints[end])) end++;
-        while (end < codepoints.length && (inRanges(EXTENDING, codepoints[end]) || codepoints[end - 1] === 0x200d)) end++;
-        ranges.push([start, end]);
-        start = end;
-    }
-    return ranges;
-}
-
-// default ignorable code points (Unicode's DerivedCoreProperties), which render as nothing
-const IGNORABLE = [0xad, 0xad, 0x34f, 0x34f, 0x61c, 0x61c, 0x115f, 0x1160, 0x17b4, 0x17b5, 0x180b, 0x180f, 0x200b, 0x200f, 0x202a, 0x202e,
-    0x2060, 0x206f, 0x3164, 0x3164, 0xfe00, 0xfe0f, 0xfeff, 0xfeff, 0xffa0, 0xffa0, 0xfff0, 0xfff8, 0x1bca0, 0x1bca3, 0x1d173, 0x1d17a,
-    0xe0000, 0xe0fff];
-const defaultIgnorable = (codepoint: number): boolean => inRanges(IGNORABLE, codepoint);
 
 // a bitmap glyph's PNG decoded and scaled from its strike to the font size, premultiplied
 async function scaledBitmap(glyph: BitmapGlyph, scale: number): Promise<ColorBitmap | null> {
@@ -438,66 +533,6 @@ function inkExtent(path: PathCommand[], scale: number): Glyph['ink'] {
             right = Math.max(right, (command[i] as number) * scale);
         }
     return right > left ? { left, right } : null;
-}
-
-// breaks shaped paragraphs into lines of positioned glyphs
-function wrap(paragraphs: ShapedGlyph[][], layout: Layout, kern: (left: Glyph, right: Glyph) => number): Line[] {
-    const lines: Line[] = [];
-
-    // right edge of a glyph placed at x (glyphs without ink don't extend the line)
-    const edge = (x: number, g: Glyph): number => g.ink ? x + g.ink.right : 0;
-
-    for (const paragraph of paragraphs) {
-        let line: Line = { glyphs: [], extent: 0, soft: false };
-        let x = 0;
-        // index into line.glyphs right after the last space, for word wrapping
-        let breakAt = -1;
-
-        // pen position for the next glyph, including the kerning with the previous one
-        const next = (g: Glyph): number => line.glyphs.length ? x + kern(line.glyphs[line.glyphs.length - 1].glyph, g) : x;
-
-        const add = (g: Glyph): void => {
-            const position = next(g);
-            line.glyphs.push({ x: position, glyph: g });
-            line.extent = Math.max(line.extent, edge(position, g));
-            x = position + g.advance;
-        };
-
-        const newLine = (): void => {
-            lines.push(line);
-            line = { glyphs: [], extent: 0, soft: true };
-            x = 0;
-            breakAt = -1;
-        };
-
-        for (const { glyph: g, space } of paragraph) {
-            if (!space && line.glyphs.length && edge(next(g), g) > layout.maxWidth) {
-                if (layout.wrapStyle === 'word' && breakAt > 0) {
-                    // move the current word to the next line
-                    const word = line.glyphs.splice(breakAt);
-                    line.extent = measure(line.glyphs, edge);
-                    newLine();
-                    for (const item of word) add(item.glyph);
-                } else newLine();
-            }
-
-            // soft wrapped lines don't start with whitespace
-            if (space && line.soft && !line.glyphs.length) continue;
-
-            add(g);
-            if (space) breakAt = line.glyphs.length;
-        }
-
-        lines.push(line);
-    }
-
-    return lines;
-}
-
-function measure(glyphs: Line['glyphs'], edge: (x: number, g: Glyph) => number): number {
-    let extent = 0;
-    for (const { x, glyph } of glyphs) extent = Math.max(extent, edge(x, glyph));
-    return extent;
 }
 
 function blit(target: Uint8Array, width: number, height: number, bitmap: GlyphBitmap, x0: number, y0: number): void {

@@ -22,17 +22,33 @@
   palettes (e.g. Twemoji), CBDT/CBLC bitmaps (e.g. Noto Color Emoji, which now loads at all, it has no outlines) and
   sbix bitmaps (Apple's format).
   Invisible characters like joiners and variation selectors take no room, as in browsers.
-- `Image.renderText` applies the fonts' glyph substitutions (GSUB) that browsers apply by default (`ccmp`, `rlig`,
-  `liga`, `clig`, `calt`): emoji sequences (skin tones, flags, keycaps, families and other joined ones) become one
-  glyph, and text fonts use their ligatures (fi, ffi, ...) and contextual alternates. Emoji sequences come from one
-  font, the first that has all of their characters, and the emoji variation selector picks a color glyph (❤️ in an
-  emoji font rather than the text font's ❤).
+- `Image.renderText` shapes text in every script like browsers do (a port of HarfBuzz's OpenType shaping, glyph for
+  glyph and position for position the same as HarfBuzz 14.6 on the tested texts):
+  - right to left and bidirectional text (the Unicode Bidirectional Algorithm): Arabic, Hebrew and others, mixed with
+    left to right text and numbers, brackets mirrored
+  - joining scripts (Arabic, Syriac, N'Ko, Mongolian, Adlam, ...), with presentation forms for fonts without shaping
+    features
+  - Indic scripts (Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam) with their
+    conjuncts, reph and matra reordering, Khmer, Myanmar, Thai and Lao, Hangul syllables, and the scripts of the
+    Universal Shaping Engine (Sinhala, Tibetan, Javanese, Balinese and many more)
+  - all GSUB and GPOS lookups: mark positioning (diacritics, vowel signs), cursive attachment, kerning, contextual
+    substitutions and positioning; the kern table for fonts without GPOS kerning, and marks placed by their combining
+    class for fonts without mark positioning
+  - emoji sequences (skin tones, flags, keycaps, families and other joined ones) become one glyph, from the first font
+    that has all of their characters; the emoji variation selector picks a color glyph (❤️ in an emoji font rather than
+    the text font's ❤)
+  - text wraps at the line break opportunities of the Unicode Line Breaking Algorithm (also in CJK text and before
+    or after punctuation, not only at spaces), words wider than a line between grapheme clusters; each line is
+    shaped and ordered by itself
+  The Unicode data (properties of version 18.0) with the bidirectional algorithm and line breaking add about 39 kB
+  (gzipped) to the package, the shaping about 39 kB.
 - `Image.renderText` renders COLR version 1 color glyphs (e.g. Noto-COLRv1): solid colors, linear, radial and sweep
   gradients (pad, repeat, reflect), glyph outlines as masks, transforms and all composite modes; variable paints with
   their default values. They are rendered at four times the size and scaled down, so layers sharing an edge don't let the
   ones below show through. Fonts with both prefer them over their other color glyphs, like browsers.
 - `Image.renderText` composes combining sequences (e + ◌́ to é, as in text from macOS) where the font has the composed
-  character, and decomposes characters the fonts lack where one has their parts, like HarfBuzz.
+  character, and decomposes characters the fonts lack where one has their parts, like HarfBuzz. Fallback fonts are
+  chosen per grapheme cluster (UAX #29).
 - Fallback fonts are only loaded when the text needs them, and glyphs (also decoded and scaled emoji bitmaps) are
   kept per font and size across calls.
 - `DecodeOptions.maxPixels` and `AnimationDecodeOptions.maxPixels` (default 268,402,689, that's 16383², like sharp):

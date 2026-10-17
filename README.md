@@ -34,8 +34,9 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   frames, durations and disposal modes
 - [Rendering SVGs](https://imagescript.matmen.dev/classes/Image.html#rendersvg) (shapes, paths, gradients, strokes, clip paths,
   masks, CSS; no text, images or filters)
-- [Rendering vector fonts](https://imagescript.matmen.dev/classes/Image.html#rendertext) (TrueType and OpenType, with kerning,
-  ligatures, outlines, TrueType hinting, fallback fonts and color emoji)
+- [Rendering vector fonts](https://imagescript.matmen.dev/classes/Image.html#rendertext) (TrueType and OpenType, with
+  complex text shaping in every script, right to left and bidirectional text, outlines, TrueType hinting, fallback
+  fonts and color emoji)
 - [Resizing](https://imagescript.matmen.dev/classes/Image.html#resize) (bilinear, bicubic, area averaging and nearest neighbor)
 - Image manipulation functions ([crop](https://imagescript.matmen.dev/classes/Image.html#crop)
   , [rotate](https://imagescript.matmen.dev/classes/Image.html#rotate)
@@ -103,7 +104,9 @@ The JPEG codec is based in part on the work of the Independent JPEG Group (libjp
 [pdf.js](https://github.com/mozilla/pdf.js), the glyph rasterizer is translated from
 [font-rs](https://github.com/raphlinus/font-rs). The WebP codecs follow [RFC 9649](https://www.rfc-editor.org/rfc/rfc9649) and [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386)
 and reproduce [libwebp](https://chromium.googlesource.com/webm/libwebp)'s color conversion, the TrueType hinting follows
-[FreeType](https://freetype.org)'s interpreter (portions of this software are copyright © 2026 The FreeType Project).
+[FreeType](https://freetype.org)'s interpreter (portions of this software are copyright © 2026 The FreeType Project),
+the text shaping is ported from [HarfBuzz](https://github.com/harfbuzz/harfbuzz) and uses data of the
+[Unicode Character Database](https://www.unicode.org/ucd/).
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for their licenses.
 
 ---
