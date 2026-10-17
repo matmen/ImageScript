@@ -743,13 +743,7 @@ export class LayoutTable {
         }
 
         if (format === 3) {
-            // coverages as offsets, matched by index into a list of tests
-            const tests: Array<(glyph: number) => boolean> = [];
-            const coverages = (o: number, count: number): number[] => Array.from({ length: count }, (_, j) => {
-                tests.push(covered(f, offset + f.u16(o + j * 2)));
-                return tests.length - 1;
-            });
-            const matchCoverage: MatchFunc = (info, value) => tests[value](info.codepoint);
+            const { coverages, matchCoverage, tests } = coverageList(f, offset);
             let r: Rule, first: number;
             if (!chained) {
                 const inputCount = f.u16(offset + 2), recordCount = f.u16(offset + 4);
@@ -890,18 +884,13 @@ export class LayoutTable {
                 // reverse chaining single
                 case 8: {
                     const backtrackCount = f.u16(offset + 4);
-                    const tests: Array<(glyph: number) => boolean> = [];
-                    const list = (o: number, count: number): number[] => Array.from({ length: count }, (_, j) => {
-                        tests.push(covered(f, offset + f.u16(o + j * 2)));
-                        return tests.length - 1;
-                    });
+                    const { coverages: list, matchCoverage } = coverageList(f, offset);
                     const backtrack = list(offset + 6, backtrackCount);
                     let p = offset + 6 + backtrackCount * 2;
                     const lookaheadCount = f.u16(p);
                     const lookahead = list(p + 2, lookaheadCount);
                     p += 2 + lookaheadCount * 2;
                     const substituteCount = f.u16(p), substitutes = p + 2;
-                    const matchCoverage: MatchFunc = (info, value) => tests[value](info.codepoint);
                     return { coverage: has, would: single, apply: c => {
                         const index = coverage(c.buffer.cur().codepoint);
                         if (index < 0) return false;
@@ -1174,6 +1163,17 @@ export function applySynthetic(buffer: Buffer, gdef: GDEF, l: Lookup, mask: numb
     c.lookupMask = mask;
     c.setLookupProps(l.props);
     applyString(c, l, 0);
+}
+
+// coverage tables of a subtable (offsets from it) as numbered tests for the matching of contexts: coverages() reads a
+// list of offsets and returns their numbers, matchCoverage() matches a glyph against a number
+function coverageList(f: Font, subtable: number): { coverages: (o: number, count: number) => number[], matchCoverage: MatchFunc, tests: Array<(glyph: number) => boolean> } {
+    const tests: Array<(glyph: number) => boolean> = [];
+    const coverages = (o: number, count: number): number[] => Array.from({ length: count }, (_, j) => {
+        tests.push(covered(f, subtable + f.u16(o + j * 2)));
+        return tests.length - 1;
+    });
+    return { coverages, matchCoverage: (info, value) => tests[value](info.codepoint), tests };
 }
 
 const values16 = (f: Font, o: number, count: number): number[] => Array.from({ length: count }, (_, j) => f.u16(o + j * 2));
@@ -1501,7 +1501,7 @@ export class MapBuilder {
     }
 
     hasFeature(tag: string): boolean {
-        return [0, 1].some(t => this.tables[t] && (this.tables[t] as LayoutTable).langSysFeatures(this.langSys[t]).features.has(tag));
+        return [0, 1].some(t => this.tables[t]?.langSysFeatures(this.langSys[t]).features.has(tag));
     }
 
     compile(): OTMap {
@@ -1509,8 +1509,8 @@ export class MapBuilder {
         m.chosenScript = [...this.chosenScript] as [string, string];
         m.foundScript = [...this.foundScript] as [boolean, boolean];
 
-        const langSys = [0, 1].map(t => this.tables[t] ? (this.tables[t] as LayoutTable).langSysFeatures(this.langSys[t]) : { required: -1, features: new Map<string, number>() });
-        const requiredTag = [0, 1].map(t => langSys[t].required >= 0 && this.tables[t] ? (this.tables[t] as LayoutTable).featureTag(langSys[t].required) : '');
+        const langSys = [0, 1].map(t => this.tables[t]?.langSysFeatures(this.langSys[t]) ?? { required: -1, features: new Map<string, number>() });
+        const requiredTag = [0, 1].map(t => langSys[t].required >= 0 ? this.tables[t]?.featureTag(langSys[t].required) ?? '' : '');
         const requiredStage = [0, 0];
 
         // sort the features and merge duplicates
@@ -1556,7 +1556,7 @@ export class MapBuilder {
                 }
             }
             if (!found && info.flags & FeatureFlags.GLOBAL_SEARCH) for (const t of [0, 1]) {
-                const i = this.tables[t] ? (this.tables[t] as LayoutTable).findFeature(info.tag) : -1;
+                const i = this.tables[t]?.findFeature(info.tag) ?? -1;
                 if (i >= 0) {
                     index[t] = i;
                     found = true;

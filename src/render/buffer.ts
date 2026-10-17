@@ -9,7 +9,6 @@ export const enum GlyphProps {
     BASE = 0x02,
     LIGATURE = 0x04,
     MARK = 0x08,
-    CLASS_MASK = BASE | LIGATURE | MARK,
     SUBSTITUTED = 0x10,
     LIGATED = 0x20,
     MULTIPLIED = 0x40,
@@ -384,8 +383,6 @@ export const isContinuation = (info: GlyphInfo): boolean => (info.unicodeProps &
 const isFormat = (info: GlyphInfo): boolean => generalCategory(info) === Category.Cf;
 export const isZWNJ = (info: GlyphInfo): boolean => isFormat(info) && (info.unicodeProps & UnicodeProps.ZWNJ) !== 0;
 export const isZWJ = (info: GlyphInfo): boolean => isFormat(info) && (info.unicodeProps & UnicodeProps.ZWJ) !== 0;
-export const isJoiner = (info: GlyphInfo): boolean => isFormat(info) && (info.unicodeProps & (UnicodeProps.ZWJ | UnicodeProps.ZWNJ)) !== 0;
-export const isVariationSelector = (info: GlyphInfo): boolean => isFormat(info) && (info.unicodeProps & UnicodeProps.VS) !== 0;
 
 export const IS_LIG_BASE = 0x10;
 export const ligId = (info: GlyphInfo): number => info.ligProps >> 5;

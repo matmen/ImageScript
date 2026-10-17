@@ -9,8 +9,6 @@ export type Expression =
 
 /** one of the categories */
 export const cat = (...categories: number[]): Expression => ({ kind: 'set', categories: new Set(categories), negated: false });
-/** any category but these */
-export const not = (...categories: number[]): Expression => ({ kind: 'set', categories: new Set(categories), negated: true });
 export const any: Expression = { kind: 'set', categories: null, negated: false };
 export const seq = (...items: Expression[]): Expression => ({ kind: 'seq', items });
 export const alt = (...items: Expression[]): Expression => ({ kind: 'alt', items });

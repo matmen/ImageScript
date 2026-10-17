@@ -1749,10 +1749,10 @@ export class Image {
         const gradients: Array<{ min: number, max: number, gradient: (position: number) => Color }> = [];
 
         for (let i = 0; i < positions.length; i++) {
-            let minPos = positions[i - 1];
+            const minPos = positions[i - 1];
             if (minPos === undefined) continue;
 
-            let maxPos = positions[i];
+            const maxPos = positions[i];
 
             let minVal = values[i - 1];
             if (minVal === undefined) minVal = values[i];

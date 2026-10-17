@@ -98,7 +98,7 @@ export function quantize(pixels: Uint8Array, width: number, { maxColors = 256, q
 
 // returns an exact palette if the opaque pixels use at most `limit` distinct colors
 function exactPalette(pixels: Uint8Array, limit: number): { palette: Uint8Array, indices: Uint8Array } | null {
-    const lookup = new Map();
+    const lookup = new Map<number, number>();
     const indices = new Uint8Array(pixels.length >> 2);
     const palette: number[] = [];
 

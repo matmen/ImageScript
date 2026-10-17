@@ -104,7 +104,7 @@ const SIZES = 16;
 
 function loadFont(data: Uint8Array): Font {
     let regions = fonts.get(data.buffer);
-    if (!regions) fonts.set(data.buffer, regions = new Map());
+    if (!regions) fonts.set(data.buffer, regions = new Map<string, Font>());
 
     const key = `${data.byteOffset}:${data.byteLength}`;
     let font = regions.get(key);
@@ -115,7 +115,7 @@ function loadFont(data: Uint8Array): Font {
 function sizedFont(data: Uint8Array, size: number, hinting: boolean): SizedFont {
     const font = loadFont(data);
     let bySize = sizes.get(font);
-    if (!bySize) sizes.set(font, bySize = new Map());
+    if (!bySize) sizes.set(font, bySize = new Map<string, SizedFont>());
     const key = `${size}:${hinting}`;
     let sized = bySize.get(key);
     if (sized) return sized;

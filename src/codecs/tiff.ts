@@ -71,7 +71,7 @@ export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS): Promise<
     if (ifdOffset + 2 > data.length) throw new Error('TIFF: invalid IFD offset');
 
     // read the first IFD
-    const tags = new Map();
+    const tags = new Map<number, { type: number, count: number, offset: number }>();
     const entryCount = big ? u64(ifdOffset) : u16(ifdOffset);
     const entrySize = big ? 20 : 12;
     const inlineSize = big ? 8 : 4;
@@ -188,7 +188,8 @@ export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS): Promise<
 
     // JPEG compressed segments decode straight to RGBA
     if (compression === 7) {
-        const tables = tags.has(TAGS.JPEGTables) ? data.subarray(tags.get(TAGS.JPEGTables).offset, tags.get(TAGS.JPEGTables).offset + tags.get(TAGS.JPEGTables).count) : null;
+        const jpegTables = tags.get(TAGS.JPEGTables);
+        const tables = jpegTables ? data.subarray(jpegTables.offset, jpegTables.offset + jpegTables.count) : null;
         const transform = photometric === 6 ? 'ycc' : photometric === 2 ? 'rgb' : photometric === 5 ? 'cmyk' : null;
 
         for (let s = 0; s < segmentsPerPlane; s++) {

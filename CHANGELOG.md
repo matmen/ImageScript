@@ -70,6 +70,10 @@
 
 ### Fixes
 
+- `Image.renderSVG`: SVGs with long malformed styles, `url()` references, lengths or colors (e.g. a stylesheet of
+  200,000 characters without braces, which took a minute) parse in linear time instead of backtracking quadratically
+  or worse in regular expressions. A style rule that isn't closed at the end of the stylesheet applies now, as in
+  browsers.
 - NaN and infinite arguments throw a RangeError naming the argument instead of silently drawing black, transparent
   or nothing: colors (`fill`, `setPixelAt`, `drawBox`, `drawCircle`, `trim`, `colorToAlpha`, `Image.gradient`, the
   text and stroke colors, `Image.rgbaToColor` and the other color conversions, so `Image.rgbToColor(NaN, 0, 0)` is no

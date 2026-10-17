@@ -729,7 +729,7 @@ function hexProfile(text: string): Uint8Array {
     if (!match) return new Uint8Array(0);
     const digits = match[2].replace(/\s+/g, '');
     const out = new Uint8Array(Math.min(+match[1], digits.length >> 1));
-    for (let i = 0; i < out.length; i++) out[i] = parseInt(digits.substr(i * 2, 2), 16);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(digits.slice(i * 2, i * 2 + 2), 16);
     return out;
 }
 

@@ -252,7 +252,8 @@ function applyStch(buffer: Buffer, font: ShapeFont): void {
             }
         }
     }
-    buffer.info = out.reverse();
+    out.reverse();
+    buffer.info = out;
     if (!rtl) buffer.reverse();
 }
 

@@ -18,7 +18,7 @@ export function lineBreaks(codepoints: ArrayLike<number>): Uint8Array {
     if (!n) return breaks;
 
     // LB1: resolved classes; LB9-LB10: combining marks after a base take its properties (attached), others are AL
-    const cls: string[] = new Array(n), gc: string[] = new Array(n), wide = new Uint8Array(n), pictographicCn = new Uint8Array(n), attached = new Uint8Array(n);
+    const cls = new Array<string>(n), gc = new Array<string>(n), wide = new Uint8Array(n), pictographicCn = new Uint8Array(n), attached = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
         const cp = codepoints[i];
         let c = value(lineBreak, cp);

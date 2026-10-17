@@ -691,4 +691,24 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         const strings = image().crop('1', '1', '4', '4').rotate('45').opacity('0.5').composite(image(), '1', '2');
         if (strings.width !== 6) panic('numeric strings should keep working');
     }
+    {
+        // SVG parsing doesn't backtrack: long malformed styles, references, lengths and colors parse in linear time
+        const big = 200000;
+        const svgs = {
+            'style without braces': `<style>${'a'.repeat(big)}</style>`,
+            'style of at-signs': `<style>${'@'.repeat(big)}</style>`,
+            'unterminated comments': `<style>${'/*'.repeat(big / 2)}</style>`,
+            'url reference': `<rect width="2" height="2" fill="url(#a${' '.repeat(big)}"/>`,
+            'url spaces': `<rect width="2" height="2" fill="url(${' '.repeat(big)}x"/>`,
+            'url repeated': `<rect width="2" height="2" fill="${'url('.repeat(big / 4)}"/>`,
+            'length digits': `<rect width="${'1'.repeat(big)}x" height="2"/>`,
+            'length spaces': `<rect width="1${' '.repeat(big)}x" height="2"/>`,
+            'color function': `<rect width="2" height="2" fill="rgb(${' '.repeat(big)}"/>`,
+        };
+        for (const [name, content] of Object.entries(svgs)) {
+            const start = Date.now();
+            await Image.renderSVG(`<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4">${content}</svg>`, 1).catch(() => {});
+            if (Date.now() - start > 1000) panic(`SVG ${name}: took ${Date.now() - start} ms`);
+        }
+    }
 })();

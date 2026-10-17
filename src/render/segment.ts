@@ -10,7 +10,7 @@ export function graphemeBoundaries(codepoints: ArrayLike<number>): Uint8Array {
     const n = codepoints.length, boundaries = new Uint8Array(n + 1);
     if (!n) return boundaries;
     boundaries[0] = boundaries[n] = 1;
-    const gcb: string[] = new Array(n), incb: string[] = new Array(n), pictographic = new Uint8Array(n);
+    const gcb = new Array<string>(n), incb = new Array<string>(n), pictographic = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
         gcb[i] = value(graphemeBreak, codepoints[i]);
         incb[i] = value(conjunctBreak, codepoints[i]);
@@ -61,7 +61,7 @@ const closingOf = (u: number): number => {
  * them (at the start: after them), paired brackets the script around the opening one
  */
 export function scripts(codepoints: ArrayLike<number>): string[] {
-    const n = codepoints.length, out: string[] = new Array(n);
+    const n = codepoints.length, out = new Array<string>(n);
     let current = '';
     // open brackets: [closing code point, script at the opening]
     const stack: Array<[number, string]> = [];

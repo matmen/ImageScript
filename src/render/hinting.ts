@@ -777,8 +777,16 @@ class Execution {
                         break;
                     case 0x59: break; // EIF
                     case 0x1c: next = ip + this.pop(); break; // JMPR
-                    case 0x78: { const e = this.pop(), offset = this.pop(); if (e) next = ip + offset; break; } // JROT
-                    case 0x79: { const e = this.pop(), offset = this.pop(); if (!e) next = ip + offset; break; } // JROF
+                    case 0x78: { // JROT
+                        const e = this.pop(), offset = this.pop();
+                        if (e) next = ip + offset;
+                        break;
+                    }
+                    case 0x79: { // JROF
+                        const e = this.pop(), offset = this.pop();
+                        if (!e) next = ip + offset;
+                        break;
+                    }
                     case 0x2c: case 0x89: { // FDEF, IDEF
                         const n = this.pop();
                         let p = next;
@@ -863,8 +871,12 @@ class Execution {
                         const mv = this.moveVector();
                         const dx = d * mv.x, dy = d * mv.y;
                         const shift = (z: Zone, p: number, touch: boolean): void => {
-                            z.curX[p] += dx; z.curY[p] += dy;
-                            if (touch) { if (gs.fv.x !== 0) z.touchX[p] = 1; if (gs.fv.y !== 0) z.touchY[p] = 1; }
+                            z.curX[p] += dx;
+                            z.curY[p] += dy;
+                            if (touch) {
+                                if (gs.fv.x !== 0) z.touchX[p] = 1;
+                                if (gs.fv.y !== 0) z.touchY[p] = 1;
+                            }
                         };
 
                         if (op <= 0x33) { // SHP

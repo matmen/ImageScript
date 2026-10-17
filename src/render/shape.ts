@@ -150,15 +150,15 @@ export interface NormalizeContext {
 }
 
 export interface Shaper {
-    collectFeatures?(planner: Planner): void;
-    overrideFeatures?(planner: Planner): void;
-    dataCreate?(plan: Plan): unknown;
-    preprocessText?(plan: Plan, buffer: Buffer, font: ShapeFont): void;
-    postprocessGlyphs?(plan: Plan, buffer: Buffer, font: ShapeFont): void;
-    decompose?(c: NormalizeContext, ab: number): [number, number] | null;
-    compose?(c: NormalizeContext, a: number, b: number): number;
-    setupMasks?(plan: Plan, buffer: Buffer, font: ShapeFont): void;
-    reorderMarks?(plan: Plan, buffer: Buffer, start: number, end: number): void;
+    collectFeatures?: (planner: Planner) => void;
+    overrideFeatures?: (planner: Planner) => void;
+    dataCreate?: (plan: Plan) => unknown;
+    preprocessText?: (plan: Plan, buffer: Buffer, font: ShapeFont) => void;
+    postprocessGlyphs?: (plan: Plan, buffer: Buffer, font: ShapeFont) => void;
+    decompose?: (c: NormalizeContext, ab: number) => [number, number] | null;
+    compose?: (c: NormalizeContext, a: number, b: number) => number;
+    setupMasks?: (plan: Plan, buffer: Buffer, font: ShapeFont) => void;
+    reorderMarks?: (plan: Plan, buffer: Buffer, start: number, end: number) => void;
     gposTag?: string;
     normalization: Normalization;
     zeroWidthMarks: ZeroMarks;

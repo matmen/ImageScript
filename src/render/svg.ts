@@ -282,17 +282,81 @@ function parseXML(text: string): XNode {
 // CSS
 // ---------------------------------------------------------------------------
 
+// the id of the first url(#id) reference in a value (quoted or not, ids without whitespace or quotes), scanned
+// linearly (a regular expression backtracked quadratically on runs of spaces)
+function urlReference(value: string): string | null {
+    let close = -1;
+    for (let open = value.indexOf('url('); open >= 0; open = value.indexOf('url(', open + 4)) {
+        if (close < open && (close = value.indexOf(')', open)) < 0) return null;
+        let inner = value.slice(open + 4, close).trim();
+        if (inner.startsWith('"') || inner.startsWith("'")) inner = inner.slice(1);
+        if (inner.endsWith('"') || inner.endsWith("'")) inner = inner.slice(0, -1);
+        inner = inner.trim();
+        if (/^#[^'"\s]+$/.test(inner)) return inner.slice(1);
+    }
+    return null;
+}
+
+// CSS without its comments (an unterminated one runs to the end)
+function stripComments(text: string): string {
+    let out = '';
+    for (let i = 0; ;) {
+        const start = text.indexOf('/*', i);
+        if (start < 0) return out + text.slice(i);
+        out += text.slice(i, start);
+        const end = text.indexOf('*/', start + 2);
+        if (end < 0) return out;
+        i = end + 2;
+    }
+}
+
+// the end of the block opening at text[open] (its closing brace, nested blocks included), the text's length if it
+// isn't closed
+function blockEnd(text: string, open: number): number {
+    let depth = 0;
+    for (let i = open; i < text.length; i++) {
+        if (text[i] === '{') depth++;
+        else if (text[i] === '}' && !--depth) return i;
+    }
+    return text.length;
+}
+
+// style rules (selectors { declarations }); at-rules (@media, @import, ...) and malformed rules are skipped. Scanned
+// with indexOf, linear in the length (regular expressions backtracked quadratically on text without braces)
 function parseStyleSheet(text: string): Rule[] {
     const rules: Rule[] = [];
-    text = text.replace(/\/\*[\s\S]*?\*\//g, '');
+    text = stripComments(text);
+
+    // the next position of a character from i on (cached: i only grows, so a search only continues the last one)
+    const cache: Record<string, number> = {};
+    const next = (char: string, i: number): number => {
+        const cached = cache[char];
+        if (cached === undefined || cached !== -1 && cached < i) cache[char] = text.indexOf(char, i);
+        return cache[char];
+    };
 
     let order = 0;
-    const blocks = /([^{}@]+)\{([^{}]*)\}|@[^{;]*(\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}|;)/g;
-    for (const [, selectors, body] of text.matchAll(blocks)) {
-        if (selectors === undefined) continue;
+    for (let i = 0; i < text.length;) {
+        const start = i, open = next('{', i), close = next('}', i), at = next('@', i);
+        if (open < 0) break;
+        // a stray closing brace
+        if (close >= 0 && close < open) {
+            i = close + 1;
+            continue;
+        }
+        // an at-rule: up to its semicolon, or its block
+        if (at >= 0 && at < open) {
+            const semicolon = next(';', at);
+            i = semicolon >= 0 && semicolon < open ? semicolon + 1 : blockEnd(text, open) + 1;
+            continue;
+        }
+        const end = blockEnd(text, open);
+        const body = text.slice(open + 1, end);
+        i = end + 1;
+        // (rules with nested blocks are invalid)
+        if (body.includes('{')) continue;
         const declarations = parseDeclarations(body);
-
-        for (const selector of selectors.split(',')) {
+        for (const selector of text.slice(start, open).split(',')) {
             const parsed = parseSelector(selector.trim());
             if (parsed) rules.push({ ...parsed, order: order++, declarations });
         }
@@ -381,7 +445,7 @@ function parseSelector(selector: string): { specificity: number, match: (node: X
 // returns {normal: {name: value}, important: {name: value}}
 function parseDeclarations(text: string): Declarations {
     const declarations: Declarations = { normal: {}, important: {} };
-    text = text.replace(/\/\*[\s\S]*?\*\//g, '');
+    text = stripComments(text);
 
     for (const part of text.split(';')) {
         const colon = part.indexOf(':');
@@ -451,8 +515,8 @@ class Document {
 
     reference(value: string | undefined): XNode | null {
         if (!value) return null;
-        const match = /url\(\s*['"]?\s*#([^)'"]+?)\s*['"]?\s*\)/.exec(value) || /^\s*#(.+?)\s*$/.exec(value);
-        return match ? this.ids.get(match[1]) || null : null;
+        const id = urlReference(value) ?? (value.trim().startsWith('#') ? value.trim().slice(1) : null);
+        return id ? this.ids.get(id) || null : null;
     }
 
     href(node: XNode): string | undefined {
@@ -997,7 +1061,7 @@ function solidPaint(color: Color): Paint {
 }
 
 function gradientLookup(stops: Stop[], opacity: number): Color[] {
-    const table = new Array(1024);
+    const table = new Array<Color>(1024);
     for (let i = 0; i < 1024; i++) {
         const t = i / 1023;
         let k = 0;
@@ -1324,10 +1388,9 @@ function shapePath(node: XNode, viewport: Viewport, fontSize: number): PathComma
 
 function parsePath(d: string): PathCommand[] {
     const path: PathCommand[] = [];
-    const tokens = /([MmZzLlHhVvCcSsQqTtAa])|([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)/g;
     // numbers stay strings so compact arc flags can be split later
     const items: Array<string | { command: string }> = [];
-    for (const m of d.matchAll(tokens)) items.push(m[1] ? { command: m[1] } : m[2]);
+    for (const m of d.matchAll(PATH_TOKENS)) items.push(m[1] ? { command: m[1] } : m[2]);
 
     let i = 0;
     let command: string | null = null;
@@ -1569,7 +1632,7 @@ function union(a: BBox, b: BBox): BBox {
 }
 
 function transformPoints(points: number[], m: Matrix): number[] {
-    const out = new Array(points.length);
+    const out = new Array<number>(points.length);
     for (let i = 0; i < points.length; i += 2) {
         const x = points[i], y = points[i + 1];
         out[i] = m[0] * x + m[2] * y + m[4];
@@ -1820,9 +1883,17 @@ function viewBoxTransform([vx, vy, vw, vh]: number[], width: number, height: num
 
 const UNITS: Record<string, number> = { px: 1, pt: 4 / 3, pc: 16, mm: 96 / 25.4, cm: 96 / 2.54, in: 96 };
 
+// a number (its alternatives can't match the same digits in two ways, so failing matches don't backtrack
+// quadratically)
+const NUMBER = String.raw`[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?`;
+const LENGTH = new RegExp(`^(${NUMBER})\\s*(px|pt|pc|mm|cm|in|em|ex|%)?$`);
+const NUMBER_OR_PERCENTAGE = new RegExp(`^(${NUMBER})\\s*(%?)$`);
+const NUMBERS = new RegExp(NUMBER, 'g');
+const PATH_TOKENS = new RegExp(`([MmZzLlHhVvCcSsQqTtAa])|(${NUMBER})`, 'g');
+
 function parseLength(value: string | undefined, viewport: Viewport | null, fontSize = 16, axis: 'x' | 'y' | 'diagonal' = 'x'): number {
     if (value === undefined || value === null) return 0;
-    const match = /^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*(px|pt|pc|mm|cm|in|em|ex|%)?\s*$/.exec(String(value));
+    const match = LENGTH.exec(String(value).trim());
     if (!match) return 0;
 
     const number = parseFloat(match[1]);
@@ -1847,13 +1918,13 @@ function parseNumber(value: string | undefined, fallback: number): number {
 // a number or percentage (as a fraction), null for anything else
 function parseStrictNumber(value: string | undefined): number | null {
     if (value === undefined || value === null) return null;
-    const match = /^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*(%?)\s*$/.exec(String(value));
+    const match = NUMBER_OR_PERCENTAGE.exec(String(value).trim());
     if (!match) return null;
     return match[2] ? parseFloat(match[1]) / 100 : parseFloat(match[1]);
 }
 
 function parseNumberList(value: string): number[] {
-    return [...String(value).matchAll(/[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g)].map(m => parseFloat(m[0]));
+    return [...String(value).matchAll(NUMBERS)].map(m => parseFloat(m[0]));
 }
 
 function parseDashArray(value: string | undefined, viewport: Viewport, fontSize: number): number[] | null {
@@ -1882,7 +1953,7 @@ function parseColor(value: string | undefined): Color | null {
         return null;
     }
 
-    match = /^(rgba?|hsla?)\(\s*([^)]*)\)$/.exec(value);
+    match = /^(rgba?|hsla?)\(([^)]*)\)$/.exec(value);
     if (match) {
         const parts = match[2].split(/\s*[,/]\s*|\s+/).filter(Boolean);
         if (parts.length < 3) return null;

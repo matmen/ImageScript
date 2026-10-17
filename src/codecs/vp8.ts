@@ -474,8 +474,15 @@ function predictBlock(mode: number, p: Uint8Array, base: number, stride: number,
     if (mode === DC_PRED) {
         const shift = size === 16 ? 3 : 2;
         let sum = 0, count = 0;
-        if (mby > 0) { for (let i = 0; i < size; i++) sum += p[above + i]; count++; }
-        if (mbx > 0) { for (let i = 0; i < size; i++) sum += p[base + i * stride - 1]; count++; }
+        // (the edges above and left that exist)
+        if (mby > 0) {
+            for (let i = 0; i < size; i++) sum += p[above + i];
+            count++;
+        }
+        if (mbx > 0) {
+            for (let i = 0; i < size; i++) sum += p[base + i * stride - 1];
+            count++;
+        }
         const v = count === 0 ? 128 : sum + (1 << shift + count - 1) >> shift + count;
         for (let y = 0; y < size; y++) p.fill(v, base + y * stride, base + y * stride + size);
     } else if (mode === V_PRED) {
