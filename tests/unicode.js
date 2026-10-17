@@ -11,7 +11,7 @@ const panic = message => {
     const {resolve, lineLevels, visualOrder, classOf, BIDI_CLASSES} = await import('../dist/render/bidi.js');
     const {lineBreaks} = await import('../dist/render/linebreak.js');
     const {graphemeBoundaries} = await import('../dist/render/segment.js');
-    const lines = file => fs.readFileSync(`./tests/unicode/${file}`, 'utf8').split('\n').filter(line => line.trim() && !line.startsWith('#'));
+    const lines = file => fs.readFileSync(`./tests/unicode/${file}`, 'utf8').split(/\r?\n/).filter(line => line.trim() && !line.startsWith('#'));
     const format = (levels, order) => `${Array.from(levels, l => l < 0 ? 'x' : l).join(' ')} / ${order.join(' ')}`;
 
     // BidiTest.txt: classes, paragraph directions (1 auto, 2 left to right, 4 right to left)
