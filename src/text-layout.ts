@@ -51,11 +51,12 @@ export class TextLayout {
     constructor(options: TextLayoutOptions = {}) {
         const { maxWidth, maxHeight, wrapStyle, verticalAlign, horizontalAlign, wrapHardBreaks } = options;
 
-        this.maxWidth = maxWidth || Infinity;
+        // (undefined and 0 mean no limit, NaN is invalid)
+        this.maxWidth = maxWidth === undefined || maxWidth === 0 ? Infinity : Number(maxWidth);
         if (isNaN(this.maxWidth) || this.maxWidth < 1)
             throw new RangeError('Invalid maxWidth');
 
-        this.maxHeight = maxHeight || Infinity;
+        this.maxHeight = maxHeight === undefined || maxHeight === 0 ? Infinity : Number(maxHeight);
         if (isNaN(this.maxHeight) || this.maxHeight < 1)
             throw new RangeError('Invalid maxHeight');
 

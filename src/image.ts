@@ -14,7 +14,7 @@ import { encode as utf8 } from './util/utf8.ts';
 import { resample, BOX, TRIANGLE, CUBIC } from './util/resample.ts';
 import { rotateBilinear } from './util/rotate.ts';
 import { gaussianBlur, boxBlurRGBA, premultiply, unpremultiply } from './util/blur.ts';
-import { isOptions } from './util/options.ts';
+import { isOptions, finite, color as checkColor } from './util/options.ts';
 import { MAX_PIXELS, decoding } from './util/limits.ts';
 
 /** A color as a 32-bit RGBA integer (`0xRRGGBBAA`) */
@@ -327,6 +327,10 @@ export class Image {
      * @returns RGBA value
      */
     static rgbaToColor(r: number, g: number, b: number, a: number): Color {
+        r = finite(r, 'red');
+        g = finite(g, 'green');
+        b = finite(b, 'blue');
+        a = finite(a, 'alpha');
         return (channel(r) << 24 | channel(g) << 16 | channel(b) << 8 | channel(a)) >>> 0;
     }
 
@@ -350,7 +354,10 @@ export class Image {
      * @returns color
      */
     static hslaToColor(h: number, s: number, l: number, a: number): Color {
-        h = wrapHue(h);
+        h = wrapHue(finite(h, 'hue'));
+        s = finite(s, 'saturation');
+        l = finite(l, 'lightness');
+        a = finite(a, 'alpha');
         s = Math.min(1, Math.max(0, s));
         l = Math.min(1, Math.max(0, l));
         a = Math.min(1, Math.max(0, a));
@@ -391,9 +398,10 @@ export class Image {
      * @returns The HSLA values ([H, S, L, A])
      */
     static rgbaToHSLA(r: number, g: number, b: number, a: number): [h: number, s: number, l: number, a: number] {
-        r /= 255;
-        g /= 255;
-        b /= 255;
+        r = finite(r, 'red') / 255;
+        g = finite(g, 'green') / 255;
+        b = finite(b, 'blue') / 255;
+        a = finite(a, 'alpha');
 
         const max = Math.max(r, g, b), min = Math.min(r, g, b);
         let h = 0, s: number;
@@ -428,6 +436,7 @@ export class Image {
      * @returns The RGBA values ([R, G, B, A])
      */
     static colorToRGBA(color: Color): [r: number, g: number, b: number, a: number] {
+        color = checkColor(color);
         return [(color >> 24) & 0xff, (color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff];
     }
 
@@ -448,8 +457,8 @@ export class Image {
      * @returns The color value
      */
     getPixelAt(x: number, y: number): Color {
-        x = ~~x;
-        y = ~~y;
+        x = ~~finite(x, 'x');
+        y = ~~finite(y, 'y');
         this.__check_boundaries__(x, y);
         return this.__view__.getUint32((y * this.width + x) * 4, false);
     }
@@ -461,8 +470,8 @@ export class Image {
      * @returns The RGBA value
      */
     getRGBAAt(x: number, y: number): Uint8ClampedArray {
-        x = ~~x;
-        y = ~~y;
+        x = ~~finite(x, 'x');
+        y = ~~finite(y, 'y');
         this.__check_boundaries__(x, y);
         const idx = (y * this.width + x) * 4;
         return this.bitmap.subarray(idx, idx + 4);
@@ -475,10 +484,10 @@ export class Image {
      * @param pixelColor
      */
     setPixelAt(x: number, y: number, pixelColor: Color): this {
-        x = ~~x;
-        y = ~~y;
+        x = ~~finite(x, 'x');
+        y = ~~finite(y, 'y');
         this.__check_boundaries__(x, y);
-        this.__set_pixel__(x, y, pixelColor);
+        this.__set_pixel__(x, y, checkColor(pixelColor));
         return this;
     }
 
@@ -540,6 +549,7 @@ export class Image {
                 for (let x = 0; x < this.width; x++, offset += 4)
                     view.setUint32(offset, color(x, y), false);
         } else {
+            color = checkColor(color);
             if (!this.bitmap.length) return this;
             view.setUint32(0, color, false);
             const u32 = new Uint32Array(this.bitmap.buffer, this.bitmap.byteOffset, this.bitmap.byteLength / 4);
@@ -665,8 +675,8 @@ export class Image {
     contain(width: number, height: number, mode?: ResizeMode): this;
     contain(width: number, height: number, modeOrOptions?: ResizeMode | ResizeOptions): this {
         const options = resizeOptions(modeOrOptions);
-        width = Math.floor(width);
-        height = Math.floor(height);
+        width = Math.floor(finite(width, 'width'));
+        height = Math.floor(finite(height, 'height'));
         // round instead of flooring the scaled size, so the limiting axis matches the box exactly
         const scale = Math.min(width / this.width, height / this.height);
         return this.resize(Math.max(1, Math.min(width, Math.round(this.width * scale))), Math.max(1, Math.min(height, Math.round(this.height * scale))), options);
@@ -779,10 +789,10 @@ export class Image {
      * @param height The new images height
      */
     crop(x: number, y: number, width: number, height: number): this {
-        x = ~~x;
-        y = ~~y;
-        width = ~~width;
-        height = ~~height;
+        x = ~~finite(x, 'x');
+        y = ~~finite(y, 'y');
+        width = ~~finite(width, 'width');
+        height = ~~finite(height, 'height');
 
         const left = Math.max(0, x), top = Math.max(0, y);
         const right = Math.min(this.width, x + width), bottom = Math.min(this.height, y + height);
@@ -814,6 +824,7 @@ export class Image {
 
         const bitmap = this.bitmap;
         const { width, height } = this;
+        if (color !== undefined) color = checkColor(color);
         const c = color === undefined ? [bitmap[0], bitmap[1], bitmap[2], bitmap[3]] : [color >>> 24, color >> 16 & 255, color >> 8 & 255, color & 255];
         const limit = tolerance * 255;
         const matches = (x: number, y: number): boolean => {
@@ -873,12 +884,12 @@ export class Image {
      * @param color The color to fill the box in with, a function gets coordinates relative to the box
      */
     drawBox(x: number, y: number, width: number, height: number, color: Color | ColorFunction): this {
-        x = ~~x;
-        y = ~~y;
-        width = ~~width;
-        height = ~~height;
+        x = ~~finite(x, 'x');
+        y = ~~finite(y, 'y');
+        width = ~~finite(width, 'width');
+        height = ~~finite(height, 'height');
 
-        if (typeof color !== 'function') return this.__fast_box__(x, y, width, height, color);
+        if (typeof color !== 'function') return this.__fast_box__(x, y, width, height, checkColor(color));
 
         for (let tY = Math.max(0, -y); tY < height && tY + y < this.height; tY++)
             for (let tX = Math.max(0, -x); tX < width && tX + x < this.width; tX++)
@@ -921,8 +932,10 @@ export class Image {
      * @param color The color, a function gets coordinates relative to the circle's bounding box
      */
     drawCircle(x: number, y: number, radius: number, color: Color | ColorFunction): this {
-        x = ~~x;
-        y = ~~y;
+        x = ~~finite(x, 'x');
+        y = ~~finite(y, 'y');
+        radius = finite(radius, 'radius');
+        if (typeof color !== 'function') color = checkColor(color);
         // the circle is centered on the pixel's center, its edge is antialiased
         const cx = x + 0.5, cy = y + 0.5;
 
@@ -973,6 +986,7 @@ export class Image {
     cropCircle(maxOrOptions: boolean | CropCircleOptions = false, featheringArgument = 0): this {
         const { max = false, feathering = 0 } = typeof maxOrOptions === 'object' && maxOrOptions !== null
             ? maxOrOptions : { max: maxOrOptions, feathering: featheringArgument };
+        finite(feathering, 'feathering');
         const radius = (max ? Math.max : Math.min)(this.width, this.height) / 2;
         const cx = this.width / 2, cy = this.height / 2;
         // width of the soft edge, at least the one pixel of antialiasing
@@ -1009,7 +1023,8 @@ export class Image {
     opacity(opacity: number, absolute?: boolean): this;
     opacity(opacity: number, absoluteOrOptions: boolean | AdjustOptions = false): this {
         const absolute = isOptions(absoluteOrOptions) ? absoluteOrOptions.absolute ?? false : absoluteOrOptions;
-        if (isNaN(opacity) || opacity < 0)
+        opacity = finite(opacity, 'opacity value');
+        if (opacity < 0)
             throw new RangeError('Invalid opacity value');
 
         this.__set_channel_value__(opacity, absolute, 3);
@@ -1031,7 +1046,8 @@ export class Image {
     red(factor: number, absolute?: boolean): this;
     red(factor: number, absoluteOrOptions: boolean | AdjustOptions = false): this {
         const absolute = isOptions(absoluteOrOptions) ? absoluteOrOptions.absolute ?? false : absoluteOrOptions;
-        if (isNaN(factor) || factor < 0)
+        factor = finite(factor, 'red factor');
+        if (factor < 0)
             throw new RangeError('Invalid red factor');
 
         this.__set_channel_value__(factor, absolute, 0);
@@ -1053,7 +1069,8 @@ export class Image {
     green(factor: number, absolute?: boolean): this;
     green(factor: number, absoluteOrOptions: boolean | AdjustOptions = false): this {
         const absolute = isOptions(absoluteOrOptions) ? absoluteOrOptions.absolute ?? false : absoluteOrOptions;
-        if (isNaN(factor) || factor < 0)
+        factor = finite(factor, 'green factor');
+        if (factor < 0)
             throw new RangeError('Invalid green factor');
 
         this.__set_channel_value__(factor, absolute, 1);
@@ -1075,7 +1092,8 @@ export class Image {
     blue(factor: number, absolute?: boolean): this;
     blue(factor: number, absoluteOrOptions: boolean | AdjustOptions = false): this {
         const absolute = isOptions(absoluteOrOptions) ? absoluteOrOptions.absolute ?? false : absoluteOrOptions;
-        if (isNaN(factor) || factor < 0)
+        factor = finite(factor, 'blue factor');
+        if (factor < 0)
             throw new RangeError('Invalid blue factor');
 
         this.__set_channel_value__(factor, absolute, 2);
@@ -1109,7 +1127,8 @@ export class Image {
     lightness(value: number, absolute?: boolean): this;
     lightness(value: number, absoluteOrOptions: boolean | AdjustOptions = false): this {
         const absolute = isOptions(absoluteOrOptions) ? absoluteOrOptions.absolute ?? false : absoluteOrOptions;
-        if (isNaN(value) || value < 0)
+        value = finite(value, 'lightness value');
+        if (value < 0)
             throw new RangeError('Invalid lightness value');
 
         return this.__map_hsla__(c => { c.l = value * (absolute ? 1 : c.l); });
@@ -1129,7 +1148,8 @@ export class Image {
     saturation(value: number, absolute?: boolean): this;
     saturation(value: number, absoluteOrOptions: boolean | AdjustOptions = false): this {
         const absolute = isOptions(absoluteOrOptions) ? absoluteOrOptions.absolute ?? false : absoluteOrOptions;
-        if (isNaN(value) || value < 0)
+        value = finite(value, 'saturation value');
+        if (value < 0)
             throw new RangeError('Invalid saturation value');
 
         return this.__map_hsla__(c => { c.s = value * (absolute ? 1 : c.s); });
@@ -1153,8 +1173,8 @@ export class Image {
         const options = isOptions(xOrOptions) ? xOrOptions : optionsArgument;
         const { opacity = 1, mode = 'normal' } = options;
         let x = isOptions(xOrOptions) ? xOrOptions.x ?? 0 : xOrOptions, y = isOptions(xOrOptions) ? xOrOptions.y ?? 0 : yArgument;
-        x |= 0;
-        y |= 0;
+        x = finite(x, 'x') | 0;
+        y = finite(y, 'y') | 0;
 
         if (isNaN(opacity) || opacity < 0 || opacity > 1)
             throw new RangeError('Invalid composite opacity');
@@ -1278,6 +1298,7 @@ export class Image {
      * @param degrees How many degrees to shift the hue by
      */
     hueShift(degrees: number): this {
+        degrees = finite(degrees, 'hue shift');
         return this.__map_hsla__(c => { c.h += degrees / 360; });
     }
 
@@ -1402,7 +1423,8 @@ export class Image {
      * @param factor The factor (>= 0, 1 keeps the image)
      */
     brightness(factor: number): this {
-        if (isNaN(factor) || factor < 0)
+        factor = finite(factor, 'brightness factor');
+        if (factor < 0)
             throw new RangeError('Invalid brightness factor');
         return this.__map_channels__(v => v * factor);
     }
@@ -1412,7 +1434,8 @@ export class Image {
      * @param factor The factor (>= 0, 1 keeps the image, 0 makes it grey)
      */
     contrast(factor: number): this {
-        if (isNaN(factor) || factor < 0)
+        factor = finite(factor, 'contrast factor');
+        if (factor < 0)
             throw new RangeError('Invalid contrast factor');
         return this.__map_channels__(v => (v - 127.5) * factor + 127.5);
     }
@@ -1422,7 +1445,8 @@ export class Image {
      * @param gamma The gamma (> 0, 1 keeps the image)
      */
     gamma(gamma: number): this {
-        if (isNaN(gamma) || gamma <= 0)
+        gamma = finite(gamma, 'gamma');
+        if (gamma <= 0)
             throw new RangeError('Invalid gamma');
         return this.__map_channels__(v => 255 * (v / 255) ** (1 / gamma));
     }
@@ -1466,6 +1490,7 @@ export class Image {
             throw new RangeError('Invalid thresholds, they have to satisfy 0 <= transparencyThreshold < opacityThreshold <= 1');
 
         const bitmap = this.bitmap;
+        if (color !== undefined) color = checkColor(color);
         const c = color === undefined ? [bitmap[0], bitmap[1], bitmap[2]] : [color >>> 24, color >> 16 & 255, color >> 8 & 255];
 
         for (let i = 0; i < bitmap.length; i += 4) {
@@ -1567,7 +1592,7 @@ export class Image {
     rotate(angle: number, resize?: boolean): this;
     rotate(angle: number, resizeOrOptions: boolean | RotateOptions = true): this {
         const { resize = true, fast = true } = typeof resizeOrOptions === 'object' && resizeOrOptions !== null ? resizeOrOptions : { resize: resizeOrOptions };
-        angle = ((angle % 360) + 360) % 360;
+        angle = ((finite(angle, 'angle') % 360) + 360) % 360;
         if (angle === 0) return this;
 
         const {width, height} = this;
@@ -1704,8 +1729,8 @@ export class Image {
      */
     static gradient(colors: Record<number, Color>): (position: number) => Color {
         const entries = Object.entries(colors).sort((a, b) => Number(a[0]) - Number(b[0]));
-        const positions = entries.map(e => parseFloat(e[0]));
-        const values = entries.map(e => e[1]);
+        const positions = entries.map(e => finite(parseFloat(e[0]), 'gradient position'));
+        const values = entries.map(e => checkColor(e[1]));
 
         if (positions.length === 0) throw new RangeError('Invalid gradient point count');
         else if (positions.length === 1) {
@@ -1761,6 +1786,7 @@ export class Image {
     roundCorners(radius?: number): this;
     roundCorners(radiusOrOptions?: number | RoundCornersOptions): this {
         let radius = (isOptions(radiusOrOptions) ? radiusOrOptions.radius : radiusOrOptions) ?? Math.min(this.width, this.height) / 4;
+        radius = finite(radius, 'radius');
         radius = Math.max(0, Math.min(radius, this.width / 2, this.height / 2));
         const size = Math.ceil(radius);
 
@@ -1813,7 +1839,7 @@ export class Image {
      */
     fisheye(strength?: number): this;
     fisheye(strengthOrOptions?: number | FisheyeOptions): this {
-        const strength = (isOptions(strengthOrOptions) ? strengthOrOptions.strength : strengthOrOptions) ?? 2;
+        const strength = finite((isOptions(strengthOrOptions) ? strengthOrOptions.strength : strengthOrOptions) ?? 2, 'strength');
         const r = new Image(this.width, this.height);
 
         const w = this.width;
@@ -1873,7 +1899,7 @@ export class Image {
             ({ compression = 1, metadata = {} } = compressionOrOptions as PNGEncodeOptions);
         else metadata = compressionOrOptions as Metadata;
 
-        const level = Math.min(9, Math.max(0, ~~compression));
+        const level = Math.min(9, Math.max(0, ~~finite(compression, 'compression level')));
         return png.encodeRGBA(this.__bytes__(), this.width, this.height, level, pngText(resolveMetadata(metadata)));
     }
 
@@ -1900,7 +1926,7 @@ export class Image {
     async encodeJPEG(qualityOrOptions: number | JPEGEncodeOptions = 90): Promise<Uint8Array> {
         const { quality = 90, metadata = {} } = isOptions(qualityOrOptions) ? qualityOrOptions : { quality: qualityOrOptions };
         const m = resolveMetadata(metadata);
-        return jpeg.encode(this.__bytes__(), this.width, this.height, quality, { exif: exifData(m), comment: m.comment ? utf8(m.comment) : undefined });
+        return jpeg.encode(this.__bytes__(), this.width, this.height, finite(quality, 'quality'), { exif: exifData(m), comment: m.comment ? utf8(m.comment) : undefined });
     }
 
     /**
@@ -2067,7 +2093,8 @@ export class Image {
     static async renderText(font: BinaryData | BinaryData[], size: number, text: string, colorOrOptions: Color | TextOptions = 0xffffffff, layoutArgument?: TextLayout, styleArgument: TextStyle = {}): Promise<Image> {
         const options: TextOptions = isOptions(colorOrOptions) ? colorOrOptions : { ...styleArgument, color: colorOrOptions, layout: layoutArgument };
         const { color = 0xffffffff, layout = new TextLayout(), strokeWidth = 0, strokeColor = 0x000000ff, hinting = true } = options;
-        if (isNaN(strokeWidth) || strokeWidth < 0)
+        size = finite(size, 'font size');
+        if (finite(strokeWidth, 'stroke width') < 0)
             throw new RangeError('Invalid stroke width');
         const fonts = Array.isArray(font) ? font : [font];
         if (!fonts.length) throw new RangeError('No font given');

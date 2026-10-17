@@ -70,6 +70,14 @@
 
 ### Fixes
 
+- NaN and infinite arguments throw a RangeError naming the argument instead of silently drawing black, transparent
+  or nothing: colors (`fill`, `setPixelAt`, `drawBox`, `drawCircle`, `trim`, `colorToAlpha`, `Image.gradient`, the
+  text and stroke colors, `Image.rgbaToColor` and the other color conversions, so `Image.rgbToColor(NaN, 0, 0)` is no
+  longer black), coordinates and sizes (`getPixelAt`, `crop`, `composite`, `drawBox`, `drawCircle`, `contain`),
+  angles and amounts (`rotate`, `hueShift`, `roundCorners`, `fisheye`, `cropCircle`), infinite factors (`opacity`,
+  `red`, `lightness`, `brightness`, `contrast`, `gamma`, ...), the PNG compression and JPEG quality, the font size,
+  frame durations and offsets, and loop counts. Numeric strings keep working. `TextLayout`'s `maxWidth` and `maxHeight`
+  accept `Infinity` (no limit), NaN throws instead of meaning no limit.
 - The outline of `Image.renderText` (`strokeWidth`) showed through translucent text, it now only shows around the
   glyphs (opaque text renders as before).
 - The outline of `Image.renderText` follows the glyphs' antialiased edges instead of their pixels, so it is smooth

@@ -1,5 +1,5 @@
 import { Image, ResizeMode, ResizeOptions, Color, TrimOptions } from './image.ts';
-import { isOptions } from './util/options.ts';
+import { isOptions, finite } from './util/options.ts';
 
 /** Names of the frame disposal modes, see {@link Frame.disposalMode} */
 export type FrameDisposalModeName = 'any' | 'keep' | 'previous' | 'background';
@@ -81,8 +81,10 @@ export class Frame extends Image {
     constructor(width: number, height: number, durationOrOptions?: number | FrameOptions, xOffset?: number, yOffset?: number, disposalMode?: FrameDisposalModeName | FrameDisposalModeId) {
         const { duration = 100, xOffset: x = 0, yOffset: y = 0, disposalMode: disposal = Frame.DISPOSAL_KEEP } =
             isOptions(durationOrOptions) ? durationOrOptions : { duration: durationOrOptions, xOffset, yOffset, disposalMode };
-        if (isNaN(duration) || duration < 0)
+        if (finite(duration, 'frame duration') < 0)
             throw new RangeError('Invalid frame duration');
+        finite(x, 'x offset');
+        finite(y, 'y offset');
 
         super(width, height);
         this.duration = duration;

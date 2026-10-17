@@ -358,7 +358,9 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
     // color components are rounded and clamped instead of wrapping
     {
         assert(Image.rgbaToColor(256, -1, 127.6, 300) === 0xff0080ff, 'rgbaToColor should clamp and round, got ' + Image.rgbaToColor(256, -1, 127.6, 300).toString(16));
-        assert(Image.rgbToColor(NaN, 0, 0) === 0x000000ff, 'rgbToColor(NaN) should be 0');
+        let threw = false;
+        try { Image.rgbToColor(NaN, 0, 0); } catch (e) { threw = e instanceof RangeError; }
+        assert(threw, 'rgbToColor(NaN) should throw a RangeError');
     }
 
     // disposal modes read back as the names they are set with
@@ -654,5 +656,39 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
 
         const nested = await Image.renderSVG(`<svg ${NS} width="100" height="100">${'<g>'.repeat(100000)}<rect width="10" height="10"/>${'</g>'.repeat(100000)}</svg>`, {size: 100, mode: Image.SVG_MODE_WIDTH});
         assert(nested.width === 100, 'deeply nested elements should render');
+    }
+    {
+        // NaN and the infinities throw instead of drawing black, transparent or nothing; numeric strings still work
+        const {Frame, Animation, TextLayout} = require('..');
+        const image = () => new Image(8, 8).fill(0xff0000ff);
+        const calls = {
+            rgbaToColor: v => Image.rgbaToColor(v, 0, 0, 255), hslaToColor: v => Image.hslaToColor(v, 0.5, 0.5, 1), colorToRGBA: v => Image.colorToRGBA(v),
+            getPixelAt: v => image().getPixelAt(v, 1), setPixelAt: v => image().setPixelAt(1, 1, v), fill: v => image().fill(v), contain: v => image().contain(v, 4),
+            crop: v => image().crop(v, 0, 2, 2), trim: v => image().trim(v), drawBox: v => image().drawBox(0, 0, v, 2, 0), drawCircle: v => image().drawCircle(2, 2, v, 0),
+            cropCircle: v => image().cropCircle(false, v), opacity: v => image().opacity(v), red: v => image().red(v), lightness: v => image().lightness(v),
+            composite: v => image().composite(image(), v, 0), hueShift: v => image().hueShift(v), brightness: v => image().brightness(v), gamma: v => image().gamma(v),
+            colorToAlpha: v => image().colorToAlpha(v), rotate: v => image().rotate(v, false), gradient: v => Image.gradient({0: v, 1: 0}),
+            roundCorners: v => image().roundCorners(v), fisheye: v => image().fisheye(v), encode: v => image().encode(v), encodeJPEG: v => image().encodeJPEG(v),
+            frame: v => new Frame(4, 4, v), animation: v => new Animation([new Frame(4, 4)], v),
+        };
+        for (const [name, call] of Object.entries(calls))
+            for (const value of [NaN, Infinity, -Infinity]) {
+                let error = null;
+                try {
+                    await call(value);
+                } catch (e) {
+                    error = e;
+                }
+                if (!(error instanceof RangeError)) panic(`${name}(${value}) should throw a RangeError, got ${error}`);
+            }
+        const font = require('fs').readFileSync('./tests/fonts/opensans bold.ttf');
+        for (const [name, call] of Object.entries({size: v => Image.renderText(font, v, 'a'), color: v => Image.renderText(font, 12, 'a', v),
+            maxWidth: v => new TextLayout({maxWidth: v})}))
+            if (!await Promise.resolve().then(() => call(NaN)).then(() => false, e => e instanceof RangeError)) panic(`renderText: a NaN ${name} should throw a RangeError`);
+        // (no limit is a valid layout)
+        new TextLayout({maxWidth: Infinity, maxHeight: Infinity});
+
+        const strings = image().crop('1', '1', '4', '4').rotate('45').opacity('0.5').composite(image(), '1', '2');
+        if (strings.width !== 6) panic('numeric strings should keep working');
     }
 })();

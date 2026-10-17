@@ -7,7 +7,7 @@ import { Frame } from './frame.ts';
 import { ImageType } from './image-type.ts';
 import { optimize, OptimizeOptions, OptimizedFrame } from './util/optimize.ts';
 import { Metadata, resolveMetadata, pngText, exifData, gifComments } from './metadata.ts';
-import { isOptions } from './util/options.ts';
+import { isOptions, finite } from './util/options.ts';
 import { MAX_PIXELS, decoding } from './util/limits.ts';
 
 // loop counts: ImageScript (like GIF) counts repetitions (-1 forever, 0 play once), APNG and WebP count plays (0 forever)
@@ -99,7 +99,7 @@ export class Animation extends Array<Frame> {
             if (!(this[i] instanceof Frame))
                 throw new TypeError(`Frame ${i} is not an instance of Frame`);
 
-        if (loopCount < -1 || isNaN(loopCount))
+        if (finite(loopCount, 'loop count') < -1)
             throw new RangeError('Invalid loop count');
 
         this.loopCount = loopCount;
