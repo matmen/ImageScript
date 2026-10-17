@@ -12,7 +12,10 @@ import { I, Pos, indicProperties, isOneOf, setSyllables } from './indic.ts';
 
 const enum Syllable { CONSONANT, BROKEN, NON_MYANMAR }
 
-const findSyllables = ((): ((categories: number[]) => Array<[number, number, number]>) => {
+// (the scanner is built when first used)
+let scan: ((categories: number[]) => Array<[number, number, number]>) | null = null;
+const findSyllables = (categories: number[]): Array<[number, number, number]> => (scan ??= buildScanner())(categories);
+function buildScanner(): (categories: number[]) => Array<[number, number, number]> {
     const j = cat(I.ZWJ, I.ZWNJ);
     const k = seq(cat(I.Ra), cat(I.As), cat(I.H));
     const sm = cat(I.SM, I.SMPst);
@@ -32,7 +35,7 @@ const findSyllables = ((): ((categories: number[]) => Array<[number, number, num
         [brokenCluster, Syllable.BROKEN],
         [any, Syllable.NON_MYANMAR],
     ]);
-})();
+}
 
 const CONSONANTS = [I.C, I.CS, I.Ra, I.IV, I.GB, I.DOTTEDCIRCLE];
 const isConsonant = (info: GlyphInfo): boolean => isOneOf(info, CONSONANTS);

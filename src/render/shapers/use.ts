@@ -27,7 +27,10 @@ const CATEGORIES: Record<string, number> = {
 
 const enum Syllable { VIRAMA_TERMINATED, SAKOT_TERMINATED, STANDARD, NUMBER_JOINER_TERMINATED, NUMERAL, SYMBOL, HIEROGLYPH, BROKEN, NON_CLUSTER }
 
-const findSyllables = ((): ((categories: number[]) => Array<[number, number, number]>) => {
+// (the scanner is built when first used)
+let scan: ((categories: number[]) => Array<[number, number, number]>) | null = null;
+const findSyllables = (categories: number[]): Array<[number, number, number]> => (scan ??= buildScanner())(categories);
+function buildScanner(): (categories: number[]) => Array<[number, number, number]> {
     const s = (...c: number[]) => star(cat(...c));
     const h = cat(U.H, U.HVM, U.IS, U.Sk);
     const consonantModifiers = seq(s(U.CMAbv), s(U.CMBlw), star(alt(seq(h, cat(U.B)), cat(U.SUB)), s(U.CMAbv), s(U.CMBlw)));
@@ -67,7 +70,7 @@ const findSyllables = ((): ((categories: number[]) => Array<[number, number, num
         [seq(brokenCluster, zwnj), Syllable.BROKEN],
         [any, Syllable.NON_CLUSTER],
     ]);
-})();
+}
 
 // syllables over the categories without CGJ (and ZWNJ before marks): the ignored characters join the syllable before
 function setupSyllables(plan: Plan, _font: ShapeFont, buffer: Buffer): void {

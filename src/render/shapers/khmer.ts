@@ -12,7 +12,10 @@ import { I, indicProperties, setSyllables } from './indic.ts';
 
 const enum Syllable { CONSONANT, BROKEN, NON_KHMER }
 
-const findSyllables = ((): ((categories: number[]) => Array<[number, number, number]>) => {
+// (the scanner is built when first used)
+let scan: ((categories: number[]) => Array<[number, number, number]>) | null = null;
+const findSyllables = (categories: number[]): Array<[number, number, number]> => (scan ??= buildScanner())(categories);
+function buildScanner(): (categories: number[]) => Array<[number, number, number]> {
     const c = cat(I.C, I.Ra, I.V);
     const joiner = cat(I.ZWJ, I.ZWNJ);
     const cn = seq(c, opt(opt(joiner), cat(I.Robatic)));
@@ -23,7 +26,7 @@ const findSyllables = ((): ((categories: number[]) => Array<[number, number, num
     const brokenCluster = seq(opt(cat(I.Robatic)), star(cat(I.H), cn), alt(cat(I.H), syllableTail));
     const consonantSyllable = seq(alt(cn, cat(I.PLACEHOLDER), cat(I.DOTTEDCIRCLE)), brokenCluster);
     return scanner([[consonantSyllable, Syllable.CONSONANT], [brokenCluster, Syllable.BROKEN], [any, Syllable.NON_KHMER]]);
-})();
+}
 
 const FEATURES: Array<[string, number]> = [
     ['pref', FeatureFlags.MANUAL_JOINERS | FeatureFlags.PER_SYLLABLE],

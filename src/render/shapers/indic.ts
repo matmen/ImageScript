@@ -63,7 +63,10 @@ const isHalant = (info: GlyphInfo): boolean => isOneOf(info, [I.H]);
 const enum Syllable { CONSONANT, VOWEL, STANDALONE, SYMBOL, BROKEN, NON_INDIC }
 
 // the syllable grammar (hb-ot-shaper-indic-machine.rl)
-const findSyllables = ((): ((categories: number[]) => Array<[number, number, number]>) => {
+// (the scanner is built when first used)
+let scan: ((categories: number[]) => Array<[number, number, number]>) | null = null;
+const findSyllables = (categories: number[]): Array<[number, number, number]> => (scan ??= buildScanner())(categories);
+function buildScanner(): (categories: number[]) => Array<[number, number, number]> {
     const c = cat(I.C, I.Ra);
     const n = seq(opt(opt(cat(I.ZWNJ)), cat(I.RS)), opt(cat(I.N), opt(cat(I.N))));
     const z = cat(I.ZWJ, I.ZWNJ);
@@ -92,7 +95,7 @@ const findSyllables = ((): ((categories: number[]) => Array<[number, number, num
         [brokenCluster, Syllable.BROKEN],
         [any, Syllable.NON_INDIC],
     ]);
-})();
+}
 
 /** assigns syllables (serial << 4 | type) from a scanner, true if a broken one was found */
 export function setSyllables(buffer: Buffer, syllables: Array<[number, number, number]>, broken: number): void {
