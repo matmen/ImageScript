@@ -14,6 +14,7 @@ following projects, under their own licenses. Each derived file says so in its h
 | [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386) (VP8 Data Format and Decoding Guide, with the libvpx reference decoder) | `src/codecs/vp8-tables.ts` (probability and quantizer tables), `src/codecs/vp8.ts` (decoding procedures) | BSD-3-Clause |
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | `src/codecs/vp8.ts` (YUV to RGB conversion, "fancy" chroma upsampling), `src/codecs/webp.ts` (animation frame blending) | BSD-3-Clause |
 | [FreeType](https://freetype.org) | `src/render/hinting.ts` (behavior and parts of the logic of the TrueType interpreter) | FreeType License |
+| [QOI](https://github.com/phoboslab/qoi) by Dominic Szablewski | `src/codecs/qoi.ts` (the reference encoder's choices of operations) | MIT |
 | [Pillow](https://github.com/python-pillow/Pillow) | `src/util/resample.ts` (filter coefficients, box, bilinear and bicubic filters) | MIT-CMU |
 | [HarfBuzz](https://github.com/harfbuzz/harfbuzz) | `src/render/buffer.ts`, `src/render/layout.ts`, `src/render/shape.ts`, `src/render/shapers/*` (OpenType shaping: buffer, GSUB/GPOS, normalization, fallback positioning, the script shapers and syllable grammars), `scripts/unicode.js` (shaping category tables) | Old MIT |
 | [Universal Shaping Engine data](https://github.com/harfbuzz/harfbuzz/tree/main/src/ms-use) by Microsoft | `scripts/ms-use` (category overrides, invalid vowel sequences), the tables generated from them in `src/render/unicode-data.ts` | MIT |
@@ -158,6 +159,32 @@ Where the specification leaves details open, its behavior and parts of its logic
 interpolation of untouched points (IUP), the handling of near-perpendicular freedom and projection vectors, and the
 tolerance of invalid references. FreeType is used under the FreeType License, included as
 [licenses/FTL.txt](licenses/FTL.txt).
+
+## QOI
+
+```
+MIT License
+
+Copyright (c) 2021, 2022 Dominic Szablewski
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## Pillow
 

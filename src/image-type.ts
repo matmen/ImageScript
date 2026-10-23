@@ -1,8 +1,13 @@
 import { BinaryData, view as bytes } from './util/mem.ts';
 import { isTGA } from './codecs/tga.ts';
+import { isBMP } from './codecs/bmp.ts';
+import { iconType } from './codecs/ico.ts';
+import { isQOI } from './codecs/qoi.ts';
+import { isNetpbm } from './codecs/netpbm.ts';
+import { isHDR } from './codecs/hdr.ts';
 
 /** Image formats recognized by {@link ImageType.getType} */
-export type ImageTypeName = 'png' | 'jpeg' | 'tiff' | 'gif' | 'webp' | 'tga';
+export type ImageTypeName = 'png' | 'jpeg' | 'tiff' | 'gif' | 'webp' | 'bmp' | 'ico' | 'cur' | 'qoi' | 'pnm' | 'hdr' | 'tga';
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -23,6 +28,8 @@ function dataView(data: BinaryData): DataView {
     return new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
 }
 
+const u8 = (view: DataView): Uint8Array => new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+
 /** Detects image formats by their magic numbers */
 export class ImageType {
     // only static methods
@@ -41,6 +48,12 @@ export class ImageType {
         if (this.isTIFF(view)) return 'tiff';
         if (this.isGIF(view)) return 'gif';
         if (this.isWebP(view)) return 'webp';
+        if (this.isBMP(view)) return 'bmp';
+        const icon = iconType(u8(view));
+        if (icon) return icon;
+        if (this.isQOI(view)) return 'qoi';
+        if (this.isPNM(view)) return 'pnm';
+        if (this.isHDR(view)) return 'hdr';
         // TGAs have no magic number, they are recognized by a consistent header (or the TGA 2.0 footer)
         if (this.isTGA(view)) return 'tga';
         return null;
@@ -78,9 +91,33 @@ export class ImageType {
         return view.byteLength >= 12 && view.getUint32(0, false) === MAGIC_NUMBERS.RIFF && view.getUint32(8, false) === MAGIC_NUMBERS.WEBP;
     }
 
+    /** Whether the data starts like a BMP */
+    static isBMP(data: BinaryData): boolean {
+        return isBMP(u8(dataView(data)));
+    }
+
+    /** Whether the data is a Windows icon or cursor (ICO or CUR) */
+    static isICO(data: BinaryData): boolean {
+        return iconType(u8(dataView(data))) !== null;
+    }
+
+    /** Whether the data starts like a QOI */
+    static isQOI(data: BinaryData): boolean {
+        return isQOI(u8(dataView(data)));
+    }
+
+    /** Whether the data starts like a Netpbm image (PBM, PGM, PPM, PAM or PFM) */
+    static isPNM(data: BinaryData): boolean {
+        return isNetpbm(u8(dataView(data)));
+    }
+
+    /** Whether the data starts like a Radiance HDR */
+    static isHDR(data: BinaryData): boolean {
+        return isHDR(u8(dataView(data)));
+    }
+
     /** Whether the data looks like a TGA (which has no magic number: its header has to be consistent) */
     static isTGA(data: BinaryData): boolean {
-        const view = dataView(data);
-        return isTGA(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+        return isTGA(u8(dataView(data)));
     }
 }

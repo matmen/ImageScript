@@ -26,6 +26,12 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   - JPEGs (baseline and progressive; grayscale, RGB, CMYK)
   - TIFFs (strips and tiles; uncompressed, LZW, deflate, PackBits and JPEG compressed; BigTIFF)
   - WebPs (lossy, lossless and with alpha; bit-exact with libwebp)
+  - BMPs (1-64 bit, with any channel masks, alpha, RLE4 and RLE8, embedded JPEGs and PNGs; also OS/2 bitmaps)
+  - ICOs and CURs (the largest image: bitmaps with their masks, or PNGs)
+  - QOIs
+  - Netpbm images: PBM, PGM, PPM (plain and raw, up to 16 bits), PAM and PFM
+  - Radiance HDRs (RGBE and XYZE, every orientation), tone mapped to sRGB like Reinhard's operator does (or clamped,
+    `toneMapping`)
   - TGAs (color mapped, truecolor and greyscale; uncompressed and run length encoded)
   - JPEGs, TIFFs, PNGs and WebPs are rotated as their Exif (or, for PNGs, XMP) orientation says
   - images larger than 268 megapixels (`maxPixels`) are rejected before decoding, so small files declaring huge images
@@ -54,6 +60,10 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
 - Encoding images as [PNGs](https://imagescript.matmen.dev/classes/Image.html#encode) (smallest lossless color type)
   , [JPEGs](https://imagescript.matmen.dev/classes/Image.html#encodejpeg)
   , lossless [WebPs](https://imagescript.matmen.dev/classes/Image.html#encodewebp)
+  , [BMPs](https://imagescript.matmen.dev/classes/Image.html#encodebmp)
+  , [QOIs](https://imagescript.matmen.dev/classes/Image.html#encodeqoi)
+  , [Netpbm images](https://imagescript.matmen.dev/classes/Image.html#encodepnm) (PBM, PGM, PPM or PAM, whichever is
+  smallest)
   and [TGAs](https://imagescript.matmen.dev/classes/Image.html#encodetga)
 - Encoding animations as [GIF](https://imagescript.matmen.dev/classes/Animation.html#encodegif),
   [APNG](https://imagescript.matmen.dev/classes/Animation.html#encodeapng) and lossless

@@ -1,6 +1,28 @@
 # Changelog
 
-## 3.3.1
+## 3.4.0
+
+### Features
+
+- `Image.decode` reads BMPs, ICOs and CURs, QOIs, Netpbm images (PBM, PGM, PPM, PAM, PFM) and Radiance HDRs, and
+  `ImageType` recognizes them (`'bmp'`, `'ico'`, `'cur'`, `'qoi'`, `'pnm'`, `'hdr'`; `ImageType.isBMP` etc.):
+  - BMPs of 1, 2, 4, 8, 16, 24, 32 and 64 bits, with channel masks of any size (scaled to full white, not shifted),
+    alpha, RLE4 and RLE8 (pixels they skip are transparent, like in browsers), embedded JPEGs and PNGs, top-down rows,
+    and OS/2's headers. Matches BMP Suite's reference images (32-bit channels wider than 8 bits within 1, they're
+    rounded). Not supported: OS/2's Huffman and RLE24 compression.
+  - Icons and cursors decode their largest image (of those as large, the one with the most bits): bitmaps with their
+    AND masks (32-bit ones with alpha, unless it's zero everywhere), or PNGs.
+  - Netpbm: plain and raw, samples of up to 16 bits, PAM's tuple types.
+  - Radiance HDRs: RGBE and XYZE, every orientation, both run length encodings.
+- `DecodeOptions.toneMapping`: HDRs' and PFMs' linear light can be brighter than white. By default (`'reinhard'`) the
+  brightest parts are compressed like Reinhard's extended tone mapping operator does, the brightest pixel becomes
+  white (without the operator's automatic exposure, which turns night scenes grey); images no brighter than white
+  stay as they are. `'clamp'` clamps everything brighter than white instead. Either way the result is sRGB.
+- `Image.encodeBMP`, `Image.encodeQOI` and `Image.encodePNM`:
+  - BMPs with a palette of 2, 16 or 256 colors if an opaque image has at most that many, else 24-bit, or 32-bit with
+    an alpha mask (a version 4 header) if the image has transparency
+  - QOIs byte for byte like the reference encoder (3 channels if the image is opaque)
+  - PBM for black and white images, PGM for greyscale ones, PPM, or PAM if the image has transparency
 
 ### Fixes
 

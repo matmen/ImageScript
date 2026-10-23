@@ -3,6 +3,12 @@ import * as jpeg from './codecs/jpeg.ts';
 import * as tiff from './codecs/tiff.ts';
 import * as webp from './codecs/webp.ts';
 import * as tga from './codecs/tga.ts';
+import * as bmp from './codecs/bmp.ts';
+import * as ico from './codecs/ico.ts';
+import * as qoi from './codecs/qoi.ts';
+import * as netpbm from './codecs/netpbm.ts';
+import * as hdr from './codecs/hdr.ts';
+import type { ToneMapping } from './codecs/hdr.ts';
 import * as quantize from './codecs/quantize.ts';
 import * as textRenderer from './render/text.ts';
 import * as svgRenderer from './render/svg.ts';
@@ -140,6 +146,13 @@ export interface DecodeOptions {
      * sharp), `Infinity` for no limit
      */
     maxPixels?: number;
+    /**
+     * How Radiance HDRs and PFMs, whose linear light can be brighter than white, become 8 bit sRGB: `'reinhard'`
+     * compresses the brightest parts like Reinhard's tone mapping operator does (the brightest pixel becomes white,
+     * images no brighter than white stay as they are), `'clamp'` clamps everything brighter than white. Default:
+     * `'reinhard'`
+     */
+    toneMapping?: ToneMapping;
 }
 
 /** Text style options of {@link Image.renderText} */
@@ -2011,15 +2024,40 @@ export class Image {
     }
 
     /**
-     * Decodes an image (PNG, JPEG, TIFF, WebP or TGA). For APNGs this is the default image; animated WebPs and GIFs
-     * have no single image, decode those with {@link Animation.decode}
+     * Encodes the image as BMP: with a palette if it is opaque and has at most 256 colors, else with 24 bit pixels, or
+     * 32 bit ones if it has transparency
+     */
+    async encodeBMP(): Promise<Uint8Array> {
+        return bmp.encode(this.__bytes__(), this.width, this.height);
+    }
+
+    /**
+     * Encodes the image as QOI (3 channels if the image is opaque)
+     */
+    async encodeQOI(): Promise<Uint8Array> {
+        return qoi.encode(this.__bytes__(), this.width, this.height);
+    }
+
+    /**
+     * Encodes the image as the smallest fitting Netpbm format: PBM for black and white images, PGM for greyscale ones,
+     * PPM for others, PAM if the image has transparency
+     */
+    async encodePNM(): Promise<Uint8Array> {
+        return netpbm.encode(this.__bytes__(), this.width, this.height);
+    }
+
+    /**
+     * Decodes an image (PNG, JPEG, TIFF, WebP, BMP, ICO, CUR, QOI, PBM, PGM, PPM, PAM, PFM, Radiance HDR or TGA).
+     * For APNGs this is the default image; animated WebPs and GIFs have no single image, decode those with
+     * {@link Animation.decode}; for icons and cursors it's their largest image
      * @param input The binary data to decode
      * @param options See {@link DecodeOptions}. JPEGs, TIFFs and PNGs are rotated/mirrored as their orientation tag
      *     (Exif, for PNGs also XMP) says by default: photos taken with a rotated camera are stored sideways
      * @return The decoded image
      */
     static async decode(input: BinaryData, options: DecodeOptions = {}): Promise<Image> {
-        const { applyOrientation = true, maxPixels = MAX_PIXELS } = options;
+        const { applyOrientation = true, maxPixels = MAX_PIXELS, toneMapping = 'reinhard' } = options;
+        if (toneMapping !== 'reinhard' && toneMapping !== 'clamp') throw new TypeError(`toneMapping must be 'reinhard' or 'clamp', not ${String(toneMapping)}`);
         const data = view(input);
         const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
@@ -2031,6 +2069,18 @@ export class Image {
                 if (webp.isAnimated(data)) throw new Error('Animated WebPs have to be decoded with Animation.decode()');
                 return webp.decode(data, maxPixels);
             }
+            // bitmaps can hold a JPEG or PNG, icons PNGs
+            const bitmap = async (decoded: bmp.Decoded): Promise<{ width: number, height: number, pixels: Uint8Array }> => {
+                if (!('embedded' in decoded)) return decoded;
+                // (without their orientation tags)
+                const { width, height, pixels } = decoded.embedded === 'png' ? await png.decode(decoded.data, maxPixels) : jpeg.decode(decoded.data, { maxPixels });
+                return { width, height, pixels };
+            };
+            if (ImageType.isBMP(dataView)) return bitmap(bmp.decode(data, maxPixels));
+            if (ImageType.isICO(dataView)) return bitmap(ico.decode(data, maxPixels));
+            if (ImageType.isQOI(dataView)) return qoi.decode(data, maxPixels);
+            if (ImageType.isPNM(dataView)) return netpbm.decode(data, maxPixels, toneMapping);
+            if (ImageType.isHDR(dataView)) return hdr.decode(data, maxPixels, toneMapping);
             if (ImageType.isTGA(dataView)) return tga.decode(data, maxPixels);
             throw new Error('Unsupported image type');
         });

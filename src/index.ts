@@ -18,6 +18,7 @@ export { TextLayout } from './text-layout.ts';
 export type { TextLayoutOptions, WrapStyle, HorizontalAlign, VerticalAlign } from './text-layout.ts';
 export { ImageType } from './image-type.ts';
 export type { ImageTypeName } from './image-type.ts';
+export type { ToneMapping } from './codecs/hdr.ts';
 export type { BinaryData } from './util/mem.ts';
 export type { Metadata } from './metadata.ts';
 
@@ -38,9 +39,9 @@ export function decode(data: BinaryData, options?: AnimationDecodeOptions & Deco
  */
 export function decode(data: BinaryData, onlyExtractFirstFrame?: boolean): Promise<GIF | Animation | Image>;
 export function decode(data: BinaryData, onlyFirstFrameOrOptions: boolean | (AnimationDecodeOptions & DecodeOptions) = false): Promise<GIF | Animation | Image> {
-    const { onlyFirstFrame = false, applyOrientation, maxPixels } = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions : { onlyFirstFrame: onlyFirstFrameOrOptions };
+    const { onlyFirstFrame = false, applyOrientation, maxPixels, toneMapping } = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions : { onlyFirstFrame: onlyFirstFrameOrOptions };
     const type = ImageType.getType(data);
     if (type === 'gif') return GIF.decode(data, { onlyFirstFrame, maxPixels });
     if (type === 'webp' && webp.isAnimated(view(data))) return Animation.decode(data, { onlyFirstFrame, maxPixels });
-    return Image.decode(data, { applyOrientation, maxPixels });
+    return Image.decode(data, { applyOrientation, maxPixels, toneMapping });
 }
