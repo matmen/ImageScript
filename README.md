@@ -82,8 +82,7 @@ All coordinates are 0-based, `(0, 0)` is the top left pixel.
 
 A bigger example is the [README image generation](https://github.com/matmen/ImageScript/blob/master/tests/readme.js).
 Upgrading from 1.x? Version 3 has breaking changes (0-based coordinates, removed lossy WebP encoding, Node.js 22.13+, ...),
-see the [changelog](https://github.com/matmen/ImageScript/blob/master/CHANGELOG.md). There is no 2.x release, the number was skipped because of the old experimental
-`imagescript/v2` API.
+see the [changelog](https://github.com/matmen/ImageScript/blob/master/CHANGELOG.md).
 
 [![Example](https://github.com/matmen/ImageScript/raw/master/tests/targets/readme.png)](https://github.com/matmen/ImageScript/blob/master/tests/readme.js)
 
