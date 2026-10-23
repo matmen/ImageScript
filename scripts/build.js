@@ -14,7 +14,8 @@ require('./version.js').setVersion();
 fs.rmSync(path.join(root, 'dist'), { recursive: true, force: true });
 // declarations keep the doc comments (editors show them), the JavaScript doesn't need them
 run(['-p', 'tsconfig.json', '--emitDeclarationOnly']);
-run(['-p', 'tsconfig.json', '--declaration', 'false', '--removeComments']);
+// --source-maps (npm run coverage) maps the built JavaScript back to src
+run(['-p', 'tsconfig.json', '--declaration', 'false', '--removeComments', ...process.argv.includes('--source-maps') ? ['--sourceMap'] : []]);
 
 // declarations keep the .ts import specifiers of the sources, point them at the built files
 const rewrite = dir => {

@@ -1,0 +1,84 @@
+name: coverage
+
+# measures the test coverage (npm run coverage) of every pushed branch and pull requests from forks, and how it
+# changed: compared with the commit before the push on master, else with where the branch (or pull request) left
+# master, measured in the same job. The job summary shows it; pushes to master get it as a commit comment, pushes to a
+# branch with a pull request as a comment on it (one, updated by later pushes). Pull requests from forks have no
+# write access: only the job summary
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: coverage-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24.x
+
+    - run: npm install
+    - run: npm run coverage
+
+    # the base, measured in a second checkout: skipped without one (a new branch, a force push that dropped it, a
+    # base from before npm run coverage existed), and a base whose tests fail just gives no comparison
+    - id: base
+      continue-on-error: true
+      run: |
+        if [ "$EVENT" = pull_request ]; then base=$(git merge-base "$PR_BASE" HEAD); name="the pull request's base"
+        elif [ "$REF" = refs/heads/master ]; then base=$BEFORE; name="the previous commit on master"
+        else base=$(git merge-base origin/master HEAD); name="master where the branch left it"; fi
+        if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null || [ "$base" = "$(git rev-parse HEAD)" ]; then
+          echo "no base to compare with"; exit 0
+        fi
+        git worktree add -q ../base "$base"
+        cd ../base
+        if ! node -e "process.exit(require('./package.json').scripts?.coverage ? 0 : 1)"; then echo "the base has no npm run coverage"; exit 0; fi
+        npm install && npm run coverage
+        echo "summary=$PWD/coverage/coverage-summary.json" >> "$GITHUB_OUTPUT"
+        echo "root=$PWD" >> "$GITHUB_OUTPUT"
+        echo "name=$name (${base:0:7})" >> "$GITHUB_OUTPUT"
+      env:
+        EVENT: ${{ github.event_name }}
+        REF: ${{ github.ref }}
+        BEFORE: ${{ github.event.before }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+    - if: steps.base.outputs.summary
+      run: node scripts/coverage-report.js "$SUMMARY" "$ROOT"
+      env:
+        SUMMARY: ${{ steps.base.outputs.summary }}
+        ROOT: ${{ steps.base.outputs.root }}
+        BASE_NAME: ${{ steps.base.outputs.name }}
+    - run: cat coverage/report.md >> "$GITHUB_STEP_SUMMARY"
+
+    - if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      run: gh api "repos/$REPOSITORY/commits/$SHA/comments" -F body=@coverage/report.md
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPOSITORY: ${{ github.repository }}
+        SHA: ${{ github.sha }}
+
+    # the pull request of the pushed branch, if any: its coverage comment is updated, or posted the first time
+    - if: github.event_name == 'push' && github.ref != 'refs/heads/master'
+      run: |
+        pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
+        if [ -z "$pr" ]; then echo "no pull request"; exit 0; fi
+        comment=$(gh api "repos/$REPOSITORY/issues/$pr/comments" --paginate --jq '.[] | select(.body | startswith("<!-- coverage -->")) | .id' | head -1)
+        if [ -n "$comment" ]; then gh api -X PATCH "repos/$REPOSITORY/issues/comments/$comment" -F body=@coverage/report.md
+        else gh api "repos/$REPOSITORY/issues/$pr/comments" -F body=@coverage/report.md; fi
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPOSITORY: ${{ github.repository }}
+        BRANCH: ${{ github.ref_name }}
