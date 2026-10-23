@@ -1951,7 +1951,7 @@ export class Image {
         if (!isOptions(compressionOrOptions)) compression = compressionOrOptions;
         // the options and the metadata have no key in common: an object with neither is empty, the same either way
         else if ('compression' in compressionOrOptions || 'metadata' in compressionOrOptions)
-            ({ compression = 1, metadata = {} } = compressionOrOptions as PNGEncodeOptions);
+            ({ compression = 1, metadata = {} } = compressionOrOptions);
         else metadata = compressionOrOptions as Metadata;
 
         const level = Math.min(9, Math.max(0, ~~finite(compression, 'compression level')));

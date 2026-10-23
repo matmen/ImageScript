@@ -117,7 +117,7 @@ export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS): Promise<
         const entry = tags.get(tag);
         if (!entry) return fallback;
 
-        const result: number[] = new Array(entry.count);
+        const result = new Array<number>(entry.count);
         const size = TYPE_SIZES[entry.type];
         for (let i = 0; i < entry.count; i++) result[i] = read(entry.type, entry.offset + i * size);
         return result;

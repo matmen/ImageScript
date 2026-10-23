@@ -24,6 +24,7 @@
   "scripts": {
     "build": "node scripts/build.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint",
     "docs": "node scripts/docs.js",
     "test": "npm run build && node ./tests/run.js",
     "prepack": "npm run build",
@@ -66,7 +67,11 @@
     "node": ">=22.13.0"
   },
   "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "eslint-plugin-sonarjs": "4.2.2",
     "typedoc": "0.27.9",
-    "typescript": "5.7.3"
+    "typescript": "5.7.3",
+    "typescript-eslint": "8.72.0"
   }
 }

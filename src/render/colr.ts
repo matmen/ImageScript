@@ -346,7 +346,7 @@ function render(p: Paints, paint: number, m: Matrix, canvas: Canvas, region: Box
             const backdrop = next(p.child(paint, 5), m, region);
             const source = next(p.child(paint), m, region);
             if (!backdrop && !source) return null;
-            const box = (backdrop ?? source as Layer).box;
+            const box = (backdrop ?? source)!.box;
             return composite(font.u8(paint + 4), source ?? blank(box), backdrop ?? blank(box));
         }
 

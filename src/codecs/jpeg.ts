@@ -1159,7 +1159,8 @@ function fdctPass(d: Float64Array, o: number, s: number): void {
     const tmp2 = d[o + 2 * s] + d[o + 5 * s], tmp5 = d[o + 2 * s] - d[o + 5 * s];
     const tmp3 = d[o + 3 * s] + d[o + 4 * s], tmp4 = d[o + 3 * s] - d[o + 4 * s];
 
-    let tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3;
+    let tmp10 = tmp0 + tmp3;
+    const tmp13 = tmp0 - tmp3;
     let tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
 
     d[o] = tmp10 + tmp11;

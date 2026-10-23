@@ -503,7 +503,7 @@ export function decodeStream(reader: BitReader, width: number, height: number): 
     const seen = new Set<Transform>();
 
     while (reader.read(1)) {
-        const type = reader.read(2) as Transform;
+        const type: Transform = reader.read(2);
         if (seen.has(type)) throw new Error('VP8L: transform used twice');
         seen.add(type);
 

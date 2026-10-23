@@ -229,7 +229,8 @@ function resampleOpaque(src: Uint8ClampedArray, width: number, height: number, o
             }
         } else {
             for (let x = 0; x < outWidth; x++, o++) {
-                let r = 0, g = 0, b = 0, k = 0, s = row + start[x] * 2, w = x * taps;
+                let r = 0, g = 0, b = 0, k = 0, s = row + start[x] * 2;
+                const w = x * taps;
                 for (; k + 1 < taps; k += 2, s += 4) {
                     const a0 = lanes[s], a1 = lanes[s + 2], w0 = weights[w + k], w1 = weights[w + k + 1];
                     r += (a0 & 0xffff) * w0 + (a1 & 0xffff) * w1;
@@ -417,7 +418,8 @@ function resamplePremultiplied(src: Uint8ClampedArray, width: number, height: nu
                 b = plane[s + 2] * ONE;
                 a = plane[s + 3] * ONE;
             } else {
-                let k = 0, s = row + start[x] * 4, w = x * taps;
+                let k = 0, s = row + start[x] * 4;
+                const w = x * taps;
                 for (; k + 1 < taps; k += 2, s += 8) {
                     const w0 = weights[w + k], w1 = weights[w + k + 1];
                     r += plane[s] * w0 + plane[s + 4] * w1;

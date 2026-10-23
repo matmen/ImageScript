@@ -33,6 +33,17 @@ jobs:
     - run: npm install
     - run: npm test
 
+  lint:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24.x
+    - run: npm install
+    - run: npm run lint
+
   # the same tests in Deno and Bun (built with node, run by tests/run.js in the runtime running it)
   runtimes:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository

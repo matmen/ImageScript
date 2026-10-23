@@ -99,6 +99,7 @@ function textChunks(text: EncodeOptions['text']): Uint8Array[] {
     for (const key in text) {
         const value = text[key];
         if (!value) continue;
+        // eslint-disable-next-line no-control-regex -- Latin-1 includes the control characters
         if (/^[\x00-\xff]*$/.test(value)) chunks.push(chunk(tEXt, concat([latin1(key), [0], latin1(value)])));
         else chunks.push(chunk(iTXt, concat([latin1(key), [0, 0, 0, 0, 0], utf8(value)])));
     }

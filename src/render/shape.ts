@@ -722,7 +722,7 @@ function fallbackSpaces(font: ShapeFont, buffer: Buffer): void {
 function kernTable(plan: Plan, buffer: Buffer): void {
     const kern = plan.font.font.kernTable;
     if (!kern) return;
-    const c = new ApplyContext(1, plan.font.gpos as LayoutTable, buffer, plan.font.gdef);
+    const c = new ApplyContext(1, plan.font.gpos, buffer, plan.font.gdef);
     c.lookupMask = plan.kernMask;
     c.setLookupProps(LookupFlag.IgnoreMarks);
     const it = c.iterInput, info = buffer.info;

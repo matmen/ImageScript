@@ -5,7 +5,7 @@ export type Expression =
     | { kind: 'set', categories: Set<number> | null, negated: boolean }
     | { kind: 'seq', items: Expression[] }
     | { kind: 'alt', items: Expression[] }
-    | { kind: 'repeat', item: Expression, min: 0 | 1, max: 1 | number };
+    | { kind: 'repeat', item: Expression, min: 0 | 1, max: number } // max 1 or Infinity;
 
 /** one of the categories */
 export const cat = (...categories: number[]): Expression => ({ kind: 'set', categories: new Set(categories), negated: false });
