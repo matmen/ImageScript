@@ -24,9 +24,13 @@ def circle(cx, cy, r):
 names = ['.notdef', 'square', 'disc', 'bar']
 outlines = {'.notdef': rect(100, 0, 900, 800), 'square': rect(100, 0, 900, 800), 'disc': circle(500, 400, 350), 'bar': rect(450, 0, 550, 800)}
 features = ['linear', 'linear_p2', 'radial', 'sweep', 'repeat', 'reflect', 'rotate', 'skew', 'transform', 'scale_center', 'colrglyph', 'var_solid', 'multiply', 'src_in', 'xor', 'hue', 'foreground']
+# the other blend modes (a disc over a square, tests/font.js checks the color where they overlap), a radial gradient
+# whose circles touch, a solid paint outside of a glyph, and a glyph without a clip box (its extent from its outlines)
+blends = ['screen', 'overlay', 'color_dodge', 'color_burn', 'difference', 'exclusion', 'saturation', 'color', 'luminosity']
+features += blends + ['radial_touch', 'solid_fill', 'no_clip']
 for f in features: names.append(f); outlines[f] = rect(0, 0, 0, 0) if False else TTGlyphPen(None).glyph()
 
-palette = [(1, 0, 0, 1), (0, 0.6, 0, 1), (0, 0, 1, 1), (1, 0.8, 0, 1), (0.5, 0, 0.5, 0.6)]
+palette = [(1, 0, 0, 1), (0, 0.6, 0, 1), (0, 0, 1, 1), (1, 0.8, 0, 1), (0.5, 0, 0.5, 0.6), (64 / 255, 128 / 255, 192 / 255, 1), (230 / 255, 76 / 255, 120 / 255, 1)]
 def line(stops, extend=ExtendMode.PAD):
     return {'Extend': extend, 'ColorStop': [{'StopOffset': o, 'PaletteIndex': i, 'Alpha': 1.0} for o, i in stops]}
 rgb = [(0, 0), (0.5, 1), (1, 2)]
@@ -50,7 +54,16 @@ paints = {
     'xor': {'Format': F.PaintComposite, 'CompositeMode': CompositeMode.XOR, 'SourcePaint': glyph('disc', solid(0)), 'BackdropPaint': glyph('square', solid(2))},
     'hue': {'Format': F.PaintComposite, 'CompositeMode': CompositeMode.HSL_HUE, 'SourcePaint': glyph('disc', solid(1)), 'BackdropPaint': glyph('square', solid(0))},
     'foreground': {'Format': F.PaintColrLayers, 'Layers': [glyph('square', solid(0xFFFF)), glyph('disc', solid(4))]},
+    'radial_touch': glyph('square', {'Format': F.PaintRadialGradient, 'ColorLine': line(rgb), 'x0': 300, 'y0': 400, 'r0': 0, 'x1': 600, 'y1': 400, 'r1': 300}),
+    'solid_fill': {'Format': F.PaintComposite, 'CompositeMode': CompositeMode.SRC_IN, 'SourcePaint': solid(1), 'BackdropPaint': glyph('disc', solid(0))},
+    'no_clip': {'Format': F.PaintComposite, 'CompositeMode': CompositeMode.SRC_OVER,
+                'SourcePaint': {'Format': F.PaintTransform, 'Transform': {'xx': 0.5, 'yx': 0, 'xy': 0, 'yy': 0.5, 'dx': 600, 'dy': 0}, 'Paint': {'Format': F.PaintColrGlyph, 'Glyph': 'rotate'}},
+                'BackdropPaint': {'Format': F.PaintColrLayers, 'Layers': [glyph('bar', solid(0)), glyph('disc', solid(3))]}},
 }
+modes = {'screen': 'SCREEN', 'overlay': 'OVERLAY', 'color_dodge': 'COLOR_DODGE', 'color_burn': 'COLOR_BURN', 'difference': 'DIFFERENCE', 'exclusion': 'EXCLUSION',
+         'saturation': 'HSL_SATURATION', 'color': 'HSL_COLOR', 'luminosity': 'HSL_LUMINOSITY'}
+for name in blends:
+    paints[name] = {'Format': F.PaintComposite, 'CompositeMode': getattr(CompositeMode, modes[name]), 'SourcePaint': glyph('disc', solid(6)), 'BackdropPaint': glyph('square', solid(5))}
 fb = FontBuilder(UPM, isTTF=True)
 fb.setupGlyphOrder(names)
 fb.setupCharacterMap({0xE000 + k: f for k, f in enumerate(features)})
@@ -59,7 +72,7 @@ fb.setupHorizontalMetrics({n: (1000, 0) for n in names})
 fb.setupHorizontalHeader(ascent=900, descent=-100)
 fb.setupNameTable({'familyName': 'COLRv1 Test', 'styleName': 'Regular'})
 fb.setupOS2(); fb.setupPost()
-fb.font['COLR'] = buildCOLR(paints, glyphMap=fb.font.getReverseGlyphMap(), clipBoxes={f: (0, -100, 1000, 900) for f in features})
+fb.font['COLR'] = buildCOLR(paints, glyphMap=fb.font.getReverseGlyphMap(), clipBoxes={f: (0, -100, 1000, 900) for f in features if f != 'no_clip'})
 fb.font['CPAL'] = buildCPAL([palette])
 fb.save(sys.argv[1])
 print('features', features)

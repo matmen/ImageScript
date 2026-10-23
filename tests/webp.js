@@ -48,6 +48,26 @@ const animated = [
         if (sha256(frame.bitmap) !== animated[i]) panic(`animated WebP: frame ${i} doesn't match libwebp`);
     });
 
+    // filtered alpha (horizontal, vertical, gradient), from libwebp-test-data
+    for (const filter of [1, 2, 3]) {
+        const image = await Image.decode(await fs.readFile(`./tests/webp/alpha-filter-${filter}.webp`));
+        if (sha256(image.bitmap) !== 'd889344d3a6cc0b3212f3a6991f622ffb499a5e3f979bcb29b43dd37311d7f54')
+            panic(`alpha filter ${filter}: decoded pixels don't match libwebp`);
+    }
+
+    // frames blended over the ones before (and one disposed), composited like libwebp's animation decoder
+    const blended = await Animation.decode(await fs.readFile('./tests/webp/blended.webp'));
+    const blendedHashes = [
+        'f8780f2363d5acae4e9609dd675b03ad0efd07ed96389aa3c3dff666659a10bb',
+        'ee0bad03ecbd849330734126072c7af6f79834a47d317def605083f2b91279b0',
+        '54e5332ff6c1a6f5e3c89617240654480a230d1ac0d8bf5a4cb0802456c30966',
+        'ffc4ea964544d6900e71a0943511d953a3cbc62c1198258a03ba0f2f17a55987'
+    ];
+    if (blended.length !== 4) panic('blended WebP: wrong frame count');
+    blended.frames.forEach((frame, i) => {
+        if (sha256(frame.bitmap) !== blendedHashes[i]) panic(`blended WebP: frame ${i} doesn't match libwebp`);
+    });
+
     // lossless encoding: photo-like content (predictor), few colors (palette), alpha, odd sizes
     const photo = await Image.decode(await fs.readFile('./tests/webp/lossy.webp'));
     const cases = [

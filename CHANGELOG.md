@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.3.1
+
+### Fixes
+
+- TrueType hinting matches FreeType's in more fonts: SPVTL, SFVTL and SDPVTL set their vectors from the second point
+  to the first (they pointed the other way), S45ROUND rounds to FreeType's 45° grid, ISECT and ALIGNPTS compute like
+  FreeType's integer arithmetic. (Found by a test font using every instruction, compared with FreeType point for point.)
+- `rand`: the alternates picked at random are the ones HarfBuzz picks (its random state wraps around at 2^32).
+- `Image.renderSVG`: spaces around presentation attribute values (`fill="  url(#gradient) "`) are ignored, as in CSS.
+
 ## 3.3.0
 
 ### Features

@@ -1,0 +1,8 @@
+<svg id="svg1" viewBox="0 0 200 100" xmlns="http://www.w3.org/2000/svg">
+    <title>Percent units</title>
+
+    <line id="line1" x1="10%" y1="20%" x2="70%" y2="80%" stroke="green" stroke-width="10"/>
+
+    <!-- image frame -->
+    <rect id="frame" x="1" y="1" width="198" height="98" fill="none" stroke="black"/>
+</svg>

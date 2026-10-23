@@ -250,7 +250,8 @@ export class ApplyContext {
     }
 
     randomNumber(): number {
-        this.randomState = this.randomState * 48271 % 2147483647;
+        // (HarfBuzz's state is a uint32_t: the product wraps around at 2^32 first)
+        this.randomState = (Math.imul(this.randomState, 48271) >>> 0) % 2147483647;
         return this.randomState;
     }
 

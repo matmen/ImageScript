@@ -27,6 +27,12 @@ const roundHalfAway = (v: number): number => v < 0 ? -Math.round(-v) : Math.roun
 // 16.16 fixed point multiplication and division as the rasterizers do them: scaling by a 16.16 factor (rather than
 // the exact ratio) decides which values land on .5 and thus how they round
 const mulFix = (a: number, b: number): number => roundHalfAway(a * b / 65536);
+// a * b / c rounded half away from zero (FreeType's FT_MulDiv)
+const mulDiv = (a: number, b: number, c: number): number => {
+    if (!c) return a * b < 0 ? -0x7fffffff : 0x7fffffff;
+    const d = Math.floor((Math.abs(a * b) + Math.abs(c) / 2) / Math.abs(c));
+    return a * b * c < 0 ? -d : d;
+};
 const divFix = (a: number, b: number): number => b === 0 ? 0 : roundHalfAway(a * 65536 / b);
 
 interface Vector { x: number, y: number }
@@ -472,13 +478,13 @@ class Execution {
         this.gs[target] = { x: x / length, y: y / length };
     }
 
-    // vector from two points (for SPVTL, SFVTL, SDPVTL)
+    // vector from p2 (zp2) to p1 (zp1), rotated counter-clockwise when perpendicular (for SPVTL, SFVTL, SDPVTL)
     private lineVector(p1: number, p2: number, perpendicular: boolean, original: boolean): Vector {
         const z1 = this.zone(this.gs.zp1), z2 = this.zone(this.gs.zp2);
-        this.point(z1, p2);
-        this.point(z2, p1);
-        let x = (original ? z1.orgX[p2] - z2.orgX[p1] : z1.curX[p2] - z2.curX[p1]);
-        let y = (original ? z1.orgY[p2] - z2.orgY[p1] : z1.curY[p2] - z2.curY[p1]);
+        this.point(z1, p1);
+        this.point(z2, p2);
+        let x = (original ? z1.orgX[p1] - z2.orgX[p2] : z1.curX[p1] - z2.curX[p2]);
+        let y = (original ? z1.orgY[p1] - z2.orgY[p2] : z1.curY[p1] - z2.curY[p2]);
         if (x === 0 && y === 0) { x = 1; y = 0; perpendicular = false; }
         if (perpendicular) [x, y] = [-y, x];
         const length = Math.hypot(x, y);
@@ -590,17 +596,20 @@ class Execution {
                         [a0, a1].forEach(i => this.point(za, i));
                         [b0, b1].forEach(i => this.point(zb, i));
                         this.point(z, p);
-                        const ax0 = za.curX[a0], ay0 = za.curY[a0], ax1 = za.curX[a1], ay1 = za.curY[a1];
-                        const bx0 = zb.curX[b0], by0 = zb.curY[b0], bx1 = zb.curX[b1], by1 = zb.curY[b1];
+                        // FreeType's integer arithmetic (Cramer's rule) on whole 26.6 units, lines within about 3° count
+                        // as parallel: the point goes to the middle of the four
+                        const ax0 = Math.round(za.curX[a0]), ay0 = Math.round(za.curY[a0]), ax1 = Math.round(za.curX[a1]), ay1 = Math.round(za.curY[a1]);
+                        const bx0 = Math.round(zb.curX[b0]), by0 = Math.round(zb.curY[b0]), bx1 = Math.round(zb.curX[b1]), by1 = Math.round(zb.curY[b1]);
                         const dax = ax1 - ax0, day = ay1 - ay0, dbx = bx1 - bx0, dby = by1 - by0;
-                        const det = dax * dby - day * dbx;
-                        if (Math.abs(det) < 1e-9) {
-                            z.curX[p] = (ax0 + ax1 + bx0 + bx1) / 4;
-                            z.curY[p] = (ay0 + ay1 + by0 + by1) / 4;
+                        const discriminant = mulDiv(dax, -dby, 64) + mulDiv(day, dbx, 64);
+                        const dotProduct = mulDiv(dax, dbx, 64) + mulDiv(day, dby, 64);
+                        if (19 * Math.abs(discriminant) > Math.abs(dotProduct)) {
+                            const v = mulDiv(bx0 - ax0, -dby, 64) + mulDiv(by0 - ay0, dbx, 64);
+                            z.curX[p] = ax0 + mulDiv(v, dax, discriminant);
+                            z.curY[p] = ay0 + mulDiv(v, day, discriminant);
                         } else {
-                            const t = ((bx0 - ax0) * dby - (by0 - ay0) * dbx) / det;
-                            z.curX[p] = ax0 + t * dax;
-                            z.curY[p] = ay0 + t * day;
+                            z.curX[p] = Math.trunc((ax0 + ax1 + bx0 + bx1) / 4);
+                            z.curY[p] = Math.trunc((ay0 + ay1 + by0 + by1) / 4);
                         }
                         z.touchX[p] = z.touchY[p] = 1;
                         break;
@@ -629,12 +638,14 @@ class Execution {
                     case 0x7c: gs.round = { period: 64, phase: 0, threshold: 63 }; break;
                     case 0x7a: gs.round = null; break;
                     case 0x76: case 0x77: { // SROUND, S45ROUND
+                        // in F2Dot14 (1 or √½ of the grid) with integer divisions, then truncated to 26.6 like FreeType
                         const n = this.pop();
-                        const grid = op === 0x76 ? 64 : 64 / Math.SQRT2;
-                        const period = [grid / 2, grid, grid * 2, grid][n >> 6 & 3];
-                        const phase = [0, period / 4, period / 2, period * 3 / 4][n >> 4 & 3];
+                        const grid = op === 0x76 ? 0x4000 : 0x2d41;
+                        const period = [grid >> 1, grid, grid * 2, grid][n >> 6 & 3];
+                        const phase = [0, period >> 2, period >> 1, Math.trunc(period * 3 / 4)][n >> 4 & 3];
                         const t = n & 15;
-                        gs.round = { period, phase, threshold: t === 0 ? period - 1 : (t - 4) * period / 8 };
+                        const threshold = t === 0 ? period - 1 : Math.trunc((t - 4) * period / 8);
+                        gs.round = { period: period >> 8, phase: phase >> 8, threshold: threshold >> 8 };
                         break;
                     }
                     case 0x1a: gs.minimumDistance = this.pop(); break;
@@ -939,7 +950,8 @@ class Execution {
                         const z0 = this.zone(gs.zp0), z1 = this.zone(gs.zp1);
                         this.point(z0, p2);
                         this.point(z1, p1);
-                        const d = this.project(z0.curX[p2] - z1.curX[p1], z0.curY[p2] - z1.curY[p1]) / 2;
+                        // half the (whole 26.6 unit) distance, truncated like FreeType: odd distances leave a unit between them
+                        const d = Math.trunc(Math.round(this.project(z0.curX[p2] - z1.curX[p1], z0.curY[p2] - z1.curY[p1])) / 2);
                         this.move(z1, p1, d);
                         this.move(z0, p2, -d);
                         break;

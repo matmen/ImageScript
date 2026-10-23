@@ -533,7 +533,8 @@ class Document {
         };
 
         const presentation: Record<string, string> = {};
-        for (const name in node.attrs) if (PROPERTIES.has(name)) presentation[name] = node.attrs[name];
+        // presentation attributes are CSS values, with the spaces around them insignificant
+        for (const name in node.attrs) if (PROPERTIES.has(name)) presentation[name] = node.attrs[name].trim();
         apply(presentation);
 
         const rules = this.rules.filter(rule => rule.match(node));

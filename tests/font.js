@@ -7,7 +7,7 @@
    ../shaping/OFL-Noto.md)
  https://github.com/googlefonts/noto-emoji (subsets of Noto Color Emoji and Noto-COLRv1, SIL OFL, see OFL-NotoColorEmoji.md;
    damaged noto colrv1 subset.ttf is a damaged copy for tests/regressions.js)
- colrv1 paints.ttf is built by colrv1-paints.py, sbix.ttf by sbix.py
+ colrv1 paints.ttf is built by colrv1-paints.py, sbix.ttf by sbix.py, hinting instructions.ttf by scripts/hinting-fixtures.py
  https://github.com/mozilla/twemoji-colr (subset, CC-BY 4.0, see CC-BY-Twemoji.md)
  */
 
@@ -129,6 +129,30 @@ const panic = message => {
             }
         }
 
+        // the instructions the fonts above don't use (vectors, ISECT, ALIGNPTS, FLIPPT, round states, deltas, IDEF, ...)
+        // and point matching: "hinting instructions.ttf" and FreeType's outlines of it from scripts/hinting-fixtures.py,
+        // also which points are on and off the curve
+        {
+            const font = new Font(await fs.readFile('./tests/fonts/hinting instructions.ttf'));
+            const hinter = new Hinter(font);
+            const names = ['vectors', 'isect', 'flip', 'round', 'coords', 'deltas', 'logic', 'point-matched'];
+            for (const [key, {advance, points}] of Object.entries(JSON.parse(await fs.readFile('./tests/fonts/hinting-instructions.json', 'utf8')))) {
+                const [size, name] = key.split(':');
+                const hinted = hinter.glyph(font.glyphIndex(0xe000 + names.indexOf(name)), +size);
+                if (!hinted || hinted.advance * 64 !== advance) panic(`hinting instructions ${key}: not hinted or a wrong advance`);
+                const on = new Set(), off = new Set();
+                const at = (x, y) => `${Math.round(x * 64)},${Math.round(y * 64)}`;
+                for (const command of hinted.path) {
+                    if (command[0] === 'Q') {
+                        off.add(at(command[1], command[2]));
+                        on.add(at(command[3], command[4]));
+                    } else if (command.length > 1) on.add(at(command[1], command[2]));
+                }
+                for (const [x, y, onCurve] of points)
+                    if (!(onCurve ? on : off).has(`${x},${y}`)) panic(`hinting instructions ${key}: ${onCurve ? 'on' : 'off'} curve point ${x},${y} missing`);
+            }
+        }
+
         // rendering: hinted glyphs sit on whole pixels, so repeated letters look identical (without hinting they are
         // placed with subpixel precision and differ), and there are fewer blurry pixels
         const data = await fs.readFile('./tests/fonts/opensans bold.ttf');
@@ -218,6 +242,48 @@ const panic = message => {
         const foreground = await Image.renderText(font, 100, '\ue010', {color: 0x00aaaaff});
         const [fr, fg, fb, fa] = foreground.getRGBAAt(Math.round(foreground.width * 0.12), foreground.height >> 1);
         if (fr > 2 || Math.abs(fg - 0xaa) > 2 || Math.abs(fb - 0xaa) > 2 || fa < 253) panic(`colrv1: layers in the text color should take it (${fr},${fg},${fb},${fa})`);
+
+        // the other blend modes: a disc (source) over a square (backdrop), both opaque, where they overlap (the center,
+        // 500/400 in font units) the blended color (W3C Compositing and Blending)
+        const backdrop = [64, 128, 192].map(v => v / 255), source = [230, 76, 120].map(v => v / 255);
+        const hardLight = (b, s) => s <= 0.5 ? b * 2 * s : 1 - (1 - b) * (2 - 2 * s);
+        const lum = c => 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
+        const clip = c => {
+            const l = lum(c), n = Math.min(...c), x = Math.max(...c);
+            return c.map(v => n < 0 ? l + (v - l) * l / (l - n) : x > 1 ? l + (v - l) * (1 - l) / (x - l) : v);
+        };
+        const setLum = (c, l) => clip(c.map(v => v + l - lum(c)));
+        const sat = c => Math.max(...c) - Math.min(...c);
+        const setSat = (c, s) => c.map(v => (v - Math.min(...c)) * s / (Math.max(...c) - Math.min(...c)));
+        const separable = f => (b, s) => b.map((v, i) => f(v, s[i]));
+        const blends = {
+            screen: separable((b, s) => b + s - b * s),
+            overlay: separable((b, s) => hardLight(s, b)),
+            'color dodge': separable((b, s) => b === 0 ? 0 : s >= 1 ? 1 : Math.min(1, b / (1 - s))),
+            'color burn': separable((b, s) => b >= 1 ? 1 : s <= 0 ? 0 : 1 - Math.min(1, (1 - b) / s)),
+            difference: separable((b, s) => Math.abs(b - s)),
+            exclusion: separable((b, s) => b + s - 2 * b * s),
+            saturation: (b, s) => setLum(setSat(b, sat(s)), lum(b)),
+            color: (b, s) => setLum(s, lum(b)),
+            luminosity: (b, s) => setLum(b, lum(s))
+        };
+        let glyph = 0xe011;
+        for (const [name, blend] of Object.entries(blends)) {
+            const image = await Image.renderText(font, 100, String.fromCodePoint(glyph++));
+            const actual = image.getRGBAAt(image.width >> 1, 50), expected = blend(backdrop, source).map(v => Math.round(v * 255));
+            if (expected.some((v, i) => Math.abs(v - actual[i]) > 1) || actual[3] !== 255) panic(`colrv1 ${name}: ${actual} instead of ${expected}`);
+        }
+
+        // a radial gradient whose circles touch (red at the left edge of the inner one, blue around the outer one), a
+        // solid paint (green) inside a disc, and a glyph without a clip box sized by its outlines
+        const touching = await Image.renderText(font, 100, '\ue01a');
+        const [tr, , tb] = touching.getRGBAAt(31, 50), [, , ob] = touching.getRGBAAt(88, 50);
+        if (!(tr > 200 && tb < 50 && ob > 200)) panic(`colrv1: touching radial gradient (${tr},${tb} / ${ob})`);
+        const solidFill = await Image.renderText(font, 100, '\ue01b');
+        if (solidFill.getRGBAAt(solidFill.width >> 1, 50).join() !== '0,153,0,255' || solidFill.getRGBAAt(12, 85)[3] !== 0)
+            panic(`colrv1: a solid paint should fill the disc only (${solidFill.getRGBAAt(solidFill.width >> 1, 50)})`);
+        const unclipped = await Image.renderText(font, 100, '\ue01c');
+        if (unclipped.width < 80 || unclipped.width > 110) panic(`colrv1: a glyph without a clip box should be sized by its outlines (${unclipped.width})`);
     }
 
     {
