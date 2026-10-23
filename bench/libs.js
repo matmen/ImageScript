@@ -14,6 +14,9 @@ const sharp = (await import('sharp')).default;
 const canvas = await import('@napi-rs/canvas');
 const imageJS = await import('image-js');
 const photon = require('@silvia-odwyer/photon-node');
+const { createImageLibrary } = await import('purejsimage');
+const { allCodecs } = await import('purejsimage/codecs/all');
+const pureJsImage = createImageLibrary(allCodecs);
 
 // the same work in every library: halve the size (bilinear where it can be chosen), rotate by 30° (growing the
 // image to fit), blur with a radius/sigma of 5, place a semi-transparent overlay, cut out a quarter
@@ -95,6 +98,22 @@ export const libraries = [
         clone: image => image.clone()
     },
     {
+        // PureJsImage works on pipelines from encoded data to encoded data, without decoded images: a decoded image is
+        // a BMP, its fastest uncompressed format (a BMP to BMP pipeline takes about 40 ms on the photo), and every
+        // operation runs a pipeline from it back to a BMP, like sharp's raw pixels
+        name: 'PureJsImage', package: 'purejsimage', kind: 'JavaScript',
+        decode: async data => toBmp(await pureJsImage.open(data)),
+        encode: {
+            png: async image => (await pureJsImage.open(image)).png().toUint8Array(),
+            jpeg: async image => (await pureJsImage.open(image)).jpeg({ quality: 80 }).toUint8Array(),
+            webp: async image => (await pureJsImage.open(image)).webp({ lossless: true }).toUint8Array()
+        },
+        resize: async image => toBmp((await pureJsImage.open(image)).resize({ width: RESIZE[0], height: RESIZE[1], kernel: 'bilinear', fit: 'fill' })),
+        rotate: async image => toBmp((await pureJsImage.open(image)).rotate(ANGLE, { background: 'transparent' })),
+        crop: async image => toBmp((await pureJsImage.open(image)).crop({ x: CROP[0], y: CROP[1], width: CROP[2], height: CROP[3] })),
+        clone: image => new Uint8Array(image)
+    },
+    {
         name: 'Photon', package: '@silvia-odwyer/photon-node', kind: 'WebAssembly', collect: true,
         decode: data => photon.PhotonImage.new_from_byteslice(new Uint8Array(data)),
         encode: {
@@ -167,6 +186,10 @@ export const libraries = [
     }
 ];
 canvas.GlobalFonts.register(font, 'Source Sans 3');
+
+function toBmp(image) {
+    return image.bmp({ alpha: true }).toUint8Array();
+}
 
 function clonePhoton(image) {
     return new photon.PhotonImage(image.get_raw_pixels(), image.get_width(), image.get_height());

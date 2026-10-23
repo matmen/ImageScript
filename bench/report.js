@@ -105,8 +105,8 @@ const readme = `# ImageScript benchmark
 
 How [ImageScript](https://github.com/matmen/ImageScript) compares to other image libraries for Node.js: speed, file
 sizes and what installing each takes. ImageScript is plain JavaScript with no dependencies, so it runs wherever
-JavaScript does; sharp and @napi-rs/canvas wrap native libraries (libvips, Skia), Photon and ImageScript 1 are
-WebAssembly.
+JavaScript does, like Jimp, image-js and PureJsImage; sharp and @napi-rs/canvas wrap native libraries (libvips, Skia),
+Photon and ImageScript 1 are WebAssembly.
 
 <img src="charts/install.svg" alt="Install size of each library">
 
@@ -143,10 +143,12 @@ ${table(Object.keys(results.sizes).map(k => [k, k]), LIBS, (key, lib) => results
   when the benchmark starts, PNG and lossy WebP), a 1434×1434 graphic with transparency (PNG), a 445×445 diagram with
   transparency placed on the photo (PNG), a 300×300 GIF with 101 frames.
 - Rendering: "${TEXT}" in Source Sans 3 at ${TEXT_SIZE}px, and \`tests/svgs/features.svg\` (gradients, clipping,
-  CSS) at ${SVG_WIDTH} pixels wide. Jimp and Photon can't render TrueType/OpenType fonts or SVGs; ImageScript 1 crashes
+  CSS) at ${SVG_WIDTH} pixels wide. Jimp, image-js, PureJsImage and Photon can't render TrueType/OpenType fonts or SVGs; ImageScript 1 crashes
   on this SVG; @napi-rs/canvas (Skia's SVG module) ignores its CSS, so it draws a little less.
 - Every operation starts from the same decoded image and returns a new one: libraries that change images in place
-  clone first, sharp runs a pipeline from raw pixels back to raw pixels, @napi-rs/canvas draws into a new canvas.
+  clone first, sharp runs a pipeline from raw pixels back to raw pixels, PureJsImage (which has no decoded images) one
+  from a BMP back to a BMP, @napi-rs/canvas draws into a new canvas. PureJsImage has no blur, composite, rendering or
+  animated GIFs.
 - Where the library lets you choose, resizing is bilinear (ImageScript 1 only has nearest neighbor), blurring is
   gaussian with a radius or sigma of 5, rotating grows the image to fit. Each library uses its own defaults
   otherwise, e.g. its PNG compression level.
