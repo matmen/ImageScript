@@ -11,13 +11,18 @@
   },
   "Jimp": {
     "package": "jimp@1.6.1",
-    "bytes": 26753173,
+    "bytes": 26752848,
     "packages": 64
   },
   "image-js": {
     "package": "image-js@1.7.1",
-    "bytes": 47817457,
+    "bytes": 47817540,
     "packages": 55
+  },
+  "PureJsImage": {
+    "package": "purejsimage@0.17.0",
+    "bytes": 6658152,
+    "packages": 1
   },
   "Photon": {
     "package": "@silvia-odwyer/photon-node@0.3.4",
