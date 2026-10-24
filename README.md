@@ -33,6 +33,8 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   - Radiance HDRs (RGBE and XYZE, every orientation), tone mapped to sRGB like Reinhard's operator does (or clamped,
     `toneMapping`)
   - TGAs (color mapped, truecolor and greyscale; uncompressed and run length encoded)
+  - AVIFs (4:2:0, 4:2:2, 4:4:4 and monochrome, 8-12 bit; grids, alpha, crop, rotation and mirroring; the first frame
+    of image sequences; bit-exact with dav1d and libavif), HDR ones (PQ, HLG) tone mapped to sRGB
   - JPEGs, TIFFs, PNGs and WebPs are rotated as their Exif (or, for PNGs, XMP) orientation says
   - images larger than 268 megapixels (`maxPixels`) are rejected before decoding, so small files declaring huge images
     can't exhaust the memory
@@ -115,7 +117,9 @@ The JPEG codec is based in part on the work of the Independent JPEG Group (libjp
 and reproduce [libwebp](https://chromium.googlesource.com/webm/libwebp)'s color conversion, the TrueType hinting follows
 [FreeType](https://freetype.org)'s interpreter (portions of this software are copyright © 2026 The FreeType Project),
 the text shaping is ported from [HarfBuzz](https://github.com/harfbuzz/harfbuzz) and uses data of the
-[Unicode Character Database](https://www.unicode.org/ucd/).
+[Unicode Character Database](https://www.unicode.org/ucd/). The AV1 decoder is ported from
+[dav1d](https://code.videolan.org/videolan/dav1d), AVIFs are converted to RGB like
+[libavif](https://github.com/AOMediaCodec/libavif) does.
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for their licenses.
 
 ---

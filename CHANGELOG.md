@@ -14,10 +14,21 @@
     AND masks (32-bit ones with alpha, unless it's zero everywhere), or PNGs.
   - Netpbm: plain and raw, samples of up to 16 bits, PAM's tuple types.
   - Radiance HDRs: RGBE and XYZE, every orientation, both run length encodings.
-- `DecodeOptions.toneMapping`: HDRs' and PFMs' linear light can be brighter than white. By default (`'reinhard'`) the
-  brightest parts are compressed like Reinhard's extended tone mapping operator does, the brightest pixel becomes
-  white (without the operator's automatic exposure, which turns night scenes grey); images no brighter than white
-  stay as they are. `'clamp'` clamps everything brighter than white instead. Either way the result is sRGB.
+- `Image.decode` reads AVIFs, and `ImageType` recognizes them (`'avif'`, `ImageType.isAVIF`). The AV1 decoder is
+  ported from dav1d and decodes exactly like it: 4:2:0, 4:2:2, 4:4:4 and monochrome, 8, 10 and 12 bits, every intra
+  coding tool (palettes, intra block copy, filter intra, chroma from luma, quantizer matrices, lossless, 128x128
+  superblocks, tiles), every post filter (deblocking, CDEF, superres, loop restoration) and film grain. The container:
+  the primary item or a grid of them, alpha (also premultiplied, or one per grid tile), the crop, rotation and
+  mirroring properties (`clap`, `irot`, `imir`), the color description of `colr`, and the first frame of image
+  sequences (also from `Animation.decode`). Converted to RGB like libavif does, so the pixels are libavif's; HDR
+  AVIFs (PQ and HLG, BT.2020 and Display P3 primaries) are converted to sRGB with `toneMapping`. Not supported:
+  frames that use other frames (inter frames): image sequences only give their first frame, and of layered images
+  whose shown layer is inter coded the highest intra coded layer is shown if it has the image's size (else they
+  throw).
+- `DecodeOptions.toneMapping`: HDRs', PFMs' and HDR AVIFs' light can be brighter than (SDR) white. By default
+  (`'reinhard'`) the brightest parts are compressed like Reinhard's extended tone mapping operator does, the brightest
+  pixel becomes white (without the operator's automatic exposure, which turns night scenes grey); images no brighter
+  than white stay as they are. `'clamp'` clamps everything brighter than white instead. Either way the result is sRGB.
 - `Image.encodeBMP`, `Image.encodeQOI` and `Image.encodePNM`:
   - BMPs with a palette of 2, 16 or 256 colors if an opaque image has at most that many, else 24-bit, or 32-bit with
     an alpha mask (a version 4 header) if the image has transparency

@@ -51,6 +51,8 @@
     "picture",
     "thumbnail",
     "webp",
+    "avif",
+    "av1",
     "apng",
     "tiff",
     "tga",

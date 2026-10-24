@@ -5,9 +5,10 @@ import { iconType } from './codecs/ico.ts';
 import { isQOI } from './codecs/qoi.ts';
 import { isNetpbm } from './codecs/netpbm.ts';
 import { isHDR } from './codecs/hdr.ts';
+import { isAVIF } from './codecs/avif.ts';
 
 /** Image formats recognized by {@link ImageType.getType} */
-export type ImageTypeName = 'png' | 'jpeg' | 'tiff' | 'gif' | 'webp' | 'bmp' | 'ico' | 'cur' | 'qoi' | 'pnm' | 'hdr' | 'tga';
+export type ImageTypeName = 'png' | 'jpeg' | 'tiff' | 'gif' | 'webp' | 'avif' | 'bmp' | 'ico' | 'cur' | 'qoi' | 'pnm' | 'hdr' | 'tga';
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -48,6 +49,7 @@ export class ImageType {
         if (this.isTIFF(view)) return 'tiff';
         if (this.isGIF(view)) return 'gif';
         if (this.isWebP(view)) return 'webp';
+        if (this.isAVIF(view)) return 'avif';
         if (this.isBMP(view)) return 'bmp';
         const icon = iconType(u8(view));
         if (icon) return icon;
@@ -89,6 +91,11 @@ export class ImageType {
     static isWebP(data: BinaryData): boolean {
         const view = dataView(data);
         return view.byteLength >= 12 && view.getUint32(0, false) === MAGIC_NUMBERS.RIFF && view.getUint32(8, false) === MAGIC_NUMBERS.WEBP;
+    }
+
+    /** Whether the data starts like an AVIF (the avif or avis brand) */
+    static isAVIF(data: BinaryData): boolean {
+        return isAVIF(u8(dataView(data)));
     }
 
     /** Whether the data starts like a BMP */

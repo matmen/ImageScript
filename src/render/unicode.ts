@@ -1,6 +1,7 @@
 // Unicode character properties from the generated tables (src/render/unicode-data.ts), decoded when first used
 
 import type { EncodedProperty } from './unicode-data.ts';
+import { base64 } from '../util/bytes.ts';
 
 /** a decoded property: ranges of code points (start, end inclusive) and the index of their value */
 interface Ranges {
@@ -11,16 +12,6 @@ interface Ranges {
 
 const decoded = new WeakMap<EncodedProperty, Ranges>();
 
-// base64 is decoded natively: Uint8Array.fromBase64 where available, atob everywhere else (browsers, Node, Deno, Bun)
-declare const atob: (data: string) => string;
-const fromBase64 = (Uint8Array as unknown as { fromBase64?: (text: string) => Uint8Array }).fromBase64;
-
-function base64(text: string): Uint8Array {
-    if (fromBase64) return fromBase64(text);
-    const binary = atob(text), bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-}
 
 function decode(property: EncodedProperty): Ranges {
     let ranges = decoded.get(property);
