@@ -83,6 +83,16 @@ frames = [source('circle.png', 32, 32, (i * 40, 0, 512, 512 - i * 40), 'RGBA') f
 frames[0].save(tmp / 'anim.png', save_all=True, append_images=frames[1:], duration=[40, 80, 40, 120], loop=0)
 encode('animation', tmp / 'anim.png', '-d', '0')
 encode('animation-lossy', tmp / 'anim.png', '-d', '2')
+# CMYK (scripts/jxl-cmyk.c, a black channel): the reference is the color times black, which djxl ignores without a
+# CMYK profile
+# (1 - ink: black is the darkest channel, the colors are divided by it)
+rgb = np.asarray(photo(32, 32), np.float64)
+k = np.maximum(rgb.max(axis=2, keepdims=True), 1)
+cmyk = np.round(np.dstack([rgb / k * 255, k])).astype(np.uint8)
+subprocess.run(['cc', '-o', str(tmp / 'jxl-cmyk'), str(root / 'scripts' / 'jxl-cmyk.c'), '-ljxl'], check=True)
+(out / 'cmyk.jxl').write_bytes(subprocess.run([str(tmp / 'jxl-cmyk'), '32', '32'], input=cmyk.tobytes(), check=True,
+                                              stdout=subprocess.PIPE).stdout)
+
 # conformance files: the step of the reference's samples
 conformances = {'alpha_nonpremultiplied': 4, 'alpha_premultiplied': 8, 'blendmodes': 8, 'mul_no_extra_channels': 1,
                 'animation_spline': 4}
@@ -93,6 +103,10 @@ for name in conformances:
 manifest = {}
 for jxl in sorted(out.glob('*.jxl')):
     png = jxl.with_suffix('.png')
+    if jxl.stem == 'cmyk':
+        Image.fromarray(np.round(cmyk[..., :3] * (cmyk[..., 3:] / 255)).astype(np.uint8)).save(png)
+        print(jxl.name, jxl.stat().st_size, png.stat().st_size)
+        continue
     subprocess.run([DJXL, str(jxl), str(png), '--bits_per_sample=8', '--color_space=RGB_D65_SRG_Rel_SRG', '--quiet'],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     step = conformances.get(jxl.stem.replace('-', '_'))

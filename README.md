@@ -36,8 +36,9 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   - AVIFs (4:2:0, 4:2:2, 4:4:4 and monochrome, 8-12 bit; grids, alpha, crop, rotation and mirroring; the first frame
     of image sequences; bit-exact with dav1d and libavif), HDR ones (PQ, HLG) tone mapped to sRGB
   - JPEG XLs (Modular and VarDCT, lossless and lossy, every coding tool: progressive passes and LF frames, patches,
-    splines, noise, restoration filters, upsampling, JPEG recompression, layers and blending, alpha and spot colors;
-    animations; within 1 of libjxl's djxl on the conformance suite), XYB ones as sRGB, HDR ones tone mapped to sRGB
+    splines, noise, restoration filters, upsampling, JPEG recompression, layers and blending, alpha and spot colors,
+    CMYK; animations; within 1 of libjxl's djxl on the conformance suite), XYB ones as sRGB, HDR ones tone mapped to
+    sRGB
   - JPEGs, TIFFs, PNGs and WebPs are rotated as their Exif (or, for PNGs, XMP) orientation says
   - images larger than 268 megapixels (`maxPixels`) are rejected before decoding, so small files declaring huge images
     can't exhaust the memory

@@ -3,7 +3,7 @@
  * (jxl-oxide's crates/jxl-color/src/ycbcr.rs); and the decoded image as 8-bit RGBA. Copyright (c) the JPEG XL Project
  * Authors, BSD-3-Clause License; Copyright (c) Wonwoo Choi, MIT License (see THIRD_PARTY_NOTICES.md)
  */
-import { ImageHeader, TF_PQ, TF_HLG, PRI_BT2100, PRI_P3, EXTRA_ALPHA, EXTRA_SPOT } from './headers.ts';
+import { ImageHeader, TF_PQ, TF_HLG, PRI_BT2100, PRI_P3, EXTRA_ALPHA, EXTRA_SPOT, EXTRA_BLACK } from './headers.ts';
 import { toSRGB, hdrToLinear, ToneMapping, REFERENCE_WHITE } from '../hdr.ts';
 import type { Planes } from './frame.ts';
 
@@ -67,6 +67,21 @@ export class ColorOutput {
         const n = p.width * p.height, ch = p.channels, image = this.image;
         const numColor = ch.length - image.extraChannels.length, grey = numColor === 1;
         let [r, g, b] = grey ? [ch[0], ch[0], ch[0]] : ch;
+        // CMYK (a black channel): the color channels and black are stored as 1 - ink, the color becomes their product
+        // (without the CMYK profile, like JPEGs' CMYK)
+        const black = image.extraChannels.findIndex(e => e.type === EXTRA_BLACK);
+        if (black >= 0) {
+            const k = ch[numColor + black];
+            if (grey) r = g = b = r.slice();
+            else [r, g, b] = [r.slice(), g.slice(), b.slice()];
+            for (let i = 0; i < n; i++) {
+                r[i] *= k[i];
+                if (!grey) {
+                    g[i] *= k[i];
+                    b[i] *= k[i];
+                }
+            }
+        }
         // spot colors (onto color images), mixed in by their solidity
         image.extraChannels.forEach((e, i) => {
             if (e.type !== EXTRA_SPOT || grey) return;
