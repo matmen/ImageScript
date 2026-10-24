@@ -1,0 +1,46 @@
+{
+    "alpha-nonpremultiplied": {
+        "step": 4,
+        "frames": [
+            0
+        ]
+    },
+    "alpha-premultiplied": {
+        "step": 8,
+        "frames": [
+            0
+        ]
+    },
+    "alpha-triangles": {
+        "step": 4,
+        "frames": [
+            0
+        ]
+    },
+    "animation-spline": {
+        "step": 4,
+        "frames": [
+            0,
+            17,
+            59
+        ]
+    },
+    "blendmodes": {
+        "step": 8,
+        "frames": [
+            0
+        ]
+    },
+    "mul-no-extra-channels": {
+        "step": 1,
+        "frames": [
+            0
+        ]
+    },
+    "sunset-logo": {
+        "step": 11,
+        "frames": [
+            0
+        ]
+    }
+}

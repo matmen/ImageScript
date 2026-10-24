@@ -7,7 +7,7 @@
 
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { decodeAV1, Frame } from './av1/frame.ts';
-import { toSRGB, ToneMapping } from './hdr.ts';
+import { toSRGB, hdrToLinear, ToneMapping } from './hdr.ts';
 
 interface Box { type: string, start: number, end: number }
 
@@ -287,49 +287,6 @@ function coefficients(matrix: number): [number, number] {
 }
 
 const TRANSFER_PQ = 16, TRANSFER_HLG = 18;
-const PRIMARIES_BT2020 = 9, PRIMARIES_P3 = 12;
-// the white of SDR content in HDR (BT.2408): linear light 1
-const REFERENCE_WHITE = 203;
-
-/**
- * Non-linear PQ (SMPTE ST 2084) or HLG (BT.2100) RGB as linear light (in place) with BT.709 primaries, 1 being the
- * reference white (203 cd/m²): HLG is displayed as on a 1000 cd/m² display (BT.2100's OOTF, gamma 1.2)
- */
-function hdrToLinear(rgb: Float32Array, transfer: number, primaries: number): Float32Array {
-    const m1 = 2610 / 16384, m2 = 2523 / 4096 * 128, c1 = 3424 / 4096, c2 = 2413 / 4096 * 32, c3 = 2392 / 4096 * 32;
-    const pq = (v: number): number => {
-        const e = (v <= 0 ? 0 : v >= 1 ? 1 : v) ** (1 / m2);
-        return 10000 / REFERENCE_WHITE * (Math.max(e - c1, 0) / (c2 - c3 * e)) ** (1 / m1);
-    };
-    const a = 0.17883277, b = 1 - 4 * a, c = 0.5 - a * Math.log(4 * a);
-    const hlg = (v: number): number => {
-        const e = v <= 0 ? 0 : v >= 1 ? 1 : v;
-        return e <= 0.5 ? e * e / 3 : (Math.exp((e - c) / a) + b) / 12;
-    };
-    // to BT.709 (BT.2087 for BT.2020; Display P3 is the same white)
-    const matrix = primaries === PRIMARIES_BT2020 ? [1.660491, -0.587641, -0.072850, -0.124550, 1.132900, -0.008349, -0.018151, -0.100579, 1.118730] :
-        primaries === PRIMARIES_P3 ? [1.224940, -0.224940, 0, -0.042057, 1.042057, 0, -0.019638, -0.078636, 1.098274] : null;
-    for (let i = 0; i < rgb.length; i += 3) {
-        let r: number, g: number, bl: number;
-        if (transfer === TRANSFER_PQ) {
-            r = pq(rgb[i]); g = pq(rgb[i + 1]); bl = pq(rgb[i + 2]);
-        } else {
-            r = hlg(rgb[i]); g = hlg(rgb[i + 1]); bl = hlg(rgb[i + 2]);
-            // the OOTF: by the scene luminance (of BT.2020's, which HLG content usually uses)
-            const ys = 0.2627 * r + 0.6780 * g + 0.0593 * bl;
-            const gain = ys > 0 ? 1000 / REFERENCE_WHITE * ys ** 0.2 : 0;
-            r *= gain; g *= gain; bl *= gain;
-        }
-        if (matrix) {
-            rgb[i] = matrix[0] * r + matrix[1] * g + matrix[2] * bl;
-            rgb[i + 1] = matrix[3] * r + matrix[4] * g + matrix[5] * bl;
-            rgb[i + 2] = matrix[6] * r + matrix[7] * g + matrix[8] * bl;
-        } else {
-            rgb[i] = r; rgb[i + 1] = g; rgb[i + 2] = bl;
-        }
-    }
-    return rgb;
-}
 
 // YUV to RGBA (8 bit), libavif's reference conversion: in floating point, chroma upsampled bilinearly
 const f32 = Math.fround;

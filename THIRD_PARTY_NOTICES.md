@@ -15,6 +15,9 @@ following projects, under their own licenses. Each derived file says so in its h
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | `src/codecs/vp8.ts` (YUV to RGB conversion, "fancy" chroma upsampling), `src/codecs/webp.ts` (animation frame blending), `src/codecs/vp8-enc.ts`, `src/codecs/vp8-enc-dsp.ts` (the lossy encoder: RGB to YUV conversion, analysis, segments, rate-distortion optimized mode decisions, quantization, token probabilities, bitstream, alpha filtering), `src/codecs/vp8-enc-tables.ts` (its tables, generated from libwebp by `scripts/vp8-enc-tables.py`) | BSD-3-Clause |
 | [dav1d](https://code.videolan.org/videolan/dav1d) by VideoLAN, the dav1d authors and Two Orioles | `src/codecs/av1/*` (the AV1 decoder: bitstream parsing, symbol decoding, prediction, inverse transforms, loop filters, film grain; the tables in `src/codecs/av1/data.ts`, generated from dav1d by `scripts/av1-tables.c`) | BSD-2-Clause |
 | [libavif](https://github.com/AOMediaCodec/libavif) by Joe Drago | `src/codecs/avif.ts` (YUV to RGB conversion with bilinear chroma upsampling, alpha range expansion and unpremultiplication) | BSD-2-Clause |
+| [jxl-oxide](https://github.com/tirr-c/jxl-oxide) by Wonwoo Choi | `src/codecs/jxl/*` (the JPEG XL decoder: bit reader, header and frame header fields, entropy decoding, VarDCT, dequantization matrices, transforms, restoration filters, upsampling, the parsing of patches, splines and noise) | MIT (or Apache-2.0) |
+| [libjxl](https://github.com/libjxl/libjxl) by the JPEG XL Project Authors | `src/codecs/jxl/modular.ts` (Modular decoding: MA trees, predictors, the self-correcting predictor, transforms), `src/codecs/jxl/frame.ts` (the sections of frames, the order of the rendering stages, reference frames), `src/codecs/jxl/blend.ts`, `src/codecs/jxl/color.ts` (XYB to RGB), `src/codecs/jxl/features.ts` (rendering patches, splines and noise) | BSD-3-Clause |
+| [JPEG XL conformance](https://github.com/libjxl/conformance) by the JPEG XL Project Authors | `tests/jxl/alpha-*.jxl`, `animation-spline.jxl`, `blendmodes.jxl`, `mul-no-extra-channels.jxl`, `sunset-logo.jxl` (test files) | BSD-3-Clause |
 | [FreeType](https://freetype.org) | `src/render/hinting.ts` (behavior and parts of the logic of the TrueType interpreter) | FreeType License |
 | [QOI](https://github.com/phoboslab/qoi) by Dominic Szablewski | `src/codecs/qoi.ts` (the reference encoder's choices of operations) | MIT |
 | [Pillow](https://github.com/python-pillow/Pillow) | `src/util/resample.ts` (filter coefficients, box, bilinear and bicubic filters) | MIT-CMU |
@@ -202,6 +205,75 @@ list of conditions and the following disclaimer.
 2. Redistributions in binary form must reproduce the above copyright notice,
 this list of conditions and the following disclaimer in the documentation
 and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+## jxl-oxide
+
+The structure of the JPEG XL decoder and most of its parts are ported from jxl-oxide (which may be used under the MIT
+or the Apache-2.0 license; the MIT license applies here).
+
+```
+Copyright (c) Wonwoo Choi
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+## libjxl, JPEG XL conformance
+
+The Modular decoding, the rendering pipeline, blending, the XYB conversion and the rendering of patches, splines and
+noise follow libjxl, the JPEG XL reference implementation; tests/jxl includes files of its conformance suite. JPEG XL
+is covered by Google's patent grant for libjxl (the "Additional IP Rights Grant" in libjxl's PATENTS file).
+
+```
+Copyright (c) the JPEG XL Project Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE

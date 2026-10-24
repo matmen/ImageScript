@@ -25,15 +25,26 @@
   frames that use other frames (inter frames): image sequences only give their first frame, and of layered images
   whose shown layer is inter coded the highest intra coded layer is shown if it has the image's size (else they
   throw).
+- `Image.decode` reads JPEG XLs, `Animation.decode` their animations (composited frames, durations, loop count), and
+  `ImageType` recognizes them (`'jxl'`, `ImageType.isJXL`). Ported from jxl-oxide and libjxl: bare codestreams and
+  the container (`jxlc`, `jxlp`), Modular (meta-adaptive trees, every predictor including the self-correcting one,
+  reversible color transforms, palettes with delta and implicit colors, squeeze, LZ77) and VarDCT (every varblock
+  type, chroma from luma, adaptive LF smoothing, chroma subsampled JPEG recompression), progressive passes and LF
+  frames, Gaborish and the edge-preserving filter, patches, splines, noise, upsampling, cropped and blended frames
+  and reference frames, alpha (also premultiplied), spot colors, the orientation. XYB images are rendered to sRGB, HDR
+  ones (PQ, HLG, or brighter than SDR white) tone mapped with `toneMapping`; others stay in their color space. Every
+  file of the JPEG XL conformance suite decodes within 1 of libjxl's djxl (as 8-bit sRGB). Not supported: ICC
+  profiles aren't applied (CMYK images aren't converted), previews are skipped.
 - `Image.encodeWebP({ quality })` encodes lossy WebPs (VP8, with a losslessly compressed alpha plane if the image
   isn't opaque): ported from libwebp's encoder with its default settings, the VP8 bitstream is byte for byte the one
   cwebp writes for the same quality (0-100). `effort` (0-6, default 4) is cwebp's `-m`: 0-2 decide by distortion only
   and are several times faster, 5-6 search harder for smaller files. Without a quality WebPs stay lossless.
   `Animation.encodeWebP({ quality, effort })` encodes lossy frames the same way.
-- `DecodeOptions.toneMapping`: HDRs', PFMs' and HDR AVIFs' light can be brighter than (SDR) white. By default
-  (`'reinhard'`) the brightest parts are compressed like Reinhard's extended tone mapping operator does, the brightest
-  pixel becomes white (without the operator's automatic exposure, which turns night scenes grey); images no brighter
-  than white stay as they are. `'clamp'` clamps everything brighter than white instead. Either way the result is sRGB.
+- `DecodeOptions.toneMapping`: HDRs', PFMs' and HDR AVIFs' and JPEG XLs' light can be brighter than (SDR) white. By
+  default (`'reinhard'`) the brightest parts are compressed like Reinhard's extended tone mapping operator does, the
+  brightest pixel becomes white (without the operator's automatic exposure, which turns night scenes grey); images no
+  brighter than white stay as they are. `'clamp'` clamps everything brighter than white instead. Either way the result
+  is sRGB.
 - `Image.encodeBMP`, `Image.encodeQOI` and `Image.encodePNM`:
   - BMPs with a palette of 2, 16 or 256 colors if an opaque image has at most that many, else 24-bit, or 32-bit with
     an alpha mask (a version 4 header) if the image has transparency

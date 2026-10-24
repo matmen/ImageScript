@@ -9,6 +9,7 @@ import * as qoi from './codecs/qoi.ts';
 import * as netpbm from './codecs/netpbm.ts';
 import * as hdr from './codecs/hdr.ts';
 import * as avif from './codecs/avif.ts';
+import * as jxl from './codecs/jxl.ts';
 import type { ToneMapping } from './codecs/hdr.ts';
 import * as quantize from './codecs/quantize.ts';
 import * as textRenderer from './render/text.ts';
@@ -165,10 +166,10 @@ export interface DecodeOptions {
      */
     maxPixels?: number;
     /**
-     * How Radiance HDRs, PFMs and HDR (PQ or HLG) AVIFs, whose light can be brighter than (SDR) white, become 8 bit
-     * sRGB: `'reinhard'` compresses the brightest parts like Reinhard's tone mapping operator does (the brightest pixel
-     * becomes white, images no brighter than white stay as they are), `'clamp'` clamps everything brighter than white.
-     * Default: `'reinhard'`
+     * How Radiance HDRs, PFMs and HDR (PQ or HLG) AVIFs and JPEG XLs, whose light can be brighter than (SDR) white,
+     * become 8 bit sRGB: `'reinhard'` compresses the brightest parts like Reinhard's tone mapping operator does (the
+     * brightest pixel becomes white, images no brighter than white stay as they are), `'clamp'` clamps everything
+     * brighter than white. Default: `'reinhard'`
      */
     toneMapping?: ToneMapping;
 }
@@ -2071,10 +2072,10 @@ export class Image {
     }
 
     /**
-     * Decodes an image (PNG, JPEG, TIFF, WebP, BMP, ICO, CUR, QOI, PBM, PGM, PPM, PAM, PFM, Radiance HDR, TGA or AVIF).
-     * For APNGs this is the default image; animated WebPs and GIFs have no single image, decode those with
-     * {@link Animation.decode}; for icons and cursors it's their largest image, for AVIF image sequences their first
-     * frame
+     * Decodes an image (PNG, JPEG, TIFF, WebP, BMP, ICO, CUR, QOI, PBM, PGM, PPM, PAM, PFM, Radiance HDR, TGA, AVIF or
+     * JPEG XL). For APNGs this is the default image; animated WebPs and GIFs have no single image, decode those with
+     * {@link Animation.decode}; for icons and cursors it's their largest image, for AVIF image sequences and JPEG XL
+     * animations their first frame
      * @param input The binary data to decode
      * @param options See {@link DecodeOptions}. JPEGs, TIFFs and PNGs are rotated/mirrored as their orientation tag
      *     (Exif, for PNGs also XMP) says by default: photos taken with a rotated camera are stored sideways
@@ -2102,6 +2103,7 @@ export class Image {
                 return { width, height, pixels };
             };
             if (ImageType.isAVIF(dataView)) return avif.decode(data, maxPixels, toneMapping);
+            if (ImageType.isJXL(dataView)) return jxl.decode(data, maxPixels, toneMapping);
             if (ImageType.isBMP(dataView)) return bitmap(bmp.decode(data, maxPixels));
             if (ImageType.isICO(dataView)) return bitmap(ico.decode(data, maxPixels));
             if (ImageType.isQOI(dataView)) return qoi.decode(data, maxPixels);
@@ -2122,7 +2124,7 @@ export class Image {
      * @internal
      * @ignore
      */
-    protected __orient__(orientation: number): this {
+    __orient__(orientation: number): this {
         if (orientation <= 1 || orientation > 8) return this;
 
         const w = this.width, h = this.height;

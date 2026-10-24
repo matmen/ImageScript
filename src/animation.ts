@@ -1,6 +1,7 @@
 import * as gifCodec from './codecs/gif.ts';
 import * as png from './codecs/png.ts';
 import * as webp from './codecs/webp.ts';
+import * as jxl from './codecs/jxl.ts';
 import { BinaryData, view } from './util/mem.ts';
 import { Image, ResizeMode, ResizeOptions } from './image.ts';
 import { Frame } from './frame.ts';
@@ -355,13 +356,13 @@ export class Animation extends Array<Frame> {
     }
 
     /**
-     * Decodes an animated GIF, APNG or WebP into fully composited frames (still images become a single frame)
+     * Decodes an animated GIF, APNG, WebP or JPEG XL into fully composited frames (still images become a single frame)
      * @param input The binary data to decode
      * @param options See {@link AnimationDecodeOptions}
      */
     static decode(input: BinaryData, options?: AnimationDecodeOptions): Promise<Animation>;
     /**
-     * Decodes an animated GIF, APNG or WebP into fully composited frames (still images become a single frame)
+     * Decodes an animated GIF, APNG, WebP or JPEG XL into fully composited frames (still images become a single frame)
      * @param input The binary data to decode
      * @param onlyExtractFirstFrame Whether to stop decoding after the first frame
      */
@@ -396,6 +397,19 @@ export class Animation extends Array<Frame> {
             const decoded = await png.decodeAnimation(data, onlyExtractFirstFrame, maxPixels);
             const frames = canvasFrames(decoded.width, decoded.height, png.compositeAnimation(decoded));
             return new Animation(frames, decoded.frames.length > 1 ? fromPlays(decoded.plays) : -1);
+        }
+
+        if (type === 'jxl') {
+            const frames: Frame[] = [];
+            let loopCount = -1;
+            for (const decoded of jxl.frames(data, maxPixels)) {
+                const frame = new Frame(decoded.width, decoded.height, decoded.duration, 0, 0, Frame.DISPOSAL_BACKGROUND);
+                frame.bitmap = decoded.pixels;
+                frames.push(frame.__orient__(decoded.orientation));
+                loopCount = fromPlays(decoded.loopCount);
+                if (onlyExtractFirstFrame) break;
+            }
+            return new Animation(frames, frames.length > 1 ? loopCount : -1);
         }
 
         if (type) return new Animation([Frame.from(await Image.decode(data, { maxPixels }), 0)]);

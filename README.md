@@ -35,10 +35,13 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   - TGAs (color mapped, truecolor and greyscale; uncompressed and run length encoded)
   - AVIFs (4:2:0, 4:2:2, 4:4:4 and monochrome, 8-12 bit; grids, alpha, crop, rotation and mirroring; the first frame
     of image sequences; bit-exact with dav1d and libavif), HDR ones (PQ, HLG) tone mapped to sRGB
+  - JPEG XLs (Modular and VarDCT, lossless and lossy, every coding tool: progressive passes and LF frames, patches,
+    splines, noise, restoration filters, upsampling, JPEG recompression, layers and blending, alpha and spot colors;
+    animations; within 1 of libjxl's djxl on the conformance suite), XYB ones as sRGB, HDR ones tone mapped to sRGB
   - JPEGs, TIFFs, PNGs and WebPs are rotated as their Exif (or, for PNGs, XMP) orientation says
   - images larger than 268 megapixels (`maxPixels`) are rejected before decoding, so small files declaring huge images
     can't exhaust the memory
-- [Decoding animations](https://imagescript.matmen.dev/classes/Animation.html#decode) (GIF, APNG and WebP) with all
+- [Decoding animations](https://imagescript.matmen.dev/classes/Animation.html#decode) (GIF, APNG, WebP and JPEG XL) with all
   frames, durations and disposal modes
 - [Rendering SVGs](https://imagescript.matmen.dev/classes/Image.html#rendersvg) (shapes, paths, gradients, strokes, clip paths,
   masks, CSS; no text, images or filters)
@@ -121,7 +124,8 @@ ported from libwebp's, the TrueType hinting follows
 the text shaping is ported from [HarfBuzz](https://github.com/harfbuzz/harfbuzz) and uses data of the
 [Unicode Character Database](https://www.unicode.org/ucd/). The AV1 decoder is ported from
 [dav1d](https://code.videolan.org/videolan/dav1d), AVIFs are converted to RGB like
-[libavif](https://github.com/AOMediaCodec/libavif) does.
+[libavif](https://github.com/AOMediaCodec/libavif) does, the JPEG XL decoder is ported from
+[jxl-oxide](https://github.com/tirr-c/jxl-oxide) and [libjxl](https://github.com/libjxl/libjxl).
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for their licenses.
 
 ---

@@ -6,9 +6,10 @@ import { isQOI } from './codecs/qoi.ts';
 import { isNetpbm } from './codecs/netpbm.ts';
 import { isHDR } from './codecs/hdr.ts';
 import { isAVIF } from './codecs/avif.ts';
+import { isJXL } from './codecs/jxl.ts';
 
 /** Image formats recognized by {@link ImageType.getType} */
-export type ImageTypeName = 'png' | 'jpeg' | 'tiff' | 'gif' | 'webp' | 'avif' | 'bmp' | 'ico' | 'cur' | 'qoi' | 'pnm' | 'hdr' | 'tga';
+export type ImageTypeName = 'png' | 'jpeg' | 'tiff' | 'gif' | 'webp' | 'avif' | 'jxl' | 'bmp' | 'ico' | 'cur' | 'qoi' | 'pnm' | 'hdr' | 'tga';
 
 const MAGIC_NUMBERS = {
     PNG: 0x89504e47,
@@ -50,6 +51,7 @@ export class ImageType {
         if (this.isGIF(view)) return 'gif';
         if (this.isWebP(view)) return 'webp';
         if (this.isAVIF(view)) return 'avif';
+        if (this.isJXL(view)) return 'jxl';
         if (this.isBMP(view)) return 'bmp';
         const icon = iconType(u8(view));
         if (icon) return icon;
@@ -96,6 +98,11 @@ export class ImageType {
     /** Whether the data starts like an AVIF (the avif or avis brand) */
     static isAVIF(data: BinaryData): boolean {
         return isAVIF(u8(dataView(data)));
+    }
+
+    /** Whether the data starts like a JPEG XL (a codestream or the container) */
+    static isJXL(data: BinaryData): boolean {
+        return isJXL(u8(dataView(data)));
     }
 
     /** Whether the data starts like a BMP */
