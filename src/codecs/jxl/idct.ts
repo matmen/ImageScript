@@ -10,7 +10,7 @@ const secants = (n: number): Float64Array => Float64Array.from({ length: n / 2 }
 const SEC8 = secants(8), SEC16 = secants(16), SEC32 = secants(32);
 
 // the inverse 16-point DCT of buf[o + k * step] in place (generated: dct's recursion, unrolled)
-export function idct16(buf: Float32Array, o: number, step: number): void {
+export function idct16(buf: Float32Array | Float64Array, o: number, step: number): void {
     const v0 = buf[o];
     const v1 = buf[o + 1 * step];
     const v2 = buf[o + 2 * step];
@@ -150,7 +150,7 @@ export function idct16(buf: Float32Array, o: number, step: number): void {
 }
 
 // the inverse 32-point DCT of buf[o + k * step] in place (generated: dct's recursion, unrolled)
-export function idct32(buf: Float32Array, o: number, step: number): void {
+export function idct32(buf: Float32Array | Float64Array, o: number, step: number): void {
     const v0 = buf[o];
     const v1 = buf[o + 1 * step];
     const v2 = buf[o + 2 * step];

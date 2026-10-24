@@ -51,7 +51,7 @@ for n in (16, 32):
     vals = [f'v{i}' for i in range(n)]
     out = idct(vals, n, f'SEC{n}')
     print(f'// the inverse {n}-point DCT of buf[o + k * step] in place (generated: dct\'s recursion, unrolled)')
-    print(f'export function idct{n}(buf: Float32Array, o: number, step: number): void {{')
+    print(f'export function idct{n}(buf: Float32Array | Float64Array, o: number, step: number): void {{')
     for i in range(n):
         print(f'    const v{i} = buf[o + {i} * step];' if i else '    const v0 = buf[o];')
     for l in lines: print(l)

@@ -62,6 +62,10 @@ export function dct(io: Float64Array, o: number, n: number, scratch: Float64Arra
         dct4(io, o, inverse);
         return;
     }
+    if (inverse && (n === 16 || n === 32)) {
+        (n === 16 ? idct16 : idct32)(io, o, 1);
+        return;
+    }
     const half = n / 2, sec = secHalf(n);
     if (!inverse) {
         for (let i = 0; i < half; i++) {

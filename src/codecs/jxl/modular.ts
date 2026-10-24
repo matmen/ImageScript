@@ -630,10 +630,14 @@ function decodeChannel(r: BitReader, dec: EntropyDecoder, globalTree: Tree, imag
     const clusters = dec.clusters;
     // what the tree needs
     let maxProp = -1, usesWP = false;
+    const uses = new Uint8Array(16);
     for (let i = 0; i < t.property.length; i++) {
         if (t.property[i] > maxProp) maxProp = t.property[i];
+        if (t.property[i] >= 0 && t.property[i] < 16) uses[t.property[i]] = 1;
         if (t.property[i] === 15 || (t.property[i] < 0 && t.predictor[i] === 6)) usesWP = true;
     }
+    // (only the properties the tree asks for are computed; 8 needs 9 of the pixel before)
+    const neighborProps = uses.subarray(4).some(u => u === 1), gradient = uses[8] === 1 || uses[9] === 1;
     if (t.property[0] < 0) {
         // a single leaf: no properties
         const pred = t.predictor[0], offset = t.offset[0], mult = t.multiplier[0], cluster = clusters[t.ctx[0]];
@@ -677,17 +681,21 @@ function decodeChannel(r: BitReader, dec: EntropyDecoder, globalTree: Tree, imag
             const leftleft = x > 1 ? data[i - 2] : left, toptop = y > 1 ? data[i - 2 * w] : top;
             const toprightright = x + 2 < w && y ? data[i - w + 2] : topright;
             props[3] = x;
-            props[4] = Math.abs(top);
-            props[5] = Math.abs(left);
-            props[6] = top;
-            props[7] = left;
-            props[8] = left - props[9];
-            props[9] = left + top - topleft;
-            props[10] = left - topleft;
-            props[11] = topleft - top;
-            props[12] = top - topright;
-            props[13] = top - toptop;
-            props[14] = left - leftleft;
+            if (neighborProps) {
+                props[4] = Math.abs(top);
+                props[5] = Math.abs(left);
+                props[6] = top;
+                props[7] = left;
+                if (gradient) {
+                    props[8] = left - props[9];
+                    props[9] = left + top - topleft;
+                }
+                props[10] = left - topleft;
+                props[11] = topleft - top;
+                props[12] = top - topright;
+                props[13] = top - toptop;
+                props[14] = left - leftleft;
+            }
             const wpPred = wp ? wp.predict(x, y, top, left, topright, topleft, toptop) : 0;
             if (wp) props[15] = wp.maxError;
             for (let k = 0; k < refs.length; k++) {

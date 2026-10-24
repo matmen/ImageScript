@@ -159,7 +159,7 @@ export function readDequantMatrices(r: BitReader, bitDepth: number, stream: numb
     const allDefault = r.bool();
     for (let i = 0; i < 17; i++) {
         if (allDefault) {
-            encodings.push(defaultEncoding(i));
+            encodings.push(DEFAULTS[i]);
             continue;
         }
         const mode = r.bits(3);
@@ -172,7 +172,7 @@ export function readDequantMatrices(r: BitReader, bitDepth: number, stream: numb
             return p;
         };
         switch (mode) {
-            case 0: encodings.push(defaultEncoding(i)); break;
+            case 0: encodings.push(DEFAULTS[i]); break;
             case 1: encodings.push({ mode: 'hornuss', params: fixed(3) }); break;
             case 2: encodings.push({ mode: 'dct2', params: fixed(6) }); break;
             case 3: encodings.push({ mode: 'dct4', params: fixed(2), dct: dctParams() }); break;
@@ -194,19 +194,29 @@ export function readDequantMatrices(r: BitReader, bitDepth: number, stream: numb
             default: throw new Error('JPEG XL: invalid dequantization matrix encoding');
         }
     }
-    const matrices = encodings.map((e, i) => {
-        const m = weights(e, i);
-        if (e.mode !== 'raw') for (const c of m) for (let k = 0; k < c.length; k++) c[k] = 1 / c[k];
-        for (const c of m) for (const v of c) if (!(v > 0 && v < 1e8)) throw new Error('JPEG XL: invalid dequantization matrix');
-        return m;
-    });
-    const transposed = matrices.map((m, i) => {
-        const [w, h] = MATRIX_SIZES[i];
-        return m.map(c => {
-            const t = new Float32Array(c.length);
-            for (let k = 0; k < c.length; k++) t[k] = c[(k % h) * w + Math.floor(k / h)];
-            return t;
-        });
+    const matrices: Float32Array[][] = [], transposed: Float32Array[][] = [];
+    encodings.forEach((e, i) => {
+        const [m, t] = e === DEFAULTS[i] ? defaultMatrices(i) : matrix(e, i);
+        matrices.push(m);
+        transposed.push(t);
     });
     return { matrices, transposed };
 }
+
+// the multipliers of an encoding, and transposed
+function matrix(e: Encoding, i: number): [Float32Array[], Float32Array[]] {
+    const m = weights(e, i);
+    if (e.mode !== 'raw') for (const c of m) for (let k = 0; k < c.length; k++) c[k] = 1 / c[k];
+    for (const c of m) for (const v of c) if (!(v > 0 && v < 1e8)) throw new Error('JPEG XL: invalid dequantization matrix');
+    const [w, h] = MATRIX_SIZES[i];
+    return [m, m.map(c => {
+        const t = new Float32Array(c.length);
+        for (let k = 0; k < c.length; k++) t[k] = c[(k % h) * w + Math.floor(k / h)];
+        return t;
+    })];
+}
+
+// (the default ones, computed once: every frame of most images uses them)
+const DEFAULTS = Array.from({ length: 17 }, (_, i) => defaultEncoding(i));
+const defaultCache: [Float32Array[], Float32Array[]][] = [];
+const defaultMatrices = (i: number): [Float32Array[], Float32Array[]] => defaultCache[i] ??= matrix(DEFAULTS[i], i);

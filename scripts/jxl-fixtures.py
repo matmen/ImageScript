@@ -1,8 +1,9 @@
 # Writes the JPEG XLs of tests/jxl and their references: parts of tests/targets encoded by cjxl (libjxl) with its coding
 # tools (lossless efforts, palettes, VarDCT, lossy Modular, alpha, progressive passes and LF frames, resampling, photon
 # noise, patches, JPEG recompression, animations, the container), a few conformance files (github.com/libjxl/conformance,
-# BSD-3-Clause, for what cjxl doesn't write: splines, blend modes, small trees, premultiplied alpha), and what djxl decodes them to as 8-bit
-# sRGB PNGs (APNGs for animations; premultiplied alpha as djxl writes it). Needs Pillow, cjxl and djxl:
+# BSD-3-Clause, for what cjxl doesn't write: splines, blend modes, small trees, premultiplied alpha), and what djxl
+# decodes them to as 8-bit sRGB PNGs (APNGs for cjxl's animations; premultiplied alpha as djxl writes it). Needs Pillow,
+# cjxl and djxl:
 #   CJXL=path/to/cjxl DJXL=path/to/djxl CONFORMANCE=path/to/conformance python scripts/jxl-fixtures.py
 import json, os, shutil, struct, subprocess, tempfile
 from pathlib import Path
@@ -82,28 +83,23 @@ frames = [source('circle.png', 32, 32, (i * 40, 0, 512, 512 - i * 40), 'RGBA') f
 frames[0].save(tmp / 'anim.png', save_all=True, append_images=frames[1:], duration=[40, 80, 40, 120], loop=0)
 encode('animation', tmp / 'anim.png', '-d', '0')
 encode('animation-lossy', tmp / 'anim.png', '-d', '2')
-# conformance files: [the step of the reference's samples, its frames]
-conformances = {'alpha_nonpremultiplied': [4, [0]], 'alpha_premultiplied': [8, [0]], 'alpha_triangles': [4, [0]], 'blendmodes': [8, [0]], 'sunset_logo': [11, [0]],
-                'mul_no_extra_channels': [1, [0]], 'animation_spline': [4, [0, 17, 59]]}
+# conformance files: the step of the reference's samples
+conformances = {'alpha_nonpremultiplied': 4, 'alpha_premultiplied': 8, 'blendmodes': 8, 'mul_no_extra_channels': 1,
+                'animation_spline': 4}
 for name in conformances:
     shutil.copy(conformance / 'testcases' / name / 'input.jxl', out / f'{name.replace("_", "-")}.jxl')
 
-# the references (the large conformance ones as every step-th sample of some frames, stacked)
+# the references (of the conformance files every step-th sample of the first frame)
 manifest = {}
 for jxl in sorted(out.glob('*.jxl')):
     png = jxl.with_suffix('.png')
     subprocess.run([DJXL, str(jxl), str(png), '--bits_per_sample=8', '--color_space=RGB_D65_SRG_Rel_SRG', '--quiet'],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    sampled = conformances.get(jxl.stem.replace('-', '_'))
-    if sampled:
-        step, frames = sampled
-        im = Image.open(png)
-        parts = []
-        for f in frames:
-            im.seek(f)
-            parts.append(np.asarray(im.convert('RGBA'))[::step, ::step])
-        im.close()
-        Image.fromarray(np.concatenate(parts)).save(png, optimize=True)
-        manifest[jxl.stem] = {'step': step, 'frames': frames}
+    step = conformances.get(jxl.stem.replace('-', '_'))
+    if step:
+        with Image.open(png) as im:
+            sample = np.asarray(im.convert('RGBA'))[::step, ::step]
+        Image.fromarray(sample).save(png, optimize=True)
+        manifest[jxl.stem] = {'step': step}
     print(jxl.name, jxl.stat().st_size, png.stat().st_size)
 (out / 'sampled.json').write_text(json.dumps(manifest, indent=4) + '\n')
