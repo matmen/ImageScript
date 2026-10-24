@@ -12,7 +12,7 @@ following projects, under their own licenses. Each derived file says so in its h
 | [font-rs](https://github.com/raphlinus/font-rs) by Raph Levien | `src/render/text.ts` (the `Rasterizer` class, also used for SVGs) | Apache-2.0 |
 | [RFC 9649](https://www.rfc-editor.org/rfc/rfc9649) (WebP Image Format) | `src/codecs/vp8l.ts` (lossless bitstream, short distance code table), `src/codecs/webp.ts` (container) | BSD-3-Clause (Revised BSD) |
 | [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386) (VP8 Data Format and Decoding Guide, with the libvpx reference decoder) | `src/codecs/vp8-tables.ts` (probability and quantizer tables), `src/codecs/vp8.ts` (decoding procedures) | BSD-3-Clause |
-| [libwebp](https://chromium.googlesource.com/webm/libwebp) | `src/codecs/vp8.ts` (YUV to RGB conversion, "fancy" chroma upsampling), `src/codecs/webp.ts` (animation frame blending) | BSD-3-Clause |
+| [libwebp](https://chromium.googlesource.com/webm/libwebp) | `src/codecs/vp8.ts` (YUV to RGB conversion, "fancy" chroma upsampling), `src/codecs/webp.ts` (animation frame blending), `src/codecs/vp8-enc.ts`, `src/codecs/vp8-enc-dsp.ts` (the lossy encoder: RGB to YUV conversion, analysis, segments, rate-distortion optimized mode decisions, quantization, token probabilities, bitstream, alpha filtering), `src/codecs/vp8-enc-tables.ts` (its tables, generated from libwebp by `scripts/vp8-enc-tables.py`) | BSD-3-Clause |
 | [dav1d](https://code.videolan.org/videolan/dav1d) by VideoLAN, the dav1d authors and Two Orioles | `src/codecs/av1/*` (the AV1 decoder: bitstream parsing, symbol decoding, prediction, inverse transforms, loop filters, film grain; the tables in `src/codecs/av1/data.ts`, generated from dav1d by `scripts/av1-tables.c`) | BSD-2-Clause |
 | [libavif](https://github.com/AOMediaCodec/libavif) by Joe Drago | `src/codecs/avif.ts` (YUV to RGB conversion with bilinear chroma upsampling, alpha range expansion and unpremultiplication) | BSD-2-Clause |
 | [FreeType](https://freetype.org) | `src/render/hinting.ts` (behavior and parts of the logic of the TrueType interpreter) | FreeType License |
@@ -88,7 +88,8 @@ one decode function per scan type). The `Rasterizer` class in `src/render/text.t
 
 The VP8 decoder follows the procedures of RFC 6386 and its reference decoder, its constant tables are extracted from
 the RFC. To decode exactly like libwebp, the YUV to RGB conversion, the chroma upsampling and the blending of animation
-frames reproduce libwebp's integer arithmetic.
+frames reproduce libwebp's integer arithmetic. The lossy encoder is ported from libwebp's (version 1.6.0, its default
+settings) and writes the same VP8 bitstreams as cwebp.
 
 ```
 RFC 6386 reference decoder: Copyright (c) 2010, 2011, Google Inc. All rights reserved.

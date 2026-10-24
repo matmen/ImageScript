@@ -61,14 +61,15 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   , [dominantColor](https://imagescript.matmen.dev/classes/Image.html#dominantcolor), ...)
 - Encoding images as [PNGs](https://imagescript.matmen.dev/classes/Image.html#encode) (smallest lossless color type)
   , [JPEGs](https://imagescript.matmen.dev/classes/Image.html#encodejpeg)
-  , lossless [WebPs](https://imagescript.matmen.dev/classes/Image.html#encodewebp)
+  , lossless and lossy [WebPs](https://imagescript.matmen.dev/classes/Image.html#encodewebp) (lossy ones byte for
+  byte like libwebp's cwebp)
   , [BMPs](https://imagescript.matmen.dev/classes/Image.html#encodebmp)
   , [QOIs](https://imagescript.matmen.dev/classes/Image.html#encodeqoi)
   , [Netpbm images](https://imagescript.matmen.dev/classes/Image.html#encodepnm) (PBM, PGM, PPM or PAM, whichever is
   smallest)
   and [TGAs](https://imagescript.matmen.dev/classes/Image.html#encodetga)
 - Encoding animations as [GIF](https://imagescript.matmen.dev/classes/Animation.html#encodegif),
-  [APNG](https://imagescript.matmen.dev/classes/Animation.html#encodeapng) and lossless
+  [APNG](https://imagescript.matmen.dev/classes/Animation.html#encodeapng) and lossless or lossy
   [WebP](https://imagescript.matmen.dev/classes/Animation.html#encodewebp), storing only what changes from frame to frame
 
 ---
@@ -93,8 +94,8 @@ const { Image } = require('imagescript');
 All coordinates are 0-based, `(0, 0)` is the top left pixel.
 
 A bigger example is the [README image generation](https://github.com/matmen/ImageScript/blob/master/tests/readme.js).
-Upgrading from 1.x? Version 3 has breaking changes (0-based coordinates, removed lossy WebP encoding, Node.js 22.13+, ...),
-see the [changelog](https://github.com/matmen/ImageScript/blob/master/CHANGELOG.md).
+Upgrading from 1.x? Version 3 has breaking changes (0-based coordinates, lossy WebP encoding as `encodeWebP({ quality })`,
+Node.js 22.13+, ...), see the [changelog](https://github.com/matmen/ImageScript/blob/master/CHANGELOG.md).
 
 [![Example](https://github.com/matmen/ImageScript/raw/master/tests/targets/readme.png)](https://github.com/matmen/ImageScript/blob/master/tests/readme.js)
 
@@ -114,7 +115,8 @@ The deflate/inflate implementation is derived from [fflate](https://github.com/1
 The JPEG codec is based in part on the work of the Independent JPEG Group (libjpeg) and on
 [pdf.js](https://github.com/mozilla/pdf.js), the glyph rasterizer is translated from
 [font-rs](https://github.com/raphlinus/font-rs). The WebP codecs follow [RFC 9649](https://www.rfc-editor.org/rfc/rfc9649) and [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386)
-and reproduce [libwebp](https://chromium.googlesource.com/webm/libwebp)'s color conversion, the TrueType hinting follows
+and reproduce [libwebp](https://chromium.googlesource.com/webm/libwebp)'s color conversion, the lossy WebP encoder is
+ported from libwebp's, the TrueType hinting follows
 [FreeType](https://freetype.org)'s interpreter (portions of this software are copyright © 2026 The FreeType Project),
 the text shaping is ported from [HarfBuzz](https://github.com/harfbuzz/harfbuzz) and uses data of the
 [Unicode Character Database](https://www.unicode.org/ucd/). The AV1 decoder is ported from

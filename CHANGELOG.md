@@ -25,6 +25,11 @@
   frames that use other frames (inter frames): image sequences only give their first frame, and of layered images
   whose shown layer is inter coded the highest intra coded layer is shown if it has the image's size (else they
   throw).
+- `Image.encodeWebP({ quality })` encodes lossy WebPs (VP8, with a losslessly compressed alpha plane if the image
+  isn't opaque): ported from libwebp's encoder with its default settings, the VP8 bitstream is byte for byte the one
+  cwebp writes for the same quality (0-100). `effort` (0-6, default 4) is cwebp's `-m`: 0-2 decide by distortion only
+  and are several times faster, 5-6 search harder for smaller files. Without a quality WebPs stay lossless.
+  `Animation.encodeWebP({ quality, effort })` encodes lossy frames the same way.
 - `DecodeOptions.toneMapping`: HDRs', PFMs' and HDR AVIFs' light can be brighter than (SDR) white. By default
   (`'reinhard'`) the brightest parts are compressed like Reinhard's extended tone mapping operator does, the brightest
   pixel becomes white (without the operator's automatic exposure, which turns night scenes grey); images no brighter

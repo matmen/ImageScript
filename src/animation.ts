@@ -42,7 +42,7 @@ export interface AnimationDecodeOptions {
     maxPixels?: number;
 }
 
-/** Options of {@link Animation.encodeWebP}, and those all animation encoders have */
+/** The options all animation encoders have */
 export interface AnimationEncodeOptions {
     /** Metadata to include, see {@link Metadata} */
     metadata?: Metadata;
@@ -52,6 +52,17 @@ export interface AnimationEncodeOptions {
      * frames without it, which also encodes faster when little changes. Default: `true`
      */
     optimize?: boolean;
+}
+
+/** Options of {@link Animation.encodeWebP} */
+export interface WebPAnimationEncodeOptions extends AnimationEncodeOptions {
+    /**
+     * Lossy frames (0-100, like libwebp's quality: 75 is its default), much smaller than lossless ones. Without it the
+     * frames are lossless
+     */
+    quality?: number;
+    /** How much effort lossy frames take (0-6), see {@link WebPEncodeOptions.effort}. Default: `4` */
+    effort?: number;
 }
 
 /** Options of {@link Animation.encodeGIF} */
@@ -270,17 +281,22 @@ export class Animation extends Array<Frame> {
     }
 
     /**
-     * Encodes the animation as lossless animated WebP. Each frame is stored as the area that changed since the frame
-     * before, identical frames are merged (unless the `optimize` option is false): the file shows exactly the same
-     * animation, but doesn't necessarily decode to the same frames
-     * @param options See {@link AnimationEncodeOptions}
+     * Encodes the animation as animated WebP, lossless or (with a quality) lossy. Each frame is stored as the area that
+     * changed since the frame before, identical frames are merged (unless the `optimize` option is false): the file
+     * shows the same animation, but doesn't necessarily decode to the same frames
+     * @param options See {@link WebPAnimationEncodeOptions}
      */
-    async encodeWebP({ metadata = {}, optimize = true }: AnimationEncodeOptions = {}): Promise<Uint8Array> {
+    async encodeWebP({ metadata = {}, optimize = true, quality, effort = 4 }: WebPAnimationEncodeOptions = {}): Promise<Uint8Array> {
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
+        if (quality !== undefined) {
+            const q = finite(quality, 'quality');
+            if (q < 0 || q > 100) throw new RangeError(`quality must be 0-100, not ${q}`);
+            if (!Number.isInteger(effort) || effort < 0 || effort > 6) throw new RangeError(`effort must be an integer 0-6, not ${effort}`);
+        }
 
         const frames = optimize ? this.__optimized__({ replace: true, even: true, alpha: 'frame' }) : this.__webpFrames__();
-        return webp.encodeAnimation(frames, this.width, this.height, toPlays(this.loopCount), exifData(resolveMetadata(metadata)));
+        return webp.encodeAnimation(frames, this.width, this.height, toPlays(this.loopCount), exifData(resolveMetadata(metadata)), quality, effort);
     }
 
     /**

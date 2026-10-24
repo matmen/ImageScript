@@ -100,7 +100,24 @@ export interface JPEGEncodeOptions {
     metadata?: Metadata;
 }
 
-/** Options of {@link Image.encodeWebP} and {@link Image.encodeTGA} */
+/** Options of {@link Image.encodeWebP} */
+export interface WebPEncodeOptions {
+    /**
+     * Lossy compression (0-100, like libwebp's quality: 75 is its default): the image is encoded like cwebp encodes it
+     * with its default settings, much smaller than lossless. Without it the image is encoded losslessly
+     */
+    quality?: number;
+    /**
+     * How much effort lossy compression takes (0-6, libwebp's method): higher is smaller but slower. 0-2 pick the
+     * predictions by how close they are, 3 and up also by how many bits they take, 5 and 6 also optimize the
+     * quantized values. Default: `4` (like cwebp)
+     */
+    effort?: number;
+    /** Metadata to include, see {@link Metadata} */
+    metadata?: Metadata;
+}
+
+/** Options of {@link Image.encodeTGA} */
 export interface EncodeOptions {
     /** Metadata to include, see {@link Metadata} */
     metadata?: Metadata;
@@ -2008,11 +2025,17 @@ export class Image {
     }
 
     /**
-     * Encodes the image as lossless WebP (usually 20-30% smaller than PNG, but slower to encode)
-     * @param options See {@link EncodeOptions}
+     * Encodes the image as WebP: lossless (usually 20-30% smaller than PNG, but slower to encode), or lossy with a
+     * quality
+     * @param options See {@link WebPEncodeOptions}
      */
-    async encodeWebP({ metadata = {} }: EncodeOptions = {}): Promise<Uint8Array> {
-        return webp.encode(this.__bytes__(), this.width, this.height, exifData(resolveMetadata(metadata)));
+    async encodeWebP({ quality, effort = 4, metadata = {} }: WebPEncodeOptions = {}): Promise<Uint8Array> {
+        const exif = exifData(resolveMetadata(metadata));
+        if (quality === undefined) return webp.encode(this.__bytes__(), this.width, this.height, exif);
+        const q = finite(quality, 'quality');
+        if (q < 0 || q > 100) throw new RangeError(`quality must be 0-100, not ${q}`);
+        if (!Number.isInteger(effort) || effort < 0 || effort > 6) throw new RangeError(`effort must be an integer 0-6, not ${effort}`);
+        return webp.encodeLossy(this.__bytes__(), this.width, this.height, q, exif, effort);
     }
 
     /**

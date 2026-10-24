@@ -8,12 +8,12 @@ import { view } from './util/mem.ts';
 import { ImageType } from './image-type.ts';
 
 export { Image } from './image.ts';
-export type { Color, ColorFunction, ResizeMode, SVGScaleMode, PNGMetadata, TextStyle, DecodeOptions, CompositeOptions, BlendMode, CropCircleOptions, DominantColorOptions, RotateOptions, ColorToAlphaOptions, ResizeOptions, AdjustOptions, SharpenOptions, PNGEncodeOptions, JPEGEncodeOptions, EncodeOptions, SVGOptions, TextOptions, RoundCornersOptions, FisheyeOptions, TrimOptions } from './image.ts';
+export type { Color, ColorFunction, ResizeMode, SVGScaleMode, PNGMetadata, TextStyle, DecodeOptions, CompositeOptions, BlendMode, CropCircleOptions, DominantColorOptions, RotateOptions, ColorToAlphaOptions, ResizeOptions, AdjustOptions, SharpenOptions, PNGEncodeOptions, JPEGEncodeOptions, WebPEncodeOptions, EncodeOptions, SVGOptions, TextOptions, RoundCornersOptions, FisheyeOptions, TrimOptions } from './image.ts';
 export { Frame } from './frame.ts';
 export type { FrameDisposalModeName, FrameDisposalModeId, FrameOptions } from './frame.ts';
 export { GIF } from './gif.ts';
 export { Animation } from './animation.ts';
-export type { AnimationOptions, AnimationDecodeOptions, AnimationEncodeOptions, GIFEncodeOptions, APNGEncodeOptions } from './animation.ts';
+export type { AnimationOptions, AnimationDecodeOptions, AnimationEncodeOptions, WebPAnimationEncodeOptions, GIFEncodeOptions, APNGEncodeOptions } from './animation.ts';
 export { TextLayout } from './text-layout.ts';
 export type { TextLayoutOptions, WrapStyle, HorizontalAlign, VerticalAlign } from './text-layout.ts';
 export { ImageType } from './image-type.ts';
