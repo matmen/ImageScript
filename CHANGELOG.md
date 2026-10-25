@@ -7,6 +7,8 @@
 - `Image.encodeAVIF()` and `Image.encodeJXL()` take `metadata` like the other encoders: author, description,
   copyright, creation time and software (by default ImageScript and its version) as Exif. In AVIFs it is an Exif item
   describing the image, JPEG XLs get the container (with an Exif box; the codestream stays what `cjxl -e 1` writes).
+  As the creation time is always written, JPEG XLs are now always in the container (about 250 bytes more), like
+  JPEGs and WebPs always have Exif; `metadata: { software: '' }` leaves out the software.
 
 ### Improvements
 
@@ -23,7 +25,7 @@
 
 ### Performance
 
-- Lossy WebP encoding with `effort` 3 to 6 (the default is 4) is about 25% faster: modes that can no longer beat the
+- Lossy WebP encoding with `effort` 3 to 6 is about 25% faster: modes that can no longer beat the
   best one are dropped before their distortion and rate are computed. The files stay byte for byte what cwebp writes.
 
 ## 3.5.0
