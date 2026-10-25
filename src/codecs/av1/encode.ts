@@ -72,7 +72,8 @@ const isDirectional = (mode: number): boolean => mode >= VERT_PRED && mode <= VE
 const smFlag = (mode: number): number => mode === SMOOTH_PRED || mode === SMOOTH_H_PRED || mode === SMOOTH_V_PRED ? ANGLE_SMOOTH_EDGE : 0;
 
 // the approximate bits of a quantized coefficient magnitude (with its sign)
-const coefBits = (q: number): number => q === 0 ? 0.6 : q === 1 ? 2.2 : q === 2 ? 3.4 : q < 15 ? 4.6 + Math.log2(q - 2) : 9 + 2 * Math.log2(q - 14);
+const ZERO_BITS = 0.6;
+const coefBits = (q: number): number => q === 0 ? ZERO_BITS : q === 1 ? 2.2 : q === 2 ? 3.4 : q < 15 ? 4.6 + Math.log2(q - 2) : 9 + 2 * Math.log2(q - 14);
 
 const SATD_BLOCK = new Int32Array(16);
 
@@ -727,27 +728,29 @@ class TileEncoder {
         const order = scan(tx), energy = pixelEnergy(tx), lambda = this.lambda;
         const keep = this.rdoKeep, drop = this.rdoDrop;
         void txtp;
-        let last = -1;
+        let last = -1, total = 0;
         for (let i = 0; i < n; i++) {
             const rc = order[i], step = (rc ? acq : dcq) / 2 ** dqShift, v = Math.abs(coefs[rc]) / step;
-            const e = energy * step * step;
-            let m = Math.floor(v + 0.5);
-            if (m) {
-                // (or the value below)
-                const dm = v - m, dl = v - m + 1;
-                if (e * dl * dl + lambda * coefBits(m - 1) < e * dm * dm + lambda * coefBits(m)) m--;
+            const e = energy * step * step, dropped = e * v * v;
+            drop[i] = dropped;
+            total += dropped;
+            // (below a half: zero)
+            if (v < 0.5) {
+                q[rc] = 0;
+                keep[i] = dropped + lambda * ZERO_BITS;
+                continue;
             }
+            let m = Math.floor(v + 0.5);
+            // (or the value below)
+            const dm = v - m, dl = v - m + 1;
+            if (e * dl * dl + lambda * coefBits(m - 1) < e * dm * dm + lambda * coefBits(m)) m--;
             q[rc] = coefs[rc] < 0 ? -m : m;
-            // the costs of position i with its value and dropped (zero)
             keep[i] = e * (v - m) * (v - m) + lambda * coefBits(m);
-            drop[i] = e * v * v;
             if (m) last = i;
         }
         if (last < 0) return -1;
         // the end of block: the costs up to each nonzero position, the rest dropped
-        let best = 0, bestEob = -1, prefix = 0;
-        for (let i = 0; i < n; i++) best += drop[i];
-        best += lambda;
+        let best = total + lambda, bestEob = -1, prefix = 0;
         let rest = best - lambda;
         for (let i = 0; i <= last; i++) {
             prefix += keep[i];
