@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.5.1
+
+### Improvements
+
+- AVIF encoding with `effort: 2` also chooses smaller transforms within blocks (transform depth): files about 1% smaller
+  (up to 4% for graphics), encoding about 10% slower.
+
 ## 3.5.0
 
 ### Features

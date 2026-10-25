@@ -30,7 +30,7 @@ import { paletteColors, colorRanks, colorIndexBits } from './palette.ts';
 const ADST_DCT = 1, DCT_ADST = 2, ADST_ADST = 3;
 const bdim = (bs: number, i: number): number => BLOCK_DIMENSIONS[bs * 4 + i];
 const tdim = (tx: number, i: number): number => TXFM_DIMENSIONS[tx * 8 + i];
-const W = 0, H = 1, LW = 2, LH = 3, MIN = 4, MAX = 5, CTX = 7;
+const W = 0, H = 1, LW = 2, LH = 3, MIN = 4, MAX = 5, SUB = 6, CTX = 7;
 
 /** An image to encode: 8-bit planes (Y, and U and V of the layout's size), the layout (0 monochrome, 1 4:2:0, 3 4:4:4) */
 export interface AV1Image {
@@ -120,6 +120,8 @@ class TileEncoder {
     private aPalSz: Uint8Array; private lPalSz = new Uint8Array(32);
     private aPalSzUv: Uint8Array; private lPalSzUv = new Uint8Array(32);
     private aPal: Uint16Array; private lPal = new Uint16Array(32 * 24);
+    // (the transform sizes, while writing)
+    private aTxIntra: Int8Array; private lTxIntra = new Int8Array(32);
 
     private cf = new Int32Array(32 * 32);
     private coefs = new Float64Array(32 * 32);
@@ -154,6 +156,7 @@ class TileEncoder {
         this.aPalSz = new Uint8Array(n);
         this.aPalSzUv = new Uint8Array(n);
         this.aPal = new Uint16Array(n * 24);
+        this.aTxIntra = new Int8Array(n);
         this.cdefChoice = new Int8Array(f.cdefIdx.length);
         this.lossless = this.hdr.allLossless;
         const q = this.hdr.quant;
@@ -173,6 +176,7 @@ class TileEncoder {
         this.aCcoef[1].fill(0x40);
         this.aPalSz.fill(0);
         this.aPalSzUv.fill(0);
+        this.aTxIntra.fill(-1);
     }
 
     private resetLeft(): void {
@@ -185,6 +189,7 @@ class TileEncoder {
         this.lCcoef[1].fill(0x40);
         this.lPalSz.fill(0);
         this.lPalSzUv.fill(0);
+        this.lTxIntra.fill(-1);
     }
 
     // the bounds of a tile (in 4 pixel units)
@@ -393,6 +398,28 @@ class TileEncoder {
         b.yMode = bestMode.mode;
         b.yAngle = bestMode.angle;
         if (kept) this.restorePlane(0, bs, kept);
+        // the transform depth (effort 2): smaller transforms, each predicted from the reconstruction of the previous ones
+        // (the depth's symbol: about 1 bit for none, 3 for the others)
+        if (this.hdr.txMode === 2 && tdim(b.tx, MAX) > TX_4X4) {
+            const modeBits = b.yMode === DC_PRED ? 2 : 4.5, maxDepth = Math.min(tdim(b.tx, MAX), 2);
+            let keptDepth: Uint16Array | null = null, bestDepthCost = best + lambda, bestTxSize = b.tx;
+            for (let depth = 1, tx = b.tx; depth <= maxDepth; depth++) {
+                tx = tdim(tx, SUB);
+                if (!keptDepth) keptDepth = this.savePlane(0, bs);
+                b.tx = tx;
+                const d = this.codeLuma(bs, edgeFlags, b);
+                const cost = d + lambda * (this.bits + modeBits + 2 + depth);
+                if (cost < bestDepthCost) {
+                    bestDepthCost = best = cost;
+                    dist = d;
+                    bits = this.bits + 1;
+                    coded = this.coded;
+                    bestTxSize = tx;
+                    if (depth < maxDepth) keptDepth = this.savePlane(0, bs);
+                } else if (depth === maxDepth && keptDepth) this.restorePlane(0, bs, keptDepth);
+            }
+            b.tx = bestTxSize;
+        }
         // the transform type (signaled up to 16x16; of the 2D ones): ADST combinations, identity
         if (tdim(b.tx, MAX) <= TX_16X16 && this.params.effort && coded && !this.lossless) {
             // (the type's symbol: about 1 bit for DCT, 2.5 for the others)
@@ -1089,6 +1116,14 @@ class TileEncoder {
         const w4 = Math.min(bw4, f.bw - bx), h4 = Math.min(bh4, f.bh - by);
         if (b.palSz[0]) this.writeColorIndices(b.palIdx as Uint8Array, b.palSz[0], 0, w4 * 4, h4 * 4, bw4 * 4);
         if (hasChroma && b.palSz[1]) this.writeColorIndices(b.palIdxUv as Uint8Array, b.palSz[1], 1, (w4 + ssx >> ssx) * 4, (h4 + ssy >> ssy) * 4, cbw4 * 4);
+        // the transform depth
+        const maxTx = MAX_TXFM_SIZE_FOR_BS[bs * 4];
+        if (this.hdr.txMode === 2 && tdim(maxTx, MAX) > TX_4X4) {
+            const tctx = (this.lTxIntra[by4] >= tdim(maxTx, LH) ? 1 : 0) + (this.aTxIntra[bx4] >= tdim(maxTx, LW) ? 1 : 0);
+            let depth = 0;
+            for (let tx = maxTx; tx !== b.tx; tx = tdim(tx, SUB)) depth++;
+            w.symbol(cdf, CDF.txSize + ((tdim(maxTx, MAX) - 1) * 3 + tctx) * 4, Math.min(tdim(maxTx, MAX), 2), depth);
+        }
 
         this.codeLuma(bs, edgeFlags, b);
         if (hasChroma) this.codeChroma(bs, edgeFlags, b);
@@ -1098,6 +1133,7 @@ class TileEncoder {
         this.aMode.fill(b.yMode, bx4, bx4 + aw); this.lMode.fill(b.yMode, by4, by4 + lh);
         this.aSkip.fill(b.skip, bx4, bx4 + aw); this.lSkip.fill(b.skip, by4, by4 + lh);
         this.aPalSz.fill(b.palSz[0], bx4, bx4 + aw); this.lPalSz.fill(b.palSz[0], by4, by4 + lh);
+        this.aTxIntra.fill(tdim(b.tx, LW), bx4, bx4 + aw); this.lTxIntra.fill(tdim(b.tx, LH), by4, by4 + lh);
         // (luma coordinates for the chroma palette size, like libaom)
         this.aPalSzUv.fill(hasChroma ? b.palSz[1] : 0, bx4, bx4 + aw); this.lPalSzUv.fill(hasChroma ? b.palSz[1] : 0, by4, by4 + lh);
         for (let pl = 0; pl < 3; pl++) {
@@ -1406,7 +1442,7 @@ export function encodeAV1(image: AV1Image, params: AV1Params): Uint8Array {
         loopFilter: { levelY: [0, 0], levelU: 0, levelV: 0, sharpness: 0, modeRefDeltaEnabled: false, refDeltas: [1, 0, 0, 0, -1, 0, -1, -1], modeDeltas: [0, 0] },
         cdef: { damping: 3, bits: 0, yStrengths: [0], uvStrengths: [0] },
         restoration: { types: [RESTORATION_NONE, RESTORATION_NONE, RESTORATION_NONE], unitSizeLog2: [8, 8] },
-        txMode: qidx ? 1 : 0, reducedTxSet: false, filmGrain: null
+        txMode: qidx ? params.effort > 1 ? 2 : 1 : 0, reducedTxSet: false, filmGrain: null
     };
     const f = new Frame(seq, hdr);
     // the source in the frame's layout, the edges repeated up to the 8 pixel aligned size
