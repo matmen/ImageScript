@@ -804,21 +804,28 @@ export function sse16(a: Uint8Array, ao: number, b: Uint8Array, bo: number, h: n
     return count;
 }
 
-/** The weighted sum of the absolute Hadamard transform coefficients of a 4x4 block */
+/** The weighted sum of the absolute Hadamard transform coefficients of a 4x4 block (rows, then columns; unrolled) */
 export function tTransform(input: Uint8Array, i: number, w: ArrayLike<number>): number {
-    let sum = 0;
-    for (let k = 0; k < 4; k++, i += BPS) {
-        const a0 = input[i] + input[i + 2], a1 = input[i + 1] + input[i + 3], a2 = input[i + 1] - input[i + 3], a3 = input[i] - input[i + 2];
-        ftmp[k * 4] = a0 + a1;
-        ftmp[k * 4 + 1] = a3 + a2;
-        ftmp[k * 4 + 2] = a3 - a2;
-        ftmp[k * 4 + 3] = a0 - a1;
-    }
-    for (let k = 0; k < 4; k++) {
-        const a0 = ftmp[k] + ftmp[8 + k], a1 = ftmp[4 + k] + ftmp[12 + k], a2 = ftmp[4 + k] - ftmp[12 + k], a3 = ftmp[k] - ftmp[8 + k];
-        sum += w[k] * Math.abs(a0 + a1) + w[k + 4] * Math.abs(a3 + a2) + w[k + 8] * Math.abs(a3 - a2) + w[k + 12] * Math.abs(a0 - a1);
-    }
-    return sum;
+    const r00 = input[i], r01 = input[i + 1], r02 = input[i + 2], r03 = input[i + 3];
+    const a00 = r00 + r02, a01 = r01 + r03, a02 = r01 - r03, a03 = r00 - r02;
+    const h00 = a00 + a01, h01 = a03 + a02, h02 = a03 - a02, h03 = a00 - a01;
+    const r10 = input[i + 1 * BPS], r11 = input[i + 1 * BPS + 1], r12 = input[i + 1 * BPS + 2], r13 = input[i + 1 * BPS + 3];
+    const a10 = r10 + r12, a11 = r11 + r13, a12 = r11 - r13, a13 = r10 - r12;
+    const h10 = a10 + a11, h11 = a13 + a12, h12 = a13 - a12, h13 = a10 - a11;
+    const r20 = input[i + 2 * BPS], r21 = input[i + 2 * BPS + 1], r22 = input[i + 2 * BPS + 2], r23 = input[i + 2 * BPS + 3];
+    const a20 = r20 + r22, a21 = r21 + r23, a22 = r21 - r23, a23 = r20 - r22;
+    const h20 = a20 + a21, h21 = a23 + a22, h22 = a23 - a22, h23 = a20 - a21;
+    const r30 = input[i + 3 * BPS], r31 = input[i + 3 * BPS + 1], r32 = input[i + 3 * BPS + 2], r33 = input[i + 3 * BPS + 3];
+    const a30 = r30 + r32, a31 = r31 + r33, a32 = r31 - r33, a33 = r30 - r32;
+    const h30 = a30 + a31, h31 = a33 + a32, h32 = a33 - a32, h33 = a30 - a31;
+    const b00 = h00 + h20, b01 = h10 + h30, b02 = h10 - h30, b03 = h00 - h20;
+    const b10 = h01 + h21, b11 = h11 + h31, b12 = h11 - h31, b13 = h01 - h21;
+    const b20 = h02 + h22, b21 = h12 + h32, b22 = h12 - h32, b23 = h02 - h22;
+    const b30 = h03 + h23, b31 = h13 + h33, b32 = h13 - h33, b33 = h03 - h23;
+    return w[0] * Math.abs(b00 + b01) + w[4] * Math.abs(b03 + b02) + w[8] * Math.abs(b03 - b02) + w[12] * Math.abs(b00 - b01) +
+        w[1] * Math.abs(b10 + b11) + w[5] * Math.abs(b13 + b12) + w[9] * Math.abs(b13 - b12) + w[13] * Math.abs(b10 - b11) +
+        w[2] * Math.abs(b20 + b21) + w[6] * Math.abs(b23 + b22) + w[10] * Math.abs(b23 - b22) + w[14] * Math.abs(b20 - b21) +
+        w[3] * Math.abs(b30 + b31) + w[7] * Math.abs(b33 + b32) + w[11] * Math.abs(b33 - b32) + w[15] * Math.abs(b30 - b31);
 }
 
 /**

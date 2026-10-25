@@ -1217,7 +1217,17 @@ function reconstructIntra4(it: Iterator, levels: Int16Array, lo: number, src: Ui
     fTransform(src, s, it.yuvP, r, tmpLevels, 0);
     const nz = it.doTrellis ? trellisQuantize(it.enc, tmpLevels, 0, levels, lo, it.topNz[it.i4 & 3] + it.leftNz[it.i4 >> 2], TYPE_I4_AC, dqm.y1, dqm.lambdaTrellisI4)
         : quantizeBlock(tmpLevels, 0, levels, lo, dqm.y1) ? 1 : 0;
-    iTransform(it.yuvP, r, tmpLevels, 0, out, o, false);
+    // (without levels, the block is the prediction)
+    if (nz) iTransform(it.yuvP, r, tmpLevels, 0, out, o, false);
+    else {
+        const p = it.yuvP;
+        for (let k = 0; k < 4 * BPS; k += BPS) {
+            out[o + k] = p[r + k];
+            out[o + k + 1] = p[r + k + 1];
+            out[o + k + 2] = p[r + k + 2];
+            out[o + k + 3] = p[r + k + 3];
+        }
+    }
     return nz;
 }
 
@@ -1292,17 +1302,17 @@ function pickBestIntra16(it: Iterator, rd: ModeScore): void {
         rdCur.modeI16 = mode;
         rdCur.nz = reconstructIntra16(it, rdCur, dst, Y_OFF, mode);
         rdCur.D = sse16(it.yuvIn, Y_OFF, dst, Y_OFF, 16);
-        rdCur.SD = tlambda ? (tlambda * tDisto16x16(sourceSpectra, dst, Y_OFF, WEIGHT_Y) + 128) >> 8 : 0;
         rdCur.H = FIXED_COSTS_I16[mode];
+        // a very flat block: emphasis on low distortion
+        if (flat) flat = isFlat(rdCur.yAcLevels, 0, 16, FLATNESS_LIMIT_I16);
+        if (flat) rdCur.D *= 2;
+        // (modes that can't beat the best without texture distortion and rate are skipped before them)
+        rdCur.SD = rdCur.R = 0;
+        rdCur.setRDScore(lambda);
+        if (mode > 0 && rdCur.score >= rdBest.score) continue;
+        rdCur.SD = tlambda ? (tlambda * tDisto16x16(sourceSpectra, dst, Y_OFF, WEIGHT_Y) + 128) >> 8 : 0;
+        if (flat) rdCur.SD *= 2;
         rdCur.R = costLuma16(it, rdCur);
-        if (flat) {
-            // a very flat block: emphasis on low distortion
-            flat = isFlat(rdCur.yAcLevels, 0, 16, FLATNESS_LIMIT_I16);
-            if (flat) {
-                rdCur.D *= 2;
-                rdCur.SD *= 2;
-            }
-        }
         rdCur.setRDScore(lambda);
         if (mode === 0 || rdCur.score < rdBest.score) {
             const swap = rdCur;
@@ -1353,12 +1363,18 @@ function pickBestIntra4(it: Iterator, rd: ModeScore): boolean {
         const spectrum = tlambda ? tTransform(it.yuvIn, src, WEIGHT_Y) : 0;
         for (let mode = 0; mode < 10; mode++) {
             const r = rdTmpI4;
+            // (the score only grows from the header bits on: modes that can't beat the best are skipped as early as
+            // possible, which doesn't change the choice)
+            r.H = costs[modeCosts + mode];
+            if (bestMode >= 0 && r.H * lambda >= rdI4.score) continue;
             r.nz = reconstructIntra4(it, tmpLevels2, 0, it.yuvIn, src, tmpDst, td, mode) << it.i4;
             r.D = sse4x4(it.yuvIn, src, tmpDst, td);
-            r.SD = tlambda ? (tlambda * tDisto4x4(spectrum, tmpDst, td, WEIGHT_Y) + 128) >> 8 : 0;
-            r.H = costs[modeCosts + mode];
             // flat areas shouldn't be predicted by complex modes
             r.R = mode > 0 && isFlat(tmpLevels2, 0, 1, FLATNESS_LIMIT_I4) ? FLATNESS_PENALTY : 0;
+            r.SD = 0;
+            r.setRDScore(lambda);
+            if (bestMode >= 0 && r.score >= rdI4.score) continue;
+            r.SD = tlambda ? (tlambda * tDisto4x4(spectrum, tmpDst, td, WEIGHT_Y) + 128) >> 8 : 0;
             r.setRDScore(lambda);
             if (bestMode >= 0 && r.score >= rdI4.score) continue;
             r.R += costLuma4(it, tmpLevels2);
@@ -1412,8 +1428,11 @@ function pickBestUv(it: Iterator, rd: ModeScore): void {
         r.D = sse16(it.yuvIn, U_OFF, tmpDst, U_OFF, 8);
         r.SD = 0;
         r.H = FIXED_COSTS_UV[mode];
-        r.R = costUv(it, r);
-        if (mode > 0 && isFlat(r.uvLevels, 0, 8, FLATNESS_LIMIT_UV)) r.R += FLATNESS_PENALTY * 8;
+        r.R = mode > 0 && isFlat(r.uvLevels, 0, 8, FLATNESS_LIMIT_UV) ? FLATNESS_PENALTY * 8 : 0;
+        // (modes that can't beat the best without their rate are skipped before it)
+        r.setRDScore(lambda);
+        if (mode > 0 && r.score >= rdBestUv.score) continue;
+        r.R += costUv(it, r);
         r.setRDScore(lambda);
         if (mode === 0 || r.score < rdBestUv.score) {
             rdBestUv.copyScore(r);

@@ -15,6 +15,11 @@
 - AVIF encoding with `effort: 2` also chooses smaller transforms within blocks (transform depth): files about 1% smaller
   (up to 4% for graphics), encoding about 10% slower.
 
+### Performance
+
+- Lossy WebP encoding with `effort` 3 to 6 (the default is 4) is about 25% faster: modes that can no longer beat the
+  best one are dropped before their distortion and rate are computed. The files stay byte for byte what cwebp writes.
+
 ## 3.5.0
 
 ### Features
