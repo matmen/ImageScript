@@ -75,4 +75,36 @@ const codestream = jxl => {
         const back = await Image.decode(await small.encodeJXL());
         if (back.width !== w || back.height !== h || back.getPixelAt(0, 0) !== color) panic(`${w}x${h}: not lossless`);
     }
+
+    // lossy: better and larger with the quality, alpha lossless (in the global stream for one group, else in the
+    // groups'), sizes of several groups and partial blocks; 100 is lossless
+    const psnr = (a, b) => {
+        let se = 0, n = 0;
+        for (let i = 0; i < a.bitmap.length; i++) if ((i & 3) !== 3) {
+            se += (a.bitmap[i] - b.bitmap[i]) ** 2;
+            n++;
+        }
+        return 10 * Math.log10(255 * 255 * n / se);
+    };
+    const photo = (await Image.decode(await fs.readFile('./tests/targets/external.png'))).resize(300, 211);
+    let last = 0, lastPsnr = 0;
+    for (const quality of [30, 75, 95]) {
+        const jxl = await photo.encodeJXL({quality});
+        const p = psnr(photo, await Image.decode(jxl));
+        if (jxl.length <= last || p <= lastPsnr) panic(`quality ${quality}: not larger and better (${jxl.length} B, ${p.toFixed(2)} dB)`);
+        if (p < {30: 29, 75: 32, 95: 38.5}[quality]) panic(`quality ${quality}: ${p.toFixed(2)} dB`);
+        last = jxl.length;
+        lastPsnr = p;
+    }
+    for (const [w, h] of [[300, 211], [100, 60]]) {
+        const image = photo.clone().crop(0, 0, w, h);
+        for (let i = 3; i < image.bitmap.length; i += 4) image.bitmap[i] = (i >> 2) % 251;
+        const back = await Image.decode(await image.encodeJXL({quality: 90}));
+        for (let i = 3; i < image.bitmap.length; i += 4) if (back.bitmap[i] !== image.bitmap[i]) panic(`${w}x${h}: lossy alpha`);
+    }
+    const pixel = await Image.decode(await new Image(1, 1).fill(0x336699ff).encodeJXL({quality: 90}));
+    if (pixel.width !== 1 || Math.abs((pixel.getPixelAt(0, 0) >>> 24) - 0x33) > 2) panic('1x1 lossy');
+    const lossless = await Image.decode(await photo.encodeJXL({quality: 100}));
+    if (Buffer.compare(Buffer.from(lossless.bitmap), Buffer.from(photo.bitmap))) panic('quality 100 isn\'t lossless');
+    for (const quality of [-1, 101, NaN]) if (!await photo.encodeJXL({quality}).then(() => false, e => e instanceof RangeError)) panic(`quality ${quality} should throw`);
 })();

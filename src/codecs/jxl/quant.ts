@@ -220,3 +220,6 @@ function matrix(e: Encoding, i: number): [Float32Array[], Float32Array[]] {
 const DEFAULTS = Array.from({ length: 17 }, (_, i) => defaultEncoding(i));
 const defaultCache: [Float32Array[], Float32Array[]][] = [];
 const defaultMatrices = (i: number): [Float32Array[], Float32Array[]] => defaultCache[i] ??= matrix(DEFAULTS[i], i);
+
+/** The default dequantization multipliers of a parameter set (per channel, raster order), and transposed */
+export const defaultDequant = (i: number): [Float32Array[], Float32Array[]] => defaultMatrices(i);

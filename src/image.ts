@@ -119,7 +119,7 @@ export interface WebPEncodeOptions {
     metadata?: Metadata;
 }
 
-/** Options of {@link Image.encodeTGA} and {@link Image.encodeJXL} */
+/** Options of {@link Image.encodeTGA} */
 export interface EncodeOptions {
     /** Metadata to include, see {@link Metadata} */
     metadata?: Metadata;
@@ -173,6 +173,17 @@ export interface DecodeOptions {
      * brighter than white. Default: `'reinhard'`
      */
     toneMapping?: ToneMapping;
+}
+
+/** Options of {@link Image.encodeJXL} */
+export interface JXLEncodeOptions {
+    /**
+     * Lossy compression (0-100, like cjxl's `-q`: 90 is visually lossless, 100 lossless): higher is better and larger.
+     * Without it the image is encoded losslessly
+     */
+    quality?: number;
+    /** Metadata to include, see {@link Metadata} */
+    metadata?: Metadata;
 }
 
 /** Options of {@link Image.encodeAVIF} */
@@ -2088,14 +2099,22 @@ export class Image {
     }
 
     /**
-     * Encodes the image as lossless JPEG XL, the codestream byte for byte like libjxl's `cjxl -e 1` on CPUs with AVX2
-     * or NEON (its fast lossless mode: the gradient predictor, a palette if the image has at most 511 colors besides
-     * black, else YCoCg); greyscale if the image is, with alpha if it has transparency. The codestream is in the
-     * container, with the metadata as Exif
-     * @param options See {@link EncodeOptions}
+     * Encodes the image as JPEG XL: losslessly (the default), the codestream byte for byte like libjxl's `cjxl -e 1` on
+     * CPUs with AVX2 or NEON (its fast lossless mode: the gradient predictor, a palette if the image has at most 511
+     * colors besides black, else YCoCg; greyscale if the image is), or lossy with a quality (like `cjxl -q`, about as
+     * small as `cjxl -e 3`: XYB, 8x8 DCTs, the edge preserving filter). Alpha (if the image has transparency) is
+     * lossless either way. The codestream is in the container, with the metadata as Exif
+     * @param options See {@link JXLEncodeOptions}
      */
-    async encodeJXL({ metadata = {} }: EncodeOptions = {}): Promise<Uint8Array> {
-        return jxl.encode(this.__bytes__(), this.width, this.height, exifData(resolveMetadata(metadata)));
+    async encodeJXL({ quality, metadata = {} }: JXLEncodeOptions = {}): Promise<Uint8Array> {
+        let distance = 0;
+        if (quality !== undefined) {
+            const q = finite(quality, 'quality');
+            if (q < 0 || q > 100) throw new RangeError(`quality must be 0-100, not ${q}`);
+            // (cjxl's distance of a quality)
+            distance = q >= 100 ? 0 : q >= 30 ? 0.1 + (100 - q) * 0.09 : 53 / 3000 * q * q - 23 / 20 * q + 25;
+        }
+        return jxl.encode(this.__bytes__(), this.width, this.height, exifData(resolveMetadata(metadata)), distance);
     }
 
     /**

@@ -4,57 +4,8 @@
  * residuals as LZ77 copies; with libjxl's image header (lib/jxl/headers.cc, fields.cc). Copyright (c) the JPEG XL
  * Project Authors, BSD-3-Clause License (see THIRD_PARTY_NOTICES.md)
  */
-
-// ---- bits
-
-/** Bits in LSB first order, growing as needed */
-class BitWriter {
-    data = new Uint8Array(256);
-    length = 0;
-    private buf = 0;
-    /** the bits in buf (less than 8 between writes) */
-    bits = 0;
-
-    /** writes the low count (up to 32) bits of v */
-    write(count: number, v: number): void {
-        if (count > 24) {
-            this.write(16, v & 0xffff);
-            this.write(count - 16, Math.floor(v / 65536));
-            return;
-        }
-        if (this.length + 4 > this.data.length) {
-            const data = new Uint8Array(this.data.length * 2);
-            data.set(this.data);
-            this.data = data;
-        }
-        this.buf |= v << this.bits;
-        this.bits += count;
-        while (this.bits >= 8) {
-            this.data[this.length++] = this.buf & 0xff;
-            this.buf >>>= 8;
-            this.bits -= 8;
-        }
-    }
-
-    zeroPadToByte(): void {
-        if (this.bits) this.write(8 - this.bits, 0);
-    }
-
-    /** the size in bits */
-    get size(): number {
-        return this.length * 8 + this.bits;
-    }
-
-    /** appends another writer's bits */
-    append(w: BitWriter): void {
-        for (let i = 0; i < w.length; i++) this.write(8, w.data[i]);
-        if (w.bits) this.write(w.bits, w.buf);
-    }
-
-    bytes(): Uint8Array {
-        return this.data.subarray(0, this.length);
-    }
-}
+import { BitWriter } from './bit-writer.ts';
+import { imageHeader } from './headers-enc.ts';
 
 // ---- prefix codes
 
@@ -742,68 +693,6 @@ export function encode(px: Uint8Array, width: number, height: number, numChans: 
 }
 
 // ---- headers
-
-// the selector and bits of a U32 field of BitsOffset distributions (the one with the fewest bits)
-function u32(w: BitWriter, value: number, dists: [number, number][]): void {
-    for (let s = 0; s < dists.length; s++) {
-        const [bits, offset] = dists[s];
-        if (value >= offset && value - offset < 2 ** bits) {
-            w.write(2, s);
-            w.write(bits, value - offset);
-            return;
-        }
-    }
-    throw new RangeError('JPEG XL: dimensions out of range');
-}
-
-// libjxl's fixed aspect ratios of the size header (the width from the height)
-const RATIOS: [number, number][] = [[1, 1], [12, 10], [4, 3], [3, 2], [16, 9], [5, 4], [2, 1]];
-
-// the signature, the size, the image metadata: 8-bit, alpha if there is, not XYB, sRGB (grey with 1-2 channels)
-function imageHeader(w: BitWriter, width: number, height: number, numChans: number): void {
-    w.write(16, 0x0aff);
-    let ratio = 0;
-    for (let r = 1; r < 8 && !ratio; r++) if (width === Math.floor(height * RATIOS[r - 1][0] / RATIOS[r - 1][1])) ratio = r;
-    const small = height <= 256 && height % 8 === 0 && (ratio !== 0 || (width <= 256 && width % 8 === 0));
-    const dists: [number, number][] = [[9, 1], [13, 1], [18, 1], [30, 1]];
-    w.write(1, +small);
-    if (small) w.write(5, height / 8 - 1);
-    else u32(w, height, dists);
-    w.write(3, ratio);
-    if (!ratio) {
-        if (small) w.write(5, width / 8 - 1);
-        else u32(w, width, dists);
-    }
-    // not all default, no extra fields, integers of 8 bits, a 16-bit buffer suffices
-    w.write(1, 0);
-    w.write(1, 0);
-    w.write(1, 0);
-    w.write(2, 0b00);
-    w.write(1, 1);
-    if (numChans === 2 || numChans === 4) {
-        // an extra channel: 8-bit alpha
-        w.write(2, 0b01);
-        w.write(1, 1);
-    } else w.write(2, 0b00);
-    // not XYB
-    w.write(1, 0);
-    if (numChans > 2) w.write(1, 1);
-    else {
-        // grey, D65, the sRGB transfer function, relative intent
-        w.write(1, 0);
-        w.write(1, 0);
-        w.write(2, 1);
-        w.write(2, 1);
-        w.write(1, 0);
-        w.write(2, 0b10);
-        w.write(4, 11);
-        w.write(2, 1);
-    }
-    // no extensions, default transform data
-    w.write(2, 0b00);
-    w.write(1, 1);
-    w.zeroPadToByte();
-}
 
 // a regular modular frame: one pass, no filters, replacing, the last one
 function frameHeader(w: BitWriter, alpha: boolean): void {

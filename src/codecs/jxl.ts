@@ -1,7 +1,8 @@
 /*!
  * JPEG XL (ISO/IEC 18181): bare codestreams and the container (ISO/IEC 18181-2: jxlc, jxlp boxes), the image header,
  * the frames up to the first one shown (with its orientation); see ./jxl/ for the decoder, ported from jxl-oxide and
- * libjxl (see THIRD_PARTY_NOTICES.md). Encoded images with Exif get the container (signature, ftyp, Exif, jxlc boxes)
+ * libjxl (see THIRD_PARTY_NOTICES.md); the encoders' codestreams, with Exif in the container (signature, ftyp, Exif, jxlc
+ * boxes)
  */
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { BitReader } from './jxl/bits.ts';
@@ -11,6 +12,7 @@ import { decodeFrame, DecoderState } from './jxl/frame.ts';
 import { ColorOutput } from './jxl/color.ts';
 import { ToneMapping } from './hdr.ts';
 import { encodeRGBA } from './jxl/fast-lossless.ts';
+import { encodeVarDCT } from './jxl/vardct-enc.ts';
 import { concat } from '../util/mem.ts';
 
 const CONTAINER = [0, 0, 0, 12, 0x4a, 0x58, 0x4c, 0x20, 0x0d, 0x0a, 0x87, 0x0a];
@@ -21,9 +23,12 @@ export function isJXL(d: Uint8Array): boolean {
     return d.length >= 12 && CONTAINER.every((v, i) => d[i] === v);
 }
 
-/** Encodes RGBA pixels as a lossless JPEG XL: the codestream, in the container if there is Exif data (a TIFF header and IFDs) */
-export function encode(rgba: Uint8Array, width: number, height: number, exif?: Uint8Array): Uint8Array {
-    const stream = encodeRGBA(rgba, width, height);
+/**
+ * Encodes RGBA pixels as a JPEG XL, lossless or lossy (with a Butteraugli distance above 0): the codestream, in the
+ * container if there is Exif data (a TIFF header and IFDs)
+ */
+export function encode(rgba: Uint8Array, width: number, height: number, exif?: Uint8Array, distance = 0): Uint8Array {
+    const stream = distance > 0 ? encodeVarDCT(rgba, width, height, { distance }) : encodeRGBA(rgba, width, height);
     if (!exif?.length) return stream;
     // (ftyp: brand jxl, minor version 0, compatible jxl; Exif: the offset of the TIFF header, 0, then the TIFF data)
     const jxl = [0x6a, 0x78, 0x6c, 0x20];

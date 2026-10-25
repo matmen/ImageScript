@@ -29,7 +29,7 @@ function integerConfig(r: BitReader, logAlphabetSize: number): IntegerConfig {
 
 // ---- ANS (alias tables, like libjxl's)
 
-class AnsHistogram {
+export class AnsHistogram {
     /** per bucket: symbol, cutoff, the symbol's frequency, the alias' offset and frequency */
     readonly symbol: Uint8Array;
     readonly cutoff: Uint16Array;

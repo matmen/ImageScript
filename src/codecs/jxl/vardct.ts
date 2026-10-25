@@ -81,7 +81,7 @@ const single = (t: number): boolean => t === 0 || special(t);
 const naturalOrders = new Map<number, Uint16Array>();
 
 /** The natural order of an order's coefficients: x, y pairs (in its wide orientation) */
-function naturalOrder(id: number): Uint16Array {
+export function naturalOrder(id: number): Uint16Array {
     let o = naturalOrders.get(id);
     if (o) return o;
     const [bw, bh] = ORDER_SIZES[id], yScale = bw / bh, lbw = bw / 8, lbh = bh / 8;

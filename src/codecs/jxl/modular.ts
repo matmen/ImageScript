@@ -30,8 +30,11 @@ export interface WPHeader {
     w: number[];
 }
 
+/** The weighted predictor's default parameters */
+export const DEFAULT_WP: WPHeader = { p1: 16, p2: 10, p3a: 7, p3b: 7, p3c: 7, p3d: 0, p3e: 0, w: [13, 12, 12, 12] };
+
 function wpHeader(r: BitReader): WPHeader {
-    if (r.bool()) return { p1: 16, p2: 10, p3a: 7, p3b: 7, p3c: 7, p3d: 0, p3e: 0, w: [13, 12, 12, 12] };
+    if (r.bool()) return DEFAULT_WP;
     return { p1: r.bits(5), p2: r.bits(5), p3a: r.bits(5), p3b: r.bits(5), p3c: r.bits(5), p3d: r.bits(5), p3e: r.bits(5), w: [r.bits(4), r.bits(4), r.bits(4), r.bits(4)] };
 }
 
@@ -52,7 +55,7 @@ function weight(w: number, e: Uint32Array, posN: number, posNE: number, posNW: n
 }
 
 /** The self-correcting (weighted) predictor's state over a channel */
-class WeightedPredictor {
+export class WeightedPredictor {
     // (the subpredictors' errors and the error of the prediction, of two rows)
     private readonly e0: Uint32Array;
     private readonly e1: Uint32Array;
