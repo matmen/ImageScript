@@ -10,6 +10,9 @@
 
 ### Improvements
 
+- Lossy WebP encoding defaults to `effort: 2` instead of 4: about a quarter of the time (about 250 ms instead of
+  900 ms for a 1920x1080 photo) for files about 5% larger at a slightly lower quality (about 0.5 dB PSNR).
+  `effort: 4` encodes like cwebp's default as before.
 - AVIF encoding also tries splitting blocks into halves (horizontal or vertical, from 64x64 to 16x16) where the whole
   block and its quarters cost about the same: files about 2% smaller at the default effort, encoding about 20% slower.
 - AVIF encoding with `effort: 2` also chooses smaller transforms within blocks (transform depth): files about 1% smaller

@@ -106,13 +106,13 @@ export interface JPEGEncodeOptions {
 export interface WebPEncodeOptions {
     /**
      * Lossy compression (0-100, like libwebp's quality: 75 is its default): the image is encoded like cwebp encodes it
-     * with its default settings, much smaller than lossless. Without it the image is encoded losslessly
+     * (with `-m` set to the effort), much smaller than lossless. Without it the image is encoded losslessly
      */
     quality?: number;
     /**
      * How much effort lossy compression takes (0-6, libwebp's method): higher is smaller but slower. 0-2 pick the
      * predictions by how close they are, 3 and up also by how many bits they take, 5 and 6 also optimize the
-     * quantized values. Default: `4` (like cwebp)
+     * quantized values. Default: `2`: about a quarter of the time of 4 (cwebp's default) for files about 5% larger
      */
     effort?: number;
     /** Metadata to include, see {@link Metadata} */
@@ -2045,7 +2045,7 @@ export class Image {
      * quality
      * @param options See {@link WebPEncodeOptions}
      */
-    async encodeWebP({ quality, effort = 4, metadata = {} }: WebPEncodeOptions = {}): Promise<Uint8Array> {
+    async encodeWebP({ quality, effort = 2, metadata = {} }: WebPEncodeOptions = {}): Promise<Uint8Array> {
         const exif = exifData(resolveMetadata(metadata));
         if (quality === undefined) return webp.encode(this.__bytes__(), this.width, this.height, exif);
         const q = finite(quality, 'quality');

@@ -62,7 +62,7 @@ export interface WebPAnimationEncodeOptions extends AnimationEncodeOptions {
      * frames are lossless
      */
     quality?: number;
-    /** How much effort lossy frames take (0-6), see {@link WebPEncodeOptions.effort}. Default: `4` */
+    /** How much effort lossy frames take (0-6), see {@link WebPEncodeOptions.effort}. Default: `2` */
     effort?: number;
 }
 
@@ -287,7 +287,7 @@ export class Animation extends Array<Frame> {
      * shows the same animation, but doesn't necessarily decode to the same frames
      * @param options See {@link WebPAnimationEncodeOptions}
      */
-    async encodeWebP({ metadata = {}, optimize = true, quality, effort = 4 }: WebPAnimationEncodeOptions = {}): Promise<Uint8Array> {
+    async encodeWebP({ metadata = {}, optimize = true, quality, effort = 2 }: WebPAnimationEncodeOptions = {}): Promise<Uint8Array> {
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
         if (quality !== undefined) {
