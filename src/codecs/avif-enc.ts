@@ -1,8 +1,8 @@
 /*!
  * Encodes AVIFs: the image as an AV1 still picture (YUV of BT.601's matrix, full range, like avifenc's defaults; RGB
- * if lossless), transparency as a monochrome auxiliary image, in a HEIF container with the boxes libavif writes. The
- * quality maps to the quantizer like avifenc's, with libaom's quantizer_to_qindex (Copyright (c) 2016, Alliance for
- * Open Media, BSD-2-Clause License, see THIRD_PARTY_NOTICES.md)
+ * if lossless, monochrome if gray), transparency as a monochrome auxiliary image, in a HEIF container with the boxes
+ * libavif writes. The quality maps to the quantizer like avifenc's, with libaom's quantizer_to_qindex (Copyright (c)
+ * 2016, Alliance for Open Media, BSD-2-Clause License, see THIRD_PARTY_NOTICES.md)
  */
 import { encodeAV1 } from './av1/encode.ts';
 
@@ -67,6 +67,63 @@ function toYUV(rgba: Uint8Array, width: number, height: number, subsampled: bool
     return [y, cu, cv];
 }
 
+// the colors of fully transparent pixels from the others: averages over ever larger squares (pull), each
+// transparent pixel taking its square's (push), then smoothed
+function fillTransparent(rgba: Uint8Array, width: number, height: number): Uint8Array {
+    const out = rgba.slice();
+    // the levels' sums of colors and counts of known pixels
+    const levels: Array<{ w: number, h: number, sum: Float64Array, n: Float64Array }> = [];
+    let w = width, h = height, sum = new Float64Array(w * h * 3), n = new Float64Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+        if (!rgba[4 * i + 3]) continue;
+        n[i] = 1;
+        for (let c = 0; c < 3; c++) sum[3 * i + c] = rgba[4 * i + c];
+    }
+    levels.push({ w, h, sum, n });
+    while (w > 1 || h > 1) {
+        const pw = w + 1 >> 1, ph = h + 1 >> 1, ps = new Float64Array(pw * ph * 3), pn = new Float64Array(pw * ph);
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = y * w + x, j = (y >> 1) * pw + (x >> 1);
+                pn[j] += n[i];
+                for (let c = 0; c < 3; c++) ps[3 * j + c] += sum[3 * i + c];
+            }
+        }
+        levels.push({ w: w = pw, h: h = ph, sum: sum = ps, n: n = pn });
+    }
+    // (the colors of each level: the known average, or the coarser level's)
+    let colors = new Float64Array(3);
+    for (let c = 0; c < 3; c++) colors[c] = n[0] ? sum[c] / n[0] : 0;
+    for (let l = levels.length - 2; l >= 0; l--) {
+        const { w, h, sum, n } = levels[l], pw = levels[l + 1].w, next = new Float64Array(w * h * 3);
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = y * w + x, j = (y >> 1) * pw + (x >> 1);
+                for (let c = 0; c < 3; c++) next[3 * i + c] = n[i] ? sum[3 * i + c] / n[i] : colors[3 * j + c];
+            }
+        }
+        colors = next;
+    }
+    // (the transparent pixels smoothed: a few passes of averaging with their neighbours)
+    const unknown: number[] = [];
+    for (let i = 0; i < width * height; i++) if (!rgba[4 * i + 3]) unknown.push(i);
+    for (let pass = 0; pass < 4; pass++) {
+        for (const i of unknown) {
+            const x = i % width, y = (i - x) / width;
+            for (let c = 0; c < 3; c++) {
+                let s = colors[3 * i + c], k = 1;
+                if (x) { s += colors[3 * (i - 1) + c]; k++; }
+                if (x + 1 < width) { s += colors[3 * (i + 1) + c]; k++; }
+                if (y) { s += colors[3 * (i - width) + c]; k++; }
+                if (y + 1 < height) { s += colors[3 * (i + width) + c]; k++; }
+                colors[3 * i + c] = s / k;
+            }
+        }
+    }
+    for (const i of unknown) for (let c = 0; c < 3; c++) out[4 * i + c] = Math.round(colors[3 * i + c]);
+    return out;
+}
+
 // ---- boxes
 
 const ascii = (s: string): number[] => Array.from(s, c => c.charCodeAt(0));
@@ -114,22 +171,29 @@ function seqMonochrome(d: Uint8Array, o: number): boolean {
 export function encode(rgba: Uint8Array, width: number, height: number, { quality, alphaQuality, subsampling, effort }: AVIFOptions): Uint8Array {
     if (width < 1 || height < 1) throw new RangeError('AVIF: dimensions must be at least 1');
     if (width > 65536 || height > 65536) throw new RangeError('AVIF: dimensions must be at most 65536');
-    // (lossless: RGB as GBR with the identity matrix, 4:4:4)
-    const lossless = !qindex(quality), subsampled = subsampling === '4:2:0' && !lossless;
-    const cicp = lossless ? [1, 13, 0] : CICP;
-    const planes = lossless ? [1, 2, 0].map(c => Uint8Array.from({ length: width * height }, (_, i) => rgba[4 * i + c])) : toYUV(rgba, width, height, subsampled);
-    const color = encodeAV1({ planes, width, height, layout: subsampled ? 1 : 3, cicp }, { qidx: qindex(quality), effort });
     let opaque = true;
     for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) { opaque = false; break; }
+    // (lossy: the colors of transparent pixels don't matter, the cheapest are smooth ones)
+    const original = rgba;
+    if (!opaque && qindex(quality)) rgba = fillTransparent(rgba, width, height);
+    // (gray: the luma alone, monochrome)
+    let gray = true;
+    for (let i = 0; i < rgba.length; i += 4) if (rgba[i] !== rgba[i + 1] || rgba[i] !== rgba[i + 2]) { gray = false; break; }
+    // (lossless: RGB as GBR with the identity matrix, 4:4:4)
+    const lossless = !qindex(quality) && !gray, subsampled = subsampling === '4:2:0' && !lossless && !gray;
+    const cicp = lossless ? [1, 13, 0] : CICP;
+    const planes = gray ? [Uint8Array.from({ length: width * height }, (_, i) => rgba[4 * i])]
+        : lossless ? [1, 2, 0].map(c => Uint8Array.from({ length: width * height }, (_, i) => rgba[4 * i + c])) : toYUV(rgba, width, height, subsampled);
+    const color = encodeAV1({ planes, width, height, layout: gray ? 0 : subsampled ? 1 : 3, cicp }, { qidx: qindex(quality), effort });
     let alpha: Uint8Array | null = null;
     if (!opaque) {
         const a = new Uint8Array(width * height);
-        for (let i = 0; i < a.length; i++) a[i] = rgba[4 * i + 3];
+        for (let i = 0; i < a.length; i++) a[i] = original[4 * i + 3];
         alpha = encodeAV1({ planes: [a], width, height, layout: 0, cicp: [2, 2, 2] }, { qidx: qindex(alphaQuality), effort });
     }
 
     // the boxes: ftyp, meta (the items, their locations in mdat, their properties), mdat
-    const profile = subsampled ? 'MA1B' : 'MA1A';
+    const profile = subsampled || gray ? 'MA1B' : 'MA1A';
     const ftyp = box('ftyp', ascii('avif'), u32(0), ascii('avif'), ascii('mif1'), ascii('miaf'), ascii(profile));
     const hdlr = fullBox('hdlr', 0, 0, u32(0), ascii('pict'), u32(0), u32(0), u32(0), ascii('ImageScript'), [0]);
     const pitm = fullBox('pitm', 0, 0, u16(1));
@@ -141,7 +205,7 @@ export function encode(rgba: Uint8Array, width: number, height: number, { qualit
     const pixi = (channels: number): number[] => fullBox('pixi', 0, 0, [channels], new Array<number>(channels).fill(8));
     const auxC = fullBox('auxC', 0, 0, ascii('urn:mpeg:mpegB:cicp:systems:auxiliary:alpha'), [0]);
     // (properties 1-based: ispe, av1C, colr, pixi; alpha: av1C, pixi, auxC)
-    const ipco = box('ipco', ispe, av1C(color), colr, pixi(3), alpha ? av1C(alpha) : [], alpha ? pixi(1) : [], alpha ? auxC : []);
+    const ipco = box('ipco', ispe, av1C(color), colr, pixi(gray ? 1 : 3), alpha ? av1C(alpha) : [], alpha ? pixi(1) : [], alpha ? auxC : []);
     const ipma = fullBox('ipma', 0, 0, u32(alpha ? 2 : 1), u16(1), [4, 1, 0x82, 3, 4], alpha ? [...u16(2), 4, 1, 0x85, 6, 7] : []);
     const iprp = box('iprp', ipco, ipma);
     // the locations (absolute offsets into mdat, filled in once the size of meta is known)

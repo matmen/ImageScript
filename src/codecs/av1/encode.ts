@@ -2,10 +2,10 @@
  * Encodes AV1 still pictures (intra frames with reduced still picture headers): the syntax and contexts mirror the
  * decoder's (decode.ts, ported from dav1d: Copyright (c) 2018-2021, VideoLAN and dav1d authors, Copyright (c) 2018, Two
  * Orioles, LLC, BSD-2-Clause License), the reconstruction uses its predictors and inverse transforms, so the encoder's
- * reconstruction is the decoder's output. Partitions (none or split, 64x64 to 8x8), intra modes and transform types
- * are chosen by rate and distortion, coefficients quantized by rate and distortion, the loop filter level (around
- * libaom's guess from the quantizer: Copyright (c) 2016, Alliance for Open Media, BSD-2-Clause License) and the CDEF
- * strengths by the filtered frame's distortion. See THIRD_PARTY_NOTICES.md
+ * reconstruction is the decoder's output. Partitions (none or split, 64x64 to 8x8), intra modes, palettes and
+ * transform types are chosen by rate and distortion, coefficients quantized by rate and distortion, the loop filter
+ * level (around libaom's guess from the quantizer: Copyright (c) 2016, Alliance for Open Media, BSD-2-Clause License)
+ * and the CDEF strengths by the filtered frame's distortion. See THIRD_PARTY_NOTICES.md
  */
 import { SymbolEncoder } from './msac-enc.ts';
 import { SequenceHeader, FrameHeader, RESTORATION_NONE } from './obu.ts';
@@ -25,6 +25,7 @@ import { inverseTransformAdd } from './itx.ts';
 import { forwardTransform, forwardWht, pixelEnergy } from './fdct.ts';
 import { deblock } from './loopfilter.ts';
 import { cdef } from './cdef.ts';
+import { paletteColors, colorRanks, colorIndexBits } from './palette.ts';
 
 const ADST_DCT = 1, DCT_ADST = 2, ADST_ADST = 3;
 const bdim = (bs: number, i: number): number => BLOCK_DIMENSIONS[bs * 4 + i];
@@ -59,6 +60,11 @@ interface Block {
     /** the luma transform type */
     txtp: number;
     uvtx: number;
+    /** the palettes' sizes (Y, UV: 0 for none), colors (Y, U, V: 8 each), the color indices (of the whole block) */
+    palSz: number[];
+    pal: Uint16Array;
+    palIdx: Uint8Array | null;
+    palIdxUv: Uint8Array | null;
 }
 
 // a partition decision: a block, or the four quarters (null outside the frame)
@@ -76,6 +82,15 @@ const ZERO_BITS = 0.6;
 const coefBits = (q: number): number => q === 0 ? ZERO_BITS : q === 1 ? 2.2 : q === 2 ? 3.4 : q < 15 ? 4.6 + Math.log2(q - 2) : 9 + 2 * Math.log2(q - 14);
 
 const SATD_BLOCK = new Int32Array(16);
+
+// whether the 8 most frequent of colors (their counts) cover most of n pixels (palettes are rarely better otherwise)
+const mostlyFew = (counts: number[], n: number): boolean => {
+    if (counts.length <= 8) return true;
+    const top = counts.slice().sort((a, b) => b - a);
+    let sum = 0;
+    for (let i = 0; i < 8; i++) sum += top[i];
+    return sum >= n * 0.7;
+};
 
 class TileEncoder {
     private seq: SequenceHeader;
@@ -101,6 +116,10 @@ class TileEncoder {
     private aSkip: Uint8Array; private lSkip = new Uint8Array(32);
     private aUvmode: Uint8Array; private lUvmode = new Uint8Array(32);
     private aPartition: Uint8Array; private lPartition = new Uint8Array(16);
+    // (of the palettes, while writing: their sizes, their colors for the caches)
+    private aPalSz: Uint8Array; private lPalSz = new Uint8Array(32);
+    private aPalSzUv: Uint8Array; private lPalSzUv = new Uint8Array(32);
+    private aPal: Uint16Array; private lPal = new Uint16Array(32 * 24);
 
     private cf = new Int32Array(32 * 32);
     private coefs = new Float64Array(32 * 32);
@@ -115,6 +134,7 @@ class TileEncoder {
     cdefChoice: Int8Array;
     private rdoDrop = new Float64Array(32 * 32);
     private ac = new Int16Array(32 * 32);
+    private pairCounts = new Uint32Array(65536);
     // the bits of the last block's coefficients (estimated), whether it had any
     private bits = 0;
     private coded = false;
@@ -131,6 +151,9 @@ class TileEncoder {
         this.aSkip = new Uint8Array(n);
         this.aUvmode = new Uint8Array(n);
         this.aPartition = new Uint8Array(n >> 1);
+        this.aPalSz = new Uint8Array(n);
+        this.aPalSzUv = new Uint8Array(n);
+        this.aPal = new Uint16Array(n * 24);
         this.cdefChoice = new Int8Array(f.cdefIdx.length);
         this.lossless = this.hdr.allLossless;
         const q = this.hdr.quant;
@@ -148,6 +171,8 @@ class TileEncoder {
         this.aLcoef.fill(0x40);
         this.aCcoef[0].fill(0x40);
         this.aCcoef[1].fill(0x40);
+        this.aPalSz.fill(0);
+        this.aPalSzUv.fill(0);
     }
 
     private resetLeft(): void {
@@ -158,6 +183,8 @@ class TileEncoder {
         this.lLcoef.fill(0x40);
         this.lCcoef[0].fill(0x40);
         this.lCcoef[1].fill(0x40);
+        this.lPalSz.fill(0);
+        this.lPalSzUv.fill(0);
     }
 
     // the bounds of a tile (in 4 pixel units)
@@ -315,8 +342,10 @@ class TileEncoder {
         const b: Block = {
             skip: 0, yMode: DC_PRED, yAngle: 0, uvMode: DC_PRED, uvAngle: 0, cflAlpha: [0, 0],
             tx: this.lossless ? TX_4X4 : MAX_TXFM_SIZE_FOR_BS[bs * 4], txtp: this.lossless ? WHT_WHT : DCT_DCT,
-            uvtx: this.lossless ? TX_4X4 : MAX_TXFM_SIZE_FOR_BS[bs * 4 + layout]
+            uvtx: this.lossless ? TX_4X4 : MAX_TXFM_SIZE_FOR_BS[bs * 4 + layout],
+            palSz: [0, 0], pal: new Uint16Array(24), palIdx: null, palIdxUv: null
         };
+        const palAllowed = this.hdr.allowScreenContentTools && Math.max(bdim(bs, 0), bdim(bs, 1)) <= 16 && bdim(bs, 0) + bdim(bs, 1) >= 4;
         const lambda = this.lambda, sadLambda = Math.sqrt(lambda);
         const angles = lw4 + lh4 >= 2 && this.params.effort > 1 ? [-3, -2, -1, 0, 1, 2, 3] : [0];
 
@@ -328,6 +357,16 @@ class TileEncoder {
                 b.yAngle = angle;
                 this.predictLuma(bs, edgeFlags, b);
                 candidates.push({ mode, angle, est: this.satd(0, bs) + sadLambda * (mode === DC_PRED ? 2 : 4.5 + (isDirectional(mode) && lw4 + lh4 >= 2 ? 1.5 : 0)) });
+            }
+        }
+        // (effort 1: the deltas of the best directional mode only, if it's about as good as the best)
+        const directional = candidates.filter(c => isDirectional(c.mode)).sort((x, y) => x.est - y.est)[0];
+        if (this.params.effort === 1 && lw4 + lh4 >= 2 && directional && directional.est <= 1.2 * Math.min(...candidates.map(c => c.est))) {
+            for (const angle of [-3, -2, -1, 1, 2, 3]) {
+                b.yMode = directional.mode;
+                b.yAngle = angle;
+                this.predictLuma(bs, edgeFlags, b);
+                candidates.push({ mode: directional.mode, angle, est: this.satd(0, bs) + sadLambda * 6 });
             }
         }
         candidates.sort((x, y) => x.est - y.est);
@@ -374,6 +413,14 @@ class TileEncoder {
             b.txtp = bestTx;
             this.restorePlane(0, bs, keptTx);
         }
+        if (palAllowed) {
+            const r = this.paletteLuma(bs, edgeFlags, b, dist + lambda * (bits + (b.yMode === DC_PRED ? 2 : 4.5)));
+            if (r) {
+                dist = r.dist;
+                bits = r.bits;
+                coded = r.coded;
+            }
+        }
 
         if (layout) {
             // chroma: the same with chroma from luma
@@ -396,6 +443,17 @@ class TileEncoder {
                 b.uvAngle = 0;
                 this.predictChroma(bs, edgeFlags, b);
                 uvCandidates.push({ mode, angle: 0, alpha: [0, 0], est: this.satd(1, bs) + this.satd(2, bs) + sadLambda * (mode === DC_PRED ? 1.5 : 4) });
+            }
+            // (the deltas of the best directional mode; below effort 2 if it's about as good as the best)
+            const uvDirectional = uvCandidates.filter(c => isDirectional(c.mode)).sort((x, y) => x.est - y.est)[0];
+            const uvNear = this.params.effort < 2 ? 1.2 : Infinity;
+            if (this.params.effort && lw4 + lh4 >= 2 && uvDirectional && uvDirectional.est <= uvNear * Math.min(...uvCandidates.map(c => c.est))) {
+                for (const angle of [-3, -2, -1, 1, 2, 3]) {
+                    b.uvMode = uvDirectional.mode;
+                    b.uvAngle = angle;
+                    this.predictChroma(bs, edgeFlags, b);
+                    uvCandidates.push({ mode: uvDirectional.mode, angle, alpha: [0, 0], est: this.satd(1, bs) + this.satd(2, bs) + sadLambda * 5.5 });
+                }
             }
             uvCandidates.sort((x, y) => x.est - y.est);
             let bestUv = Infinity, bestUvMode = uvCandidates[0], uvDist = 0, uvBits = 0, uvCoded = false, keptUv: Uint16Array[] | null = null;
@@ -423,6 +481,14 @@ class TileEncoder {
                 this.restorePlane(1, bs, keptUv[0]);
                 this.restorePlane(2, bs, keptUv[1]);
             }
+            if (palAllowed) {
+                const r = this.paletteChroma(bs, edgeFlags, b, bestUv);
+                if (r) {
+                    uvDist = r.dist;
+                    uvBits = r.bits;
+                    uvCoded = r.coded;
+                }
+            }
             dist += uvDist;
             bits += uvBits;
             coded ||= uvCoded;
@@ -430,6 +496,127 @@ class TileEncoder {
         b.skip = coded ? 0 : 1;
         this.modeContexts(bs, b);
         return { b, cost: dist + lambda * (bits + 1 + 3) };
+    }
+
+    // a palette for a block's luma, if it costs less than cost: its distortion and bits (without the mode's), the
+    // block's palette set and its reconstruction left in the frame
+    private paletteLuma(bs: number, edgeFlags: number, b: Block, cost: number): { dist: number, bits: number, coded: boolean } | null {
+        const f = this.f, stride = f.strides[0], src = this.src[0];
+        const bw = bdim(bs, 0) * 4, bh = bdim(bs, 1) * 4;
+        const w = Math.min(bw, (f.bw - this.bx) * 4), h = Math.min(bh, (f.bh - this.by) * 4), o = this.by * 4 * stride + this.bx * 4;
+        // (the source's colors: palettes for few of them)
+        const counts = new Uint32Array(256);
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) counts[src[o + y * stride + x]]++;
+        const values: number[][] = [], weights: number[] = [];
+        for (let v = 0; v < 256; v++) if (counts[v]) { values.push([v]); weights.push(counts[v]); }
+        if (values.length < 2 || values.length > (this.params.effort ? 64 : 8) || !mostlyFew(weights, w * h)) return null;
+        // (not if the palette's least bits cost more already)
+        if (this.lambda * (15 + 5 * Math.min(values.length - 1, 7) + 0.08 * w * h) >= cost) return null;
+        const colors = paletteColors(values, weights, 8).map(c => c[0]), k = colors.length;
+        if (k < 2) return null;
+        // (each pixel's nearest color, the indices outside the frame repeating the last column and row)
+        const idx = new Uint8Array(bw * bh);
+        for (let y = 0; y < bh; y++) {
+            for (let x = 0; x < bw; x++) {
+                const v = src[o + Math.min(y, h - 1) * stride + Math.min(x, w - 1)];
+                let best = 0;
+                for (let c = 1; c < k; c++) if (Math.abs(colors[c] - v) < Math.abs(colors[best] - v)) best = c;
+                idx[y * bw + x] = best;
+            }
+        }
+        // (the palette's bits: the flag, the size, the colors; the indices)
+        let maxDelta = 0;
+        for (let c = 1; c < k; c++) maxDelta = Math.max(maxDelta, colors[c] - colors[c - 1] - 1);
+        const overhead = 3 + 10 + (k - 1) * Math.max(5, 32 - Math.clz32(maxDelta)) + colorIndexBits(idx, bw, w, h, k);
+        // (not if the palette alone costs more)
+        if (this.lambda * (overhead + 2) >= cost) return null;
+        const kept = this.savePlane(0, bs), mode = [b.yMode, b.yAngle, b.txtp];
+        b.yMode = DC_PRED;
+        b.yAngle = 0;
+        b.palSz[0] = k;
+        b.pal.set(colors);
+        b.palIdx = idx;
+        let best: { dist: number, bits: number, coded: boolean } | null = null, bestCost = cost;
+        const txtps = tdim(b.tx, MAX) <= TX_16X16 && this.params.effort && !this.lossless ? [DCT_DCT, IDTX] : [this.lossless ? WHT_WHT : DCT_DCT];
+        let keptPal: Uint16Array | null = null, bestTx = DCT_DCT;
+        for (const txtp of txtps) {
+            b.txtp = txtp;
+            const d = this.codeLuma(bs, edgeFlags, b);
+            const bits = this.bits + overhead + (txtp === DCT_DCT || this.lossless ? 0 : 1.5);
+            const c = d + this.lambda * (bits + 2);
+            if (c < bestCost) {
+                bestCost = c;
+                best = { dist: d, bits, coded: this.coded };
+                bestTx = txtp;
+                keptPal = txtps.length > 1 && txtp !== txtps[txtps.length - 1] ? this.savePlane(0, bs) : null;
+            } else if (best && keptPal) this.restorePlane(0, bs, keptPal);
+        }
+        if (best) {
+            b.txtp = bestTx;
+            return best;
+        }
+        [b.yMode, b.yAngle, b.txtp] = mode;
+        b.palSz[0] = 0;
+        b.palIdx = null;
+        this.restorePlane(0, bs, kept);
+        return null;
+    }
+
+    // a palette for a block's chroma (of U and V pairs), if it costs less than cost (with the mode's bits)
+    private paletteChroma(bs: number, edgeFlags: number, b: Block, cost: number): { dist: number, bits: number, coded: boolean } | null {
+        const f = this.f, ssx = this.ssx, ssy = this.ssy, stride = f.strides[1], su = this.src[1], sv = this.src[2];
+        const w4 = Math.min(bdim(bs, 0), f.bw - this.bx), h4 = Math.min(bdim(bs, 1), f.bh - this.by);
+        const bw = (bdim(bs, 0) + ssx >> ssx) * 4, bh = (bdim(bs, 1) + ssy >> ssy) * 4;
+        const w = (w4 + ssx >> ssx) * 4, h = (h4 + ssy >> ssy) * 4, o = (this.by * 4 >> ssy) * stride + (this.bx * 4 >> ssx);
+        // (the pairs' counts, by U << 8 | V)
+        const counts = this.pairCounts, keys: number[] = [], limit = this.params.effort ? 64 : 8;
+        for (let y = 0; y < h && keys.length <= limit; y++) {
+            for (let x = 0; x < w; x++) {
+                const key = su[o + y * stride + x] << 8 | sv[o + y * stride + x];
+                if (!counts[key]++) keys.push(key);
+            }
+        }
+        const weights = keys.map(key => counts[key]);
+        for (const key of keys) counts[key] = 0;
+        if (keys.length < 2 || keys.length > limit || !mostlyFew(weights, w * h)) return null;
+        if (this.lambda * (13.5 + 13 * Math.min(keys.length - 1, 7) + 8 + 0.08 * w * h) >= cost) return null;
+        const colors = paletteColors(keys.map(key => [key >> 8, key & 255]), weights, 8), k = colors.length;
+        if (k < 2) return null;
+        const idx = new Uint8Array(bw * bh);
+        for (let y = 0; y < bh; y++) {
+            for (let x = 0; x < bw; x++) {
+                const p = o + Math.min(y, h - 1) * stride + Math.min(x, w - 1), u = su[p], v = sv[p];
+                let best = 0, bestD = Infinity;
+                for (let c = 0; c < k; c++) {
+                    const d = (colors[c][0] - u) ** 2 + (colors[c][1] - v) ** 2;
+                    if (d < bestD) { bestD = d; best = c; }
+                }
+                idx[y * bw + x] = best;
+            }
+        }
+        let maxDelta = 0;
+        for (let c = 1; c < k; c++) maxDelta = Math.max(maxDelta, colors[c][0] - colors[c - 1][0]);
+        const overhead = 1 + 2 + 10 + (k - 1) * Math.max(5, 32 - Math.clz32(maxDelta)) + 8 * k + colorIndexBits(idx, bw, w, h, k);
+        if (this.lambda * (overhead + 1.5) >= cost) return null;
+        const kept = [this.savePlane(1, bs), this.savePlane(2, bs)], mode = [b.uvMode, b.uvAngle], alpha = b.cflAlpha;
+        b.uvMode = DC_PRED;
+        b.uvAngle = 0;
+        b.cflAlpha = [0, 0];
+        b.palSz[1] = k;
+        for (let c = 0; c < k; c++) {
+            b.pal[8 + c] = colors[c][0];
+            b.pal[16 + c] = colors[c][1];
+        }
+        b.palIdxUv = idx;
+        const d = this.codeChroma(bs, edgeFlags, b), bits = this.bits + overhead;
+        if (d + this.lambda * (bits + 1.5) < cost) return { dist: d, bits, coded: this.coded };
+        [b.uvMode, b.uvAngle] = mode;
+        b.cflAlpha = alpha;
+        b.palSz[1] = 0;
+        b.palIdxUv = null;
+        this.restorePlane(1, bs, kept[0]);
+        this.restorePlane(2, bs, kept[1]);
+        return null;
     }
 
     // the mode contexts of a block (the smooth modes of the neighbours change the edges' filters)
@@ -563,6 +750,12 @@ class TileEncoder {
         for (let initY = 0; initY < h4; initY += 16) {
             const subH4 = Math.min(h4, 16 + initY);
             for (let initX = 0; initX < w4; initX += 16) {
+                // (palette blocks: the colors of the whole block, at most 64x64)
+                const palIdx = b.palSz[0] ? b.palIdx as Uint8Array : null;
+                if (palIdx) {
+                    const d = 4 * (by * stride + bx), bw = bw4 * 4;
+                    for (let y = 0; y < bh4 * 4; y++) for (let x = 0; x < bw; x++) pic[d + y * stride + x] = b.pal[palIdx[y * bw + x]];
+                }
                 const intraFlags = smFlag(this.aMode[bx4]) | smFlag(this.lMode[by4]) | filterFlag;
                 const sbHasTr = initX + 16 < w4 ? 1 : initY ? 0 : edgeFlags & EDGE_I444_TOP_HAS_RIGHT;
                 const sbHasBl = initX ? 0 : initY + 16 < h4 ? 1 : edgeFlags & EDGE_I444_LEFT_HAS_BOTTOM;
@@ -574,9 +767,11 @@ class TileEncoder {
                         const tx4 = bx + x;
                         const flags = (((y > initY || !sbHasTr) && x + tw >= subW4) ? 0 : EDGE_I444_TOP_HAS_RIGHT) |
                             ((x > initX || (!sbHasBl && y + th >= subH4)) ? 0 : EDGE_I444_LEFT_HAS_BOTTOM);
-                        const mode = prepareEdges(tx4, tx4 > this.colStart, ty, ty > this.rowStart, this.colEnd, this.rowEnd, flags,
-                            pic, d, stride, b.yMode, b.yAngle, tw, th, seq.intraEdgeFilter, f.bitdepth);
-                        predict(mode, pic, d, stride, tw * 4, th * 4, preparedAngle | intraFlags, 4 * f.bw - 4 * tx4, 4 * f.bh - 4 * ty, f.bitdepthMax);
+                        if (!palIdx) {
+                            const mode = prepareEdges(tx4, tx4 > this.colStart, ty, ty > this.rowStart, this.colEnd, this.rowEnd, flags,
+                                pic, d, stride, b.yMode, b.yAngle, tw, th, seq.intraEdgeFilter, f.bitdepth);
+                            predict(mode, pic, d, stride, tw * 4, th * 4, preparedAngle | intraFlags, 4 * f.bw - 4 * tx4, 4 * f.bh - 4 * ty, f.bitdepthMax);
+                        }
                         if (predictOnly) continue;
                         dist += this.codeTx(0, d, stride, tx, b.txtp, b, bs, this.aLcoef, bx4 + x, this.lLcoef, by4 + y,
                             Math.min(tw, f.bw - tx4), Math.min(th, f.bh - ty), 4 * tx4, 4 * ty);
@@ -616,6 +811,12 @@ class TileEncoder {
                             this.colEnd >> ssx, this.rowEnd >> ssy, 0, f.planes[1 + pl], uvOff, cstride, DC_PRED, 0, uvtw, uvth, false, f.bitdepth);
                         cflPredict(mode, f.planes[1 + pl], uvOff, cstride, uvtw * 4, uvth * 4, this.ac, b.cflAlpha[pl], f.bitdepthMax);
                     }
+                } else if (b.palSz[1]) {
+                    const uvOff = 4 * ((bx >> ssx) + (by >> ssy) * cstride), bw = cbw4 * 4, idx = b.palIdxUv as Uint8Array;
+                    for (let pl = 1; pl <= 2; pl++) {
+                        const plane = f.planes[pl];
+                        for (let y = 0; y < cbh4 * 4; y++) for (let x = 0; x < bw; x++) plane[uvOff + y * cstride + x] = b.pal[pl * 8 + idx[y * bw + x]];
+                    }
                 }
                 const smUv = smFlag(this.aUvmode[cbx4]) | smFlag(this.lUvmode[cby4]);
                 const edge = f.layout === 1 ? [EDGE_I420_TOP_HAS_RIGHT, EDGE_I420_LEFT_HAS_BOTTOM] : [1, 8];
@@ -629,7 +830,7 @@ class TileEncoder {
                     for (let y = initY >> ssy, tyl = by + initY; y < subCh4; y += uvth, tyl += uvth << ssy) {
                         let d = 4 * ((tyl >> ssy) * cstride + (bx + initX >> ssx));
                         for (let x = initX >> ssx, txl = bx + initX; x < subCw4; x += uvtw, txl += uvtw << ssx, d += uvtw * 4) {
-                            if (!(b.uvMode === CFL_PRED && b.cflAlpha[pl])) {
+                            if (!(b.uvMode === CFL_PRED && b.cflAlpha[pl]) && !b.palSz[1]) {
                                 const flags = (((y > (initY >> ssy) || !uvSbHasTr) && x + uvtw >= subCw4) ? 0 : EDGE_I444_TOP_HAS_RIGHT) |
                                     ((x > (initX >> ssx) || (!uvSbHasBl && y + uvth >= subCh4)) ? 0 : EDGE_I444_LEFT_HAS_BOTTOM);
                                 const uvMode = b.uvMode === CFL_PRED ? DC_PRED : b.uvMode;
@@ -872,6 +1073,22 @@ class TileEncoder {
                 w.symbol(cdf, CDF.angleDelta + (b.uvMode - VERT_PRED) * 8, 6, b.uvAngle + 3);
             }
         }
+        // the palettes, their color indices
+        if (this.hdr.allowScreenContentTools && Math.max(bw4, bh4) <= 16 && bw4 + bh4 >= 4) {
+            const szCtx = lw4 + lh4 - 2;
+            if (b.yMode === DC_PRED) {
+                const palCtx = (this.aPalSz[bx4] > 0 ? 1 : 0) + (this.lPalSz[by4] > 0 ? 1 : 0);
+                w.boolAdapt(cdf, CDF.palY + (szCtx * 3 + palCtx) * 2, b.palSz[0] ? 1 : 0);
+                if (b.palSz[0]) this.writePalPlane(b, 0, szCtx, bx4, by4);
+            }
+            if (hasChroma && b.uvMode === DC_PRED) {
+                w.boolAdapt(cdf, CDF.palUv + (b.palSz[0] > 0 ? 2 : 0), b.palSz[1] ? 1 : 0);
+                if (b.palSz[1]) this.writePalUv(b, szCtx, bx4, by4);
+            }
+        }
+        const w4 = Math.min(bw4, f.bw - bx), h4 = Math.min(bh4, f.bh - by);
+        if (b.palSz[0]) this.writeColorIndices(b.palIdx as Uint8Array, b.palSz[0], 0, w4 * 4, h4 * 4, bw4 * 4);
+        if (hasChroma && b.palSz[1]) this.writeColorIndices(b.palIdxUv as Uint8Array, b.palSz[1], 1, (w4 + ssx >> ssx) * 4, (h4 + ssy >> ssy) * 4, cbw4 * 4);
 
         this.codeLuma(bs, edgeFlags, b);
         if (hasChroma) this.codeChroma(bs, edgeFlags, b);
@@ -880,10 +1097,107 @@ class TileEncoder {
         const aw = 1 << lw4, lh = 1 << lh4;
         this.aMode.fill(b.yMode, bx4, bx4 + aw); this.lMode.fill(b.yMode, by4, by4 + lh);
         this.aSkip.fill(b.skip, bx4, bx4 + aw); this.lSkip.fill(b.skip, by4, by4 + lh);
+        this.aPalSz.fill(b.palSz[0], bx4, bx4 + aw); this.lPalSz.fill(b.palSz[0], by4, by4 + lh);
+        // (luma coordinates for the chroma palette size, like libaom)
+        this.aPalSzUv.fill(hasChroma ? b.palSz[1] : 0, bx4, bx4 + aw); this.lPalSzUv.fill(hasChroma ? b.palSz[1] : 0, by4, by4 + lh);
+        for (let pl = 0; pl < 3; pl++) {
+            if (!b.palSz[pl ? 1 : 0] || pl && !hasChroma) continue;
+            const colors = b.pal.subarray(pl * 8, pl * 8 + 8);
+            for (let x = 0; x < bw4; x++) this.aPal.set(colors, (bx4 + x) * 24 + pl * 8);
+            for (let y = 0; y < bh4; y++) this.lPal.set(colors, (by4 + y) * 24 + pl * 8);
+        }
         if (hasChroma) {
             this.aUvmode.fill(b.uvMode, cbx4, cbx4 + cbw4);
             this.lUvmode.fill(b.uvMode, cby4, cby4 + cbh4);
         }
+    }
+
+    // a plane's palette (Y or U): its size, the colors of the neighbours' palettes it uses, the others (increasing:
+    // the first one's bits, then the differences); like the decoder's readPalPlane
+    private writePalPlane(b: Block, pl: number, szCtx: number, bx4: number, by4: number): void {
+        const w = this.w as SymbolEncoder, palSz = b.palSz[pl];
+        w.symbol(this.cdf, CDF.palSize + (pl * 7 + szCtx) * 8, 6, palSz - 2);
+        // the cache: the left and above colors, merged (the above ones not across 64x64 boundaries)
+        const cache: number[] = [];
+        let lCache = pl ? this.lPalSzUv[by4] : this.lPalSz[by4];
+        let aCache = by4 & 15 ? pl ? this.aPalSzUv[bx4] : this.aPalSz[bx4] : 0;
+        let l = by4 * 24 + pl * 8, a = bx4 * 24 + pl * 8;
+        const L = this.lPal, A = this.aPal;
+        const push = (v: number): void => {
+            if (!cache.length || cache[cache.length - 1] !== v) cache.push(v);
+        };
+        while (lCache && aCache) {
+            if (L[l] < A[a]) {
+                push(L[l++]);
+                lCache--;
+            } else {
+                if (A[a] === L[l]) { l++; lCache--; }
+                push(A[a++]);
+                aCache--;
+            }
+        }
+        while (lCache-- > 0) push(L[l++]);
+        while (aCache-- > 0) push(A[a++]);
+
+        const rest = Array.from(b.pal.subarray(pl * 8, pl * 8 + palSz));
+        for (let n = 0, used = 0; n < cache.length && used < palSz; n++) {
+            const i = rest.indexOf(cache[n]);
+            w.bool(i >= 0 ? 1 : 0);
+            if (i >= 0) {
+                rest.splice(i, 1);
+                used++;
+            }
+        }
+        if (!rest.length) return;
+        const max = 255, minus = pl ? 0 : 1;
+        w.bools(8, rest[0]);
+        if (rest.length === 1) return;
+        let maxDelta = 0;
+        for (let i = 1; i < rest.length; i++) maxDelta = Math.max(maxDelta, rest[i] - rest[i - 1] - minus);
+        const extra = Math.max(0, 32 - Math.clz32(maxDelta) - 5);
+        w.bools(2, extra);
+        let bits = 5 + extra, prev = rest[0];
+        for (let i = 1; i < rest.length; i++) {
+            w.bools(bits, rest[i] - prev - minus);
+            prev = rest[i];
+            // (the rest: the maximum)
+            if (prev + minus >= max) break;
+            bits = Math.min(bits, 1 + (31 - Math.clz32(max - prev - minus)));
+        }
+    }
+
+    // the chroma palette: U, then V (by differences, if fewer bits)
+    private writePalUv(b: Block, szCtx: number, bx4: number, by4: number): void {
+        this.writePalPlane(b, 1, szCtx, bx4, by4);
+        const w = this.w as SymbolEncoder, palSz = b.palSz[1], v = b.pal.subarray(16, 16 + palSz);
+        const deltas: number[] = [];
+        let maxMag = 0;
+        for (let i = 1; i < palSz; i++) {
+            const d = (v[i] - v[i - 1] + 128 & 255) - 128;
+            deltas.push(d);
+            maxMag = Math.max(maxMag, Math.abs(d));
+        }
+        const bits = Math.max(4, 32 - Math.clz32(maxMag));
+        const deltaBits = bits <= 7 ? 2 + 8 + deltas.reduce((s, d) => s + bits + (d ? 1 : 0), 0) : Infinity;
+        if (deltaBits < 8 * palSz) {
+            w.bool(1);
+            w.bools(2, bits - 4);
+            w.bools(8, v[0]);
+            for (const d of deltas) {
+                w.bools(bits, Math.abs(d));
+                if (d) w.bool(d < 0 ? 1 : 0);
+            }
+        } else {
+            w.bool(0);
+            for (let i = 0; i < palSz; i++) w.bools(8, v[i]);
+        }
+    }
+
+    // a palette block's color indices (w x h of the block's bw columns): the first, then the others' ranks
+    private writeColorIndices(t: Uint8Array, palSz: number, pl: number, w: number, h: number, bw: number): void {
+        const enc = this.w as SymbolEncoder, cdf = this.cdf, o = CDF.colorMap + (pl * 7 + palSz - 2) * 5 * 8;
+        enc.uniform(palSz, t[0]);
+        colorRanks(t, bw, w, h, (ctx, rank) => enc.symbol(cdf, o + ctx * 8, palSz - 1, rank));
     }
 
     // what the post filters need (like the decoder's storeBlock)
@@ -1081,7 +1395,7 @@ export function encodeAV1(image: AV1Image, params: AV1Params): Uint8Array {
     const qidx = params.qidx;
     const hdr: FrameHeader = {
         showExistingFrame: false, existingFrameIdx: 0, frameType: 0, showFrame: true, refreshFrameFlags: 0xff,
-        disableCdfUpdate: false, allowScreenContentTools: false, allowIntrabc: false, width, upscaledWidth: width, height,
+        disableCdfUpdate: false, allowScreenContentTools: true, allowIntrabc: false, width, upscaledWidth: width, height,
         superresDenominator: 8,
         tiles: { cols, rows, log2Cols, log2Rows, colStarts, rowStarts, contextUpdateId: 0, sizeBytes: 4 },
         quant: { yac: qidx, ydcDelta: 0, udcDelta: 0, uacDelta: 0, vdcDelta: 0, vacDelta: 0, qm: false, qmY: 15, qmU: 15, qmV: 15 },

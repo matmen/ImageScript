@@ -87,6 +87,16 @@ export class SymbolEncoder {
         while (n--) this.bool(v >> n & 1);
     }
 
+    /** a value below n with the fewest bits (one more for the larger ones) */
+    uniform(n: number, v: number): void {
+        const l = 32 - Math.clz32(n), m = (1 << l) - n;
+        if (v < m) this.bools(l - 1, v);
+        else {
+            this.bools(l - 1, v + m >> 1);
+            this.bool(v + m & 1);
+        }
+    }
+
     /** a coefficient's high token (3..15): up to four 4-symbol encodes */
     hiTok(cdf: Uint16Array, o: number, tok: number): void {
         for (let base = 3; ; base += 3) {

@@ -49,6 +49,26 @@ const compare = (a, b) => {
     const lossless = await Image.decode(await potato.encodeAVIF({quality: 100, effort: 0}));
     if (Buffer.compare(Buffer.from(lossless.bitmap), Buffer.from(potato.bitmap))) panic('quality 100 isn\'t lossless');
 
+    // gray: monochrome, smaller, lossless if asked
+    const gray = photo.clone().saturation(0, {absolute: true});
+    const grayAvif = await gray.encodeAVIF({effort: 0}), grayBack = await Image.decode(grayAvif);
+    if (grayAvif.length >= full.length * 0.8 || compare(gray, grayBack)[0] < 35) panic(`gray: ${grayAvif.length} bytes, ${compare(gray, grayBack)[0].toFixed(2)} dB`);
+    for (let i = 0; i < grayBack.bitmap.length; i += 4) if (grayBack.bitmap[i] !== grayBack.bitmap[i + 1] || grayBack.bitmap[i] !== grayBack.bitmap[i + 2]) panic('gray: colored pixels');
+    if (Buffer.compare(Buffer.from((await Image.decode(await gray.encodeAVIF({quality: 100, effort: 0}))).bitmap), Buffer.from(gray.bitmap))) panic('gray: quality 100 isn\'t lossless');
+
+    // screen content (palettes): few colors, sharp edges
+    const screen = new Image(96, 80);
+    for (let y = 0; y < 80; y++) for (let x = 0; x < 96; x++) {
+        const c = (x >> 3 ^ y >> 2) % 5 === 0 ? [20, 30, 200] : (x * x + y * 3) % 7 < 2 ? [240, 240, 240] : x < 48 ? [200, 40, 40] : [30, 160, 60];
+        screen.setPixelAt(x, y, Image.rgbaToColor(c[0], c[1], c[2], 255));
+    }
+    for (const effort of [0, 1]) {
+        const back = await Image.decode(await screen.encodeAVIF({quality: 80, effort}));
+        if (compare(screen, back)[0] < 35) panic(`screen content, effort ${effort}: ${compare(screen, back)[0].toFixed(2)} dB`);
+        const exact = await Image.decode(await screen.encodeAVIF({quality: 100, effort}));
+        if (Buffer.compare(Buffer.from(exact.bitmap), Buffer.from(screen.bitmap))) panic(`screen content, effort ${effort}: quality 100 isn't lossless`);
+    }
+
     // odd sizes, a pixel, wider than a tile (4096 pixels)
     for (const [w, h] of [[1, 1], [7, 3], [65, 130], [4100, 8]]) {
         const image = new Image(w, h);
