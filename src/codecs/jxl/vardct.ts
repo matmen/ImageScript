@@ -30,7 +30,8 @@ export interface VarDCTGlobal {
     bFactorLf: number;
 }
 
-const DEFAULT_CTX_MAP = Uint8Array.of(0, 1, 2, 2, 3, 3, 4, 5, 6, 6, 6, 6, 6, 7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14, 7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14);
+/** The default block context map: by channel (Y, X, B) and order (13 each) */
+export const DEFAULT_CTX_MAP = Uint8Array.of(0, 1, 2, 2, 3, 3, 4, 5, 6, 6, 6, 6, 6, 7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14, 7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14);
 
 export function readVarDCTGlobal(r: BitReader): VarDCTGlobal {
     const globalScale = r.u32([1, 11], [2049, 11], [4097, 12], [8193, 16]), quantLf = r.u32(16, [1, 5], [1, 8], [1, 16]);
@@ -64,19 +65,20 @@ export function readVarDCTGlobal(r: BitReader): VarDCTGlobal {
     return { globalScale, quantLf, ctx, colourFactor, baseX, baseB, xFactorLf, bFactorLf };
 }
 
-// the size of varblock types in 8x8 blocks: [width, height]
-const SIZES = [
+/** The size of varblock types in 8x8 blocks: width, height */
+export const SIZES = [
     1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 4, 4, 1, 2, 2, 1, 1, 4, 4, 1, 2, 4, 4, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 8, 8, 4, 8, 8, 4,
     16, 16, 8, 16, 16, 8, 32, 32, 16, 32, 32, 16
 ];
-// the coefficient orders of each type
-const ORDER_ID = [0, 1, 1, 1, 2, 3, 4, 4, 5, 5, 6, 6, 1, 1, 1, 1, 1, 1, 7, 8, 8, 9, 10, 10, 11, 12, 12];
+/** The coefficient orders of each type */
+export const ORDER_ID = [0, 1, 1, 1, 2, 3, 4, 4, 5, 5, 6, 6, 1, 1, 1, 1, 1, 1, 7, 8, 8, 9, 10, 10, 11, 12, 12];
 const ORDER_SIZES = [[8, 8], [8, 8], [16, 16], [32, 32], [16, 8], [32, 8], [32, 16], [64, 64], [64, 32], [128, 128], [128, 64], [256, 256], [256, 128]];
 // (the 8x8 transforms other than the DCT, whose LF is a single coefficient)
 const special = (t: number): boolean => (t >= 1 && t <= 3) || (t >= 12 && t <= 17);
-// (types whose coefficients are transposed: the DCTs at least as high as wide)
-const transposed = (t: number): boolean => !special(t) && SIZES[2 * t + 1] >= SIZES[2 * t];
-const single = (t: number): boolean => t === 0 || special(t);
+/** Whether the coefficients of a type are transposed (the DCTs at least as high as wide) */
+export const transposed = (t: number): boolean => !special(t) && SIZES[2 * t + 1] >= SIZES[2 * t];
+/** Whether a type's LF is its first coefficient (the 8x8 ones) */
+export const single = (t: number): boolean => t === 0 || special(t);
 
 const naturalOrders = new Map<number, Uint16Array>();
 

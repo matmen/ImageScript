@@ -24,11 +24,11 @@ export function isJXL(d: Uint8Array): boolean {
 }
 
 /**
- * Encodes RGBA pixels as a JPEG XL, lossless or lossy (with a Butteraugli distance above 0): the codestream, in the
- * container if there is Exif data (a TIFF header and IFDs)
+ * Encodes RGBA pixels as a JPEG XL, lossless or lossy (with a Butteraugli distance above 0, and an effort 0-2): the
+ * codestream, in the container if there is Exif data (a TIFF header and IFDs)
  */
-export function encode(rgba: Uint8Array, width: number, height: number, exif?: Uint8Array, distance = 0): Uint8Array {
-    const stream = distance > 0 ? encodeVarDCT(rgba, width, height, { distance }) : encodeRGBA(rgba, width, height);
+export function encode(rgba: Uint8Array, width: number, height: number, exif?: Uint8Array, distance = 0, effort = 1): Uint8Array {
+    const stream = distance > 0 ? encodeVarDCT(rgba, width, height, { distance, effort }) : encodeRGBA(rgba, width, height);
     if (!exif?.length) return stream;
     // (ftyp: brand jxl, minor version 0, compatible jxl; Exif: the offset of the TIFF header, 0, then the TIFF data)
     const jxl = [0x6a, 0x78, 0x6c, 0x20];

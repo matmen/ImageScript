@@ -1,21 +1,26 @@
 /*!
- * Lossy JPEG XL encoding (VarDCT), like libjxl's effort 3 (lib/jxl/enc_heuristics.cc, enc_group.cc, quantizer.cc,
- * enc_adaptive_quantization.cc, enc_xyb.cc, enc_modular.cc): XYB, 8x8 DCTs, a constant quantization field from the
- * distance, libjxl's dead zone quantization, the default matrices, contexts and chroma from luma, the edge
- * preserving filter. Copyright (c) the JPEG XL Project Authors, BSD-3-Clause License (see THIRD_PARTY_NOTICES.md)
+ * Lossy JPEG XL encoding (VarDCT), like libjxl (lib/jxl/enc_heuristics.cc, enc_group.cc, quantizer.cc,
+ * enc_chroma_from_luma.cc, enc_xyb.cc, enc_modular.cc): XYB, the varblocks of libjxl's search (effort 1 and 2; else
+ * 8x8 DCTs), a constant quantization field from the distance with libjxl's dead zones, the default matrices and block
+ * contexts, chroma from luma per tile (libjxl's fast search), the edge preserving filter. Copyright (c) the JPEG XL
+ * Project Authors, BSD-3-Clause License (see THIRD_PARTY_NOTICES.md)
  */
 import { BitWriter } from './bit-writer.ts';
 import { imageHeader, u32 } from './headers-enc.ts';
 import { EntropyCode, Tokens, packSigned } from './entropy-enc.ts';
 import { MATree, TreeNode, PRED_GRADIENT, PRED_LEFT, PRED_WEIGHTED, PROP_CHANNEL, PROP_STREAM, PROP_WP_ERROR, channelTokens, fixedTree, streamHeader } from './modular-enc.ts';
-import { dct2d } from './dct.ts';
-import { defaultDequant } from './quant.ts';
-import { naturalOrder } from './vardct.ts';
+import { forwardTransform } from './transforms-enc.ts';
+import { initialQuantField } from './aq-enc.ts';
+import { chooseVarblocks } from './acs-enc.ts';
+import { defaultDequant, MATRIX_INDEX } from './quant.ts';
+import { naturalOrder, DEFAULT_CTX_MAP, ORDER_ID, SIZES, single, transposed } from './vardct.ts';
 
 /** Options of the lossy JPEG XL encoder */
 export interface VarDCTOptions {
     /** the Butteraugli distance (libjxl's -d): 1 is visually lossless, higher is smaller */
     distance: number;
+    /** 0: 8x8 DCTs only (like libjxl's effort 3), 1: libjxl's varblock search (its effort 5), 2: also the 4x8 and AFV transforms */
+    effort: number;
 }
 
 // libjxl's opsin absorbance matrix and bias (lib/jxl/cms/opsin_params.h)
@@ -70,8 +75,8 @@ function quantizer(distance: number): [number, number, number] {
 // the default LF dequantization (X, Y, B) and quantization biases
 const LF_DEQUANT = [1 / 32, 1 / 4, 1 / 2];
 const QUANT_BIAS = [1 - 0.05465007330715401, 1 - 0.07005449891748593, 1 - 0.049935103337343655], QUANT_BIAS_NUMERATOR = 0.145;
-// the default block context map (the context of a channel's DCT8 blocks: Y, then X and B) and its number of contexts
-const BLOCK_CTX = [0, 7, 7], NUM_BLOCK_CTX = 15;
+// the number of contexts of the default block context map, the coefficients of the largest varblock used
+const NUM_BLOCK_CTX = 15, MAX_COEFFS = 64 * 64;
 // libjxl's coefficient contexts (lib/jxl/ac_context.h)
 const FREQ_CONTEXT = Uint8Array.of(
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15, 16, 16, 17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 23, 23, 23,
@@ -107,8 +112,61 @@ function globalTree(numLfGroups: number, numPixels: number): MATree {
     return new MATree({ property: PROP_STREAM, split: 3 * numLfGroups + 16, above: alpha(), below: { property: PROP_STREAM, split: numLfGroups, above: hf, below: lfOrAlpha } });
 }
 
+const inverses = new Map<number, Float32Array[]>();
+// the inverse dequantization matrices of a type (in its coefficients' layout)
+function inverseMatrices(type: number): Float32Array[] {
+    let inv = inverses.get(type);
+    if (!inv) inverses.set(type, inv = defaultDequant(MATRIX_INDEX[type])[transposed(type) ? 1 : 0].map(m => Float32Array.from(m, v => 1 / v)));
+    return inv;
+}
+
+/**
+ * libjxl's chroma from luma of each tile of 8x8 blocks (lib/jxl/enc_chroma_from_luma.cc, its fast search): the
+ * multipliers of Y for X and B (in 1/84) by least squares on the HF coefficients, weighted by the quantization, a bit
+ * towards zero
+ */
+function chromaFromLuma(raw: Float32Array[], types: Int8Array, muls: Int32Array, pw: number, bw: number, bh: number, globalScale: number, xFromY: Int32Array, bFromY: Int32Array): void {
+    const tilesPerRow = Math.ceil(bw / 8);
+    for (let ty = 0; ty < bh; ty += 8) {
+        for (let tx = 0; tx < bw; tx += 8) {
+            const sums = [0, 0, 0, 0];
+            let num = 0;
+            for (let by = ty; by < Math.min(ty + 8, bh); by++) {
+                for (let bx = tx; bx < Math.min(tx + 8, bw); bx++) {
+                    const type = types[by * bw + bx];
+                    if (type < 0) continue;
+                    const w8 = SIZES[2 * type], h8 = SIZES[2 * type + 1], w = w8 * 8, h = h8 * 8, o = by * 8 * pw + bx * 8, one = single(type);
+                    const inv = inverseMatrices(type), q = globalScale / 65536 * 128 * muls[by * bw + bx];
+                    num += w * h;
+                    for (let y = 0; y < h; y++) {
+                        for (let x = 0; x < w; x++) {
+                            if (one ? x === 0 && y === 0 : x < w8 && y < h8) continue;
+                            const k = y * w + x, yv = raw[1][o + y * pw + x];
+                            for (let c = 0; c < 2; c++) {
+                                const ch = c ? 2 : 0, qm = q * inv[ch][k], base = c;
+                                const a = yv * qm / 84, b = base * yv * qm - raw[ch][o + y * pw + x] * qm;
+                                sums[2 * c] += a * a;
+                                sums[2 * c + 1] += a * b;
+                            }
+                        }
+                    }
+                }
+            }
+            const factor = (aa: number, ab: number): number => {
+                if (!num) return 0;
+                let x = -ab / (aa + num * 1e-9 * 0.5);
+                x = x >= 2.6 ? x - 2.6 : x <= -2.6 ? x + 2.6 : 0;
+                return Math.max(-128, Math.min(127, Math.round(x)));
+            };
+            const t = (ty >> 3) * tilesPerRow + (tx >> 3);
+            xFromY[t] = factor(sums[0], sums[1]);
+            bFromY[t] = factor(sums[2], sums[3]);
+        }
+    }
+}
+
 /** Encodes RGBA pixels as a lossy JPEG XL codestream, alpha (if the image has transparency) losslessly */
-export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { distance }: VarDCTOptions): Uint8Array {
+export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { distance, effort }: VarDCTOptions): Uint8Array {
     if (width < 1 || height < 1) throw new RangeError('JPEG XL: dimensions must be at least 1');
     const bw = Math.ceil(width / 8), bh = Math.ceil(height / 8), pw = bw * 8;
     const planes = toXYB(rgba, width, height, pw, bh * 8);
@@ -126,38 +184,58 @@ export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { 
     const qmMul = [1.25 ** (xqmScale - 2), 1, 1.25 ** (bqmScale - 2)];
     const epfIters = [0.7, 1.5, 4].filter(t => distance >= t).length;
     const lfStep = LF_DEQUANT.map(m => m * 512 / (globalScale * quantLf));
-    const hfStep = 65536 / (globalScale * mul);
-    const matrices = defaultDequant(0)[1];
 
-    // the LF (per block) and HF (per coefficient, in the planes' layout) quantized
-    const lf = [0, 1, 2].map(() => new Int32Array(bw * bh));
-    const hf = [0, 1, 2].map(() => new Int32Array(pw * bh * 8));
-    const block = new Float32Array(64), coeffs = [0, 1, 2].map(() => new Float32Array(64)), yDequant = new Float32Array(64);
+    // the varblocks: a type at each one's first block (-1 elsewhere; 8x8 DCTs at effort 0, else by libjxl's search,
+    // with the masking of its quantization field: of 0.62 times the distance, like libjxl's without Gaborish), their
+    // HF multipliers
+    const types = effort ? chooseVarblocks(planes, pw, bw, bh, initialQuantField(distance * 0.62, planes, pw, bh * 8, 0.725 / (distance * 0.62)), distance, effort === 1 ? 5 : 4) : new Int8Array(bw * bh);
+    const muls = new Int32Array(bw * bh).fill(mul);
+
+    // the varblocks' coefficients (in the planes' layout) and the LF of their blocks
+    const lfValues = [0, 1, 2].map(() => new Float32Array(bw * bh));
+    const raw = [0, 1, 2].map(() => new Float32Array(pw * bh * 8));
+    const coeffs = new Float32Array(MAX_COEFFS), lfBlock = new Float32Array(MAX_COEFFS / 64);
     for (let by = 0; by < bh; by++) {
         for (let bx = 0; bx < bw; bx++) {
+            const type = types[by * bw + bx];
+            if (type < 0) continue;
+            const w8 = SIZES[2 * type], h8 = SIZES[2 * type + 1], w = w8 * 8, h = h8 * 8, o = by * 8 * pw + bx * 8;
             for (let c = 0; c < 3; c++) {
-                const p = planes[c], o = by * 8 * pw + bx * 8;
-                for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) block[y * 8 + x] = p[o + y * pw + x];
-                dct2d({ buf: block, offset: 0, stride: 8, w: 8, h: 8 }, false);
-                coeffs[c].set(block);
+                forwardTransform(type, planes[c], o, pw, coeffs, lfBlock);
+                for (let y = 0; y < h; y++) raw[c].set(coeffs.subarray(y * w, (y + 1) * w), o + y * pw);
+                for (let y = 0; y < h8; y++) for (let x = 0; x < w8; x++) lfValues[c][(by + y) * bw + bx + x] = lfBlock[y * w8 + x];
             }
-            const bi = by * bw + bx, o = by * 8 * pw + bx * 8;
-            // LF: Y, then X and B less Y (the default chroma from luma: X 0, B 1)
-            const ly = Math.round(coeffs[1][0] / lfStep[1]);
-            lf[1][bi] = ly;
-            lf[0][bi] = Math.round(coeffs[0][0] / lfStep[0]);
-            lf[2][bi] = Math.round((coeffs[2][0] - ly * lfStep[1]) / lfStep[2]);
-            // HF: Y, then X and B less the dequantized Y
+        }
+    }
+
+    // chroma from luma per tile of 8x8 blocks (at effort 0 X 0, B 1)
+    const tilesPerRow = Math.ceil(bw / 8), tileRows = Math.ceil(bh / 8);
+    const xFromY = new Int32Array(tilesPerRow * tileRows), bFromY = new Int32Array(tilesPerRow * tileRows);
+    if (effort) chromaFromLuma(raw, types, muls, pw, bw, bh, globalScale, xFromY, bFromY);
+
+    // the HF coefficients quantized: Y, then X and B less the dequantized Y by the tile's factors
+    const hf = [0, 1, 2].map(() => new Int32Array(pw * bh * 8));
+    const yDequant = new Float32Array(MAX_COEFFS);
+    for (let by = 0; by < bh; by++) {
+        for (let bx = 0; bx < bw; bx++) {
+            const bi = by * bw + bx, type = types[bi];
+            if (type < 0) continue;
+            const w8 = SIZES[2 * type], h8 = SIZES[2 * type + 1], w = w8 * 8, h = h8 * 8, o = by * 8 * pw + bx * 8;
+            const tile = (by >> 3) * tilesPerRow + (bx >> 3), cfl = [xFromY[tile] / 84, 0, 1 + bFromY[tile] / 84];
+            const [m0, m1] = defaultDequant(MATRIX_INDEX[type]), matrices = transposed(type) ? m1 : m0;
+            const hfStep = 65536 / (globalScale * muls[bi]), one = single(type);
             for (const c of [1, 0, 2]) {
-                const src = coeffs[c], m = matrices[c], out = hf[c];
+                const src = raw[c], m = matrices[c], out = hf[c], k0 = cfl[c];
                 const thresholds = c === 1 ? [0.56, 0.62, 0.62, 0.62] : [0.58, 0.62, 0.62, 0.62];
+                if (c !== 1 && w8 * h8 >= 4) for (let i = 0; i < 4; i++) thresholds[i] = Math.max(0.5, thresholds[i] - 0.00744 * w8 * h8);
                 const scale = qmMul[c] / hfStep;
-                for (let y = 0; y < 8; y++) {
-                    for (let x = 0; x < 8; x++) {
-                        const k = y * 8 + x;
-                        if (k === 0) continue;
-                        const v = (c === 2 ? src[k] - yDequant[k] : src[k]) / m[k] * scale;
-                        const q = Math.abs(v) >= thresholds[(y >= 4 ? 2 : 0) + (x >= 4 ? 1 : 0)] ? Math.round(v) : 0;
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        const k = y * w + x;
+                        // (not the lowest frequencies: the LF)
+                        if (one ? k === 0 : x < w8 && y < h8) continue;
+                        const v = (c === 1 ? src[o + y * pw + x] : src[o + y * pw + x] - k0 * yDequant[k]) / m[k] * scale;
+                        const q = Math.abs(v) >= thresholds[(y >= h / 2 ? 2 : 0) + (x >= w / 2 ? 1 : 0)] ? Math.round(v) : 0;
                         out[o + y * pw + x] = q;
                         if (c === 1) {
                             const d = q === 0 ? 0 : Math.abs(q) <= 1 ? q * QUANT_BIAS[1] : q - QUANT_BIAS_NUMERATOR / q;
@@ -168,6 +246,13 @@ export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { 
             }
         }
     }
+    const lf = [0, 1, 2].map(() => new Int32Array(bw * bh));
+    for (let i = 0; i < bw * bh; i++) {
+        const ly = Math.round(lfValues[1][i] / lfStep[1]);
+        lf[1][i] = ly;
+        lf[0][i] = Math.round(lfValues[0][i] / lfStep[0]);
+        lf[2][i] = Math.round((lfValues[2][i] - ly * lfStep[1]) / lfStep[2]);
+    }
 
     // the frame's structure: groups of 256 pixels, LF groups of 2048
     const groupsPerRow = Math.ceil(width / 256), numGroups = groupsPerRow * Math.ceil(height / 256);
@@ -175,7 +260,7 @@ export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { 
     const tree = globalTree(numLfGroups, 3 * bw * bh);
 
     // the LF groups' Modular data: the LF coefficients (Y, X, B), then the HF metadata
-    const lfTokens: Tokens[] = [];
+    const lfTokens: Tokens[] = [], numVarblocks: number[] = [];
     const lfGroupBlocks = (g: number): number[] => {
         const x0 = (g % lfGroupsPerRow) * 256, y0 = Math.floor(g / lfGroupsPerRow) * 256;
         return [x0, y0, Math.min(256, bw - x0), Math.min(256, bh - y0)];
@@ -189,13 +274,19 @@ export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { 
         const [x0, y0, w, h] = lfGroupBlocks(g), t = new Tokens();
         [1, 0, 2].forEach((c, i) => channelTokens(t, tree, crop(lf[c], x0, y0, w, h, bw), w, h, i, 1 + g));
         lfTokens.push(t);
-        // (CfL tiles of zeros, DCT8 blocks with the multiplier, sharpness 4)
+        // (the CfL tiles, the varblocks' types and multipliers, sharpness 4)
         const m = new Tokens(), tw = Math.ceil(w / 8), th = Math.ceil(h / 8), stream = 1 + 2 * numLfGroups + g;
-        channelTokens(m, tree, new Int32Array(tw * th), tw, th, 0, stream);
-        channelTokens(m, tree, new Int32Array(tw * th), tw, th, 1, stream);
-        const info = new Int32Array(2 * w * h);
-        info.fill(mul - 1, w * h);
-        channelTokens(m, tree, info, w * h, 2, 2, stream);
+        channelTokens(m, tree, crop(xFromY, x0 / 8, y0 / 8, tw, th, tilesPerRow), tw, th, 0, stream);
+        channelTokens(m, tree, crop(bFromY, x0 / 8, y0 / 8, tw, th, tilesPerRow), tw, th, 1, stream);
+        const blocks: number[] = [];
+        for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) if (types[y * bw + x] >= 0) blocks.push(y * bw + x);
+        const info = new Int32Array(2 * blocks.length);
+        blocks.forEach((bi, k) => {
+            info[k] = types[bi];
+            info[blocks.length + k] = muls[bi] - 1;
+        });
+        numVarblocks.push(blocks.length);
+        channelTokens(m, tree, info, blocks.length, 2, 2, stream);
         channelTokens(m, tree, new Int32Array(w * h).fill(4), w, h, 3, stream);
         lfTokens.push(m);
     }
@@ -215,8 +306,8 @@ export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { 
     }
     const modularCode = new EntropyCode([...lfTokens, ...alphaTokens], tree.numLeaves);
 
-    // the pass groups' HF coefficients
-    const order = naturalOrder(0);
+    // the pass groups' HF coefficients: per varblock and channel the non-zero count (predicted by the blocks above
+    // and left), then the coefficients in their order up to the last non-zero one
     const hfTokens: Tokens[] = [];
     for (let g = 0; g < numGroups; g++) {
         const bx0 = (g % groupsPerRow) * 32, by0 = Math.floor(g / groupsPerRow) * 32;
@@ -224,21 +315,25 @@ export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { 
         const nonZeros = [0, 1, 2].map(() => new Uint32Array(gw));
         for (let y = 0; y < gh; y++) {
             for (let x = 0; x < gw; x++) {
+                const type = types[(by0 + y) * bw + bx0 + x];
+                if (type < 0) continue;
+                const w8 = SIZES[2 * type], numBlocks = w8 * SIZES[2 * type + 1], log = 31 - Math.clz32(numBlocks);
+                const orderId = ORDER_ID[type], order = naturalOrder(orderId), n = order.length / 2, tr = transposed(type);
                 const o = (by0 + y) * 8 * pw + (bx0 + x) * 8;
+                const at = (i: number): number => tr ? o + order[2 * i] * pw + order[2 * i + 1] : o + order[2 * i + 1] * pw + order[2 * i];
                 for (let k = 0; k < 3; k++) {
-                    const c = [1, 0, 2][k], q = hf[c], nz = nonZeros[c], blockCtx = BLOCK_CTX[k];
+                    const c = [1, 0, 2][k], q = hf[c], nz = nonZeros[c], blockCtx = DEFAULT_CTX_MAP[k * 13 + orderId];
                     let count = 0;
-                    for (let i = 1; i < 64; i++) if (q[o + order[2 * i] * pw + order[2 * i + 1]]) count++;
+                    for (let i = numBlocks; i < n; i++) if (q[at(i)]) count++;
                     const predicted = y === 0 ? (x === 0 ? 32 : nz[x - 1]) : x === 0 ? nz[x] : (nz[x] + nz[x - 1] + 1) >> 1;
                     t.push(blockCtx + (predicted >= 8 ? 4 + (predicted >> 1) : predicted) * NUM_BLOCK_CTX, count);
-                    nz[x] = count;
-                    if (!count) continue;
-                    // (DCT8 is transposed: the order's x is the row)
-                    let prevNonZero = count <= 4 ? 1 : 0;
+                    const value = (count + numBlocks - 1) >> log;
+                    for (let dx = 0; dx < w8; dx++) nz[x + dx] = value;
+                    let prevNonZero = count <= numBlocks * 4 ? 1 : 0;
                     const ctxBase = blockCtx * 458 + 37 * NUM_BLOCK_CTX;
-                    for (let i = 1; i < 64 && count > 0; i++) {
-                        const v = q[o + order[2 * i] * pw + order[2 * i + 1]];
-                        t.push(ctxBase + (NUM_NONZERO_CONTEXT[count - 1] + FREQ_CONTEXT[i - 1]) * 2 + prevNonZero, packSigned(v));
+                    for (let i = numBlocks; i < n && count > 0; i++) {
+                        const v = q[at(i)];
+                        t.push(ctxBase + (NUM_NONZERO_CONTEXT[(count - 1) >> log] + FREQ_CONTEXT[(i - numBlocks) >> log]) * 2 + prevNonZero, packSigned(v));
                         prevNonZero = v ? 1 : 0;
                         if (v) count--;
                     }
@@ -276,7 +371,7 @@ export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { 
         w.write(2, 0);
         streamHeader(w);
         modularCode.writeTokens(w, lfTokens[2 * g]);
-        w.write(ceilLog2(gw * gh), gw * gh - 1);
+        w.write(ceilLog2(gw * gh), numVarblocks[g] - 1);
         streamHeader(w);
         modularCode.writeTokens(w, lfTokens[2 * g + 1]);
         sections.push(w);

@@ -4,11 +4,14 @@
 
 ### Features
 
-- `Image.encodeJXL({ quality })` encodes lossy JPEG XLs (VarDCT): `quality` (0-100) maps to the Butteraugli distance
-  like `cjxl -q` (90 is cjxl's default, 100 is lossless); without it, images are encoded losslessly as before. The
-  encoder follows libjxl's effort 3: XYB, 8x8 DCTs, libjxl's quantization, the weighted predictor for the LF, ANS,
-  the edge preserving filter. Its files are within about 1-3% of `cjxl -e 3` at the same PSNR; a 1920x1080 photo
-  takes about 0.9 s. Alpha is lossless.
+- `Image.encodeJXL({ quality, effort })` encodes lossy JPEG XLs (VarDCT): `quality` (0-100) maps to the Butteraugli
+  distance like `cjxl -q` (90 is cjxl's default, 100 is lossless); without it, images are encoded losslessly as
+  before. The encoder follows libjxl: XYB, the varblock sizes and transforms of libjxl's search (`effort` 1, the
+  default, like `cjxl -e 5`; 2 also tries the 4x8 and AFV transforms; 0: 8x8 DCTs only, like `cjxl -e 3`), chroma
+  from luma per 64x64 tile, libjxl's quantization, the weighted predictor for the LF, ANS, the edge preserving
+  filter. Alpha is lossless. At the same SSIMULACRA2 score its files are about 1.5% smaller than `cjxl -e 5`'s at
+  effort 1 (3.5% at effort 2) and within 1-4% of `cjxl -e 7`'s (up to 9% for screenshots); effort 0 is within 1.5%
+  of `cjxl -e 3`. A 1920x1080 photo takes about 1 s at effort 0, 5 s at effort 1, 10 s at effort 2.
 
 ### Fixes
 

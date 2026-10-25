@@ -89,7 +89,7 @@ const codestream = jxl => {
     const photo = (await Image.decode(await fs.readFile('./tests/targets/external.png'))).resize(300, 211);
     let last = 0, lastPsnr = 0;
     for (const quality of [30, 75, 95]) {
-        const jxl = await photo.encodeJXL({quality});
+        const jxl = await photo.encodeJXL({quality, effort: 0});
         const p = psnr(photo, await Image.decode(jxl));
         if (jxl.length <= last || p <= lastPsnr) panic(`quality ${quality}: not larger and better (${jxl.length} B, ${p.toFixed(2)} dB)`);
         if (p < {30: 29, 75: 32, 95: 38.5}[quality]) panic(`quality ${quality}: ${p.toFixed(2)} dB`);
@@ -99,9 +99,20 @@ const codestream = jxl => {
     for (const [w, h] of [[300, 211], [100, 60]]) {
         const image = photo.clone().crop(0, 0, w, h);
         for (let i = 3; i < image.bitmap.length; i += 4) image.bitmap[i] = (i >> 2) % 251;
-        const back = await Image.decode(await image.encodeJXL({quality: 90}));
+        const back = await Image.decode(await image.encodeJXL({quality: 90, effort: 0}));
         for (let i = 3; i < image.bitmap.length; i += 4) if (back.bitmap[i] !== image.bitmap[i]) panic(`${w}x${h}: lossy alpha`);
     }
+    // efforts: the varblock search (every transform at effort 2) for no worse files; a screenshot's large flat areas
+    const shot = (await Image.decode(await fs.readFile('./tests/targets/readme.png'))).crop(0, 0, 256, 128);
+    let effort0 = 0;
+    for (const effort of [0, 1, 2]) {
+        const jxl = await shot.encodeJXL({quality: 90, effort});
+        const p = psnr(shot, await Image.decode(jxl));
+        if (p < 31) panic(`effort ${effort}: ${p.toFixed(2)} dB`);
+        if (effort === 0) effort0 = jxl.length;
+        else if (jxl.length > effort0 * 1.02) panic(`effort ${effort}: ${jxl.length} B, effort 0 ${effort0} B`);
+    }
+    for (const effort of [-1, 3, 1.5]) if (!await shot.encodeJXL({quality: 90, effort}).then(() => false, e => e instanceof RangeError)) panic(`effort ${effort} should throw`);
     const pixel = await Image.decode(await new Image(1, 1).fill(0x336699ff).encodeJXL({quality: 90}));
     if (pixel.width !== 1 || Math.abs((pixel.getPixelAt(0, 0) >>> 24) - 0x33) > 2) panic('1x1 lossy');
     const lossless = await Image.decode(await photo.encodeJXL({quality: 100}));

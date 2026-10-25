@@ -4,7 +4,7 @@
  * (crates/jxl-render/src/vardct/generic, dct_common.rs, transform_common.rs). Copyright (c) Wonwoo Choi, MIT License
  * (see THIRD_PARTY_NOTICES.md)
  */
-import { idct16, idct32 } from './idct.ts';
+import { idct16, idct32, idct64 } from './idct.ts';
 
 /** A rectangle of a plane: its top left at offset, rows stride apart */
 export interface Block {
@@ -62,8 +62,8 @@ export function dct(io: Float64Array, o: number, n: number, scratch: Float64Arra
         dct4(io, o, inverse);
         return;
     }
-    if (inverse && (n === 16 || n === 32)) {
-        (n === 16 ? idct16 : idct32)(io, o, 1);
+    if (inverse && (n === 16 || n === 32 || n === 64)) {
+        (n === 16 ? idct16 : n === 32 ? idct32 : idct64)(io, o, 1);
         return;
     }
     const half = n / 2, sec = secHalf(n);
@@ -127,8 +127,8 @@ function idct8(buf: Float32Array, o: number, step: number): void {
 
 // a DCT of n values of buf from o (rows) or every stride (columns)
 function dctRow(buf: Float32Array, o: number, n: number, inverse: boolean): void {
-    if (inverse && n <= 32 && n >= 8) {
-        (n === 8 ? idct8 : n === 16 ? idct16 : idct32)(buf, o, 1);
+    if (inverse && n <= 64 && n >= 8) {
+        (n === 8 ? idct8 : n === 16 ? idct16 : n === 32 ? idct32 : idct64)(buf, o, 1);
         return;
     }
     const row = work.row;
@@ -138,8 +138,8 @@ function dctRow(buf: Float32Array, o: number, n: number, inverse: boolean): void
 }
 
 function dctColumn(buf: Float32Array, o: number, stride: number, n: number, inverse: boolean): void {
-    if (inverse && n <= 32 && n >= 8) {
-        (n === 8 ? idct8 : n === 16 ? idct16 : idct32)(buf, o, stride);
+    if (inverse && n <= 64 && n >= 8) {
+        (n === 8 ? idct8 : n === 16 ? idct16 : n === 32 ? idct32 : idct64)(buf, o, stride);
         return;
     }
     const row = work.row;

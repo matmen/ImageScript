@@ -291,8 +291,8 @@ DEALINGS IN THE SOFTWARE.
 
 The Modular decoding, the rendering pipeline, blending, the XYB conversion and the rendering of patches, splines and
 noise follow libjxl, the JPEG XL reference implementation, the lossless encoder is ported from its fast lossless
-encoder, the lossy encoder follows its effort 3 (heuristics, quantization, the ANS histograms, fixed trees and
-clustering); tests/jxl includes files of its conformance suite. JPEG XL
+encoder, the lossy encoder follows its heuristics (the varblock search with its adaptive quantization field,
+chroma from luma, quantization, the ANS histograms, fixed trees and clustering, the forward transforms); tests/jxl includes files of its conformance suite. JPEG XL
 is covered by Google's patent grant for libjxl (the "Additional IP Rights Grant" in libjxl's PATENTS file).
 
 ```

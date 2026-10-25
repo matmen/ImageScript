@@ -182,6 +182,11 @@ export interface JXLEncodeOptions {
      * Without it the image is encoded losslessly
      */
     quality?: number;
+    /**
+     * How hard lossy compression searches for the best transforms: 0-2, faster to smaller. 0 uses 8x8 DCTs only (like
+     * `cjxl -e 3`), 1 and 2 search their sizes like `cjxl -e 5` (2 tries more of the small ones). Default: `1`
+     */
+    effort?: number;
     /** Metadata to include, see {@link Metadata} */
     metadata?: Metadata;
 }
@@ -2101,12 +2106,13 @@ export class Image {
     /**
      * Encodes the image as JPEG XL: losslessly (the default), the codestream byte for byte like libjxl's `cjxl -e 1` on
      * CPUs with AVX2 or NEON (its fast lossless mode: the gradient predictor, a palette if the image has at most 511
-     * colors besides black, else YCoCg; greyscale if the image is), or lossy with a quality (like `cjxl -q`, about as
-     * small as `cjxl -e 3`: XYB, 8x8 DCTs, the edge preserving filter). Alpha (if the image has transparency) is
-     * lossless either way. The codestream is in the container, with the metadata as Exif
+     * colors besides black, else YCoCg; greyscale if the image is), or lossy with a quality (like `cjxl -q`: XYB,
+     * varblocks of libjxl's search, chroma from luma, the edge preserving filter). Alpha (if the image has
+     * transparency) is lossless either way. The codestream is in the container, with the metadata as Exif
      * @param options See {@link JXLEncodeOptions}
      */
-    async encodeJXL({ quality, metadata = {} }: JXLEncodeOptions = {}): Promise<Uint8Array> {
+    async encodeJXL({ quality, effort = 1, metadata = {} }: JXLEncodeOptions = {}): Promise<Uint8Array> {
+        if (!Number.isInteger(effort) || effort < 0 || effort > 2) throw new RangeError(`effort must be an integer 0-2, not ${effort}`);
         let distance = 0;
         if (quality !== undefined) {
             const q = finite(quality, 'quality');
@@ -2114,7 +2120,7 @@ export class Image {
             // (cjxl's distance of a quality)
             distance = q >= 100 ? 0 : q >= 30 ? 0.1 + (100 - q) * 0.09 : 53 / 3000 * q * q - 23 / 20 * q + 25;
         }
-        return jxl.encode(this.__bytes__(), this.width, this.height, exifData(resolveMetadata(metadata)), distance);
+        return jxl.encode(this.__bytes__(), this.width, this.height, exifData(resolveMetadata(metadata)), distance, effort);
     }
 
     /**
