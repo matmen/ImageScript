@@ -4,6 +4,8 @@
 
 ### Improvements
 
+- AVIF encoding also tries splitting blocks into halves (horizontal or vertical, from 64x64 to 16x16) where the whole
+  block and its quarters cost about the same: files about 2% smaller at the default effort, encoding about 20% slower.
 - AVIF encoding with `effort: 2` also chooses smaller transforms within blocks (transform depth): files about 1% smaller
   (up to 4% for graphics), encoding about 10% slower.
 

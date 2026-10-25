@@ -2,7 +2,7 @@
  * Encodes AV1 still pictures (intra frames with reduced still picture headers): the syntax and contexts mirror the
  * decoder's (decode.ts, ported from dav1d: Copyright (c) 2018-2021, VideoLAN and dav1d authors, Copyright (c) 2018, Two
  * Orioles, LLC, BSD-2-Clause License), the reconstruction uses its predictors and inverse transforms, so the encoder's
- * reconstruction is the decoder's output. Partitions (none or split, 64x64 to 8x8), intra modes, palettes and
+ * reconstruction is the decoder's output. Partitions (none, halves or split, 64x64 to 8x8), intra modes, palettes and
  * transform types are chosen by rate and distortion, coefficients quantized by rate and distortion, the loop filter
  * level (around libaom's guess from the quantizer: Copyright (c) 2016, Alliance for Open Media, BSD-2-Clause License)
  * and the CDEF strengths by the filtered frame's distortion. See THIRD_PARTY_NOTICES.md
@@ -223,13 +223,26 @@ class TileEncoder {
     }
 
     private walk(bl: number, n: Node): void {
+        const f = this.f, hsz = 16 >> bl;
         if (n.bp === PARTITION_NONE) {
-            const b = n.b as Block, f = this.f;
+            const b = n.b as Block;
             this.storeBlock(BLOCK_SIZES[(bl * 10 + PARTITION_NONE) * 2], b);
             if (!b.skip) f.cdefIdx[(this.by >> 4) * (f.b4Stride >> 4) + (this.bx >> 4)] = 0;
             return;
         }
-        const hsz = 16 >> bl;
+        if (n.bp === PARTITION_H || n.bp === PARTITION_V) {
+            const bs = BLOCK_SIZES[(bl * 10 + n.bp) * 2], dx = n.bp === PARTITION_V ? hsz : 0, dy = n.bp === PARTITION_H ? hsz : 0;
+            for (let k = 0; k < 2; k++) {
+                const b = (n.kids[k] as Node).b as Block;
+                this.storeBlock(bs, b);
+                if (!b.skip) f.cdefIdx[(this.by >> 4) * (f.b4Stride >> 4) + (this.bx >> 4)] = 0;
+                this.bx += dx;
+                this.by += dy;
+            }
+            this.bx -= 2 * dx;
+            this.by -= 2 * dy;
+            return;
+        }
         for (let k = 0; k < 4; k++) {
             if (!n.kids[k]) continue;
             const dx = k & 1 ? hsz : 0, dy = k & 2 ? hsz : 0;
@@ -290,7 +303,8 @@ class TileEncoder {
             const r = this.searchBlock(bs, node.o);
             return { node: { bp: PARTITION_NONE, b: r.b, kids: [] }, cost: r.cost };
         }
-        const saved = this.saveArea(bl);
+        const saved = this.saveArea(bl), entryContexts = this.saveContexts(bs);
+        let result: { node: Node, cost: number }, noneCost: number, splitCost: number;
         if (bl <= BL_64X64 + 1) {
             // 64x64 and 32x32: the quarters first, the whole block only if few of them split further (rarely better
             // then; below effort 2)
@@ -300,24 +314,81 @@ class TileEncoder {
             const spArea = this.saveArea(bl), contexts = this.saveContexts(bs);
             this.restoreArea(bl, saved);
             const none = this.searchBlock(bs, node.o);
-            if (none.cost + this.lambda < sp.cost + this.lambda * 2) return { node: { bp: PARTITION_NONE, b: none.b, kids: [] }, cost: none.cost + this.lambda };
-            this.restoreArea(bl, spArea);
-            this.restoreContexts(contexts);
-            return { node: sp.node, cost: sp.cost + this.lambda * 2 };
+            noneCost = none.cost + this.lambda;
+            splitCost = sp.cost + this.lambda * 2;
+            if (noneCost < splitCost) result = { node: { bp: PARTITION_NONE, b: none.b, kids: [] }, cost: noneCost };
+            else {
+                this.restoreArea(bl, spArea);
+                this.restoreContexts(contexts);
+                result = { node: sp.node, cost: splitCost };
+            }
+        } else {
+            // 16x16: the whole block first (one without coefficients is rarely worth splitting)
+            const none = this.searchBlock(bs, node.o);
+            if (none.b.skip && this.params.effort < 2) return { node: { bp: PARTITION_NONE, b: none.b, kids: [] }, cost: none.cost + this.lambda };
+            const noneArea = this.saveArea(bl);
+            this.restoreArea(bl, saved);
+            const sp = split([0, 1, 2, 3]);
+            // (the partition symbols: about a bit each)
+            noneCost = none.cost + this.lambda;
+            splitCost = sp.cost + this.lambda * 2;
+            if (noneCost < splitCost) {
+                this.restoreArea(bl, noneArea);
+                this.modeContexts(bs, none.b);
+                result = { node: { bp: PARTITION_NONE, b: none.b, kids: [] }, cost: noneCost };
+            } else result = { node: sp.node, cost: splitCost };
         }
-        // 16x16: the whole block first (one without coefficients is rarely worth splitting)
-        const none = this.searchBlock(bs, node.o);
-        if (none.b.skip && this.params.effort < 2) return { node: { bp: PARTITION_NONE, b: none.b, kids: [] }, cost: none.cost + this.lambda };
-        const noneArea = this.saveArea(bl);
-        this.restoreArea(bl, saved);
-        const sp = split([0, 1, 2, 3]);
-        // (the partition symbols: about a bit each)
-        if (none.cost + this.lambda < sp.cost + this.lambda * 2) {
-            this.restoreArea(bl, noneArea);
-            this.modeContexts(bs, none.b);
-            return { node: { bp: PARTITION_NONE, b: none.b, kids: [] }, cost: none.cost + this.lambda };
+        // the halves (horizontal, vertical): only if the whole block and the quarters cost about the same and the
+        // quarters rarely split further (they rarely win otherwise); below effort 2 only the halves that differ more
+        const ratio = noneCost / splitCost, deeper = result.node.bp === PARTITION_SPLIT ? result.node.kids.filter(k => k && k.bp !== PARTITION_NONE).length : 0;
+        if (this.params.effort && ratio >= 0.9 && ratio < 1.3 && deeper <= 1) {
+            let bestArea = this.saveArea(bl), bestContexts = this.saveContexts(bs);
+            for (const bp of this.params.effort > 1 ? [PARTITION_H, PARTITION_V] : [this.halvesDirection(bs)]) {
+                this.restoreArea(bl, saved);
+                this.restoreContexts(entryContexts);
+                const r = this.halves(bl, bp, node);
+                if (r.cost < result.cost) {
+                    result = r;
+                    bestArea = this.saveArea(bl);
+                    bestContexts = this.saveContexts(bs);
+                }
+            }
+            this.restoreArea(bl, bestArea);
+            this.restoreContexts(bestContexts);
         }
-        return { node: sp.node, cost: sp.cost + this.lambda * 2 };
+        return result;
+    }
+
+    // the halves (PARTITION_H or PARTITION_V) whose luma means explain more of the block's variance
+    private halvesDirection(bs: number): number {
+        const f = this.f, stride = f.strides[0], src = this.src[0];
+        const w = Math.min(bdim(bs, 0), f.bw - this.bx) * 4, h = Math.min(bdim(bs, 1), f.bh - this.by) * 4, o = this.by * 4 * stride + this.bx * 4;
+        let top = 0, left = 0, all = 0;
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const v = src[o + y * stride + x];
+                all += v;
+                if (y < h >> 1) top += v;
+                if (x < w >> 1) left += v;
+            }
+        }
+        // (the between-halves sums of squares, of equal halves: proportional to the squared differences of their sums)
+        return Math.abs(2 * top - all) >= Math.abs(2 * left - all) ? PARTITION_H : PARTITION_V;
+    }
+
+    // a block as two halves (PARTITION_H: top and bottom, PARTITION_V: left and right)
+    private halves(bl: number, bp: number, node: EdgeNode): { node: Node, cost: number } {
+        const hsz = 16 >> bl, bs = BLOCK_SIZES[(bl * 10 + bp) * 2], edges = bp === PARTITION_H ? node.h : node.v;
+        const dx = bp === PARTITION_V ? hsz : 0, dy = bp === PARTITION_H ? hsz : 0;
+        const first = this.searchBlock(bs, edges[0]);
+        this.bx += dx;
+        this.by += dy;
+        const second = this.searchBlock(bs, edges[1]);
+        this.bx -= dx;
+        this.by -= dy;
+        const leaf = (b: Block): Node => ({ bp: PARTITION_NONE, b, kids: [] });
+        // (the partition symbol: about 3 bits)
+        return { node: { bp, b: null, kids: [leaf(first.b), leaf(second.b)] }, cost: first.cost + second.cost + this.lambda * 3 };
     }
 
     // the pixels of a block (all planes) at the current position
@@ -1043,7 +1114,16 @@ class TileEncoder {
         if (haveH && haveV) {
             w.symbol(cdf, pc, PARTITION_TYPE_COUNT[bl], bp);
             if (bp === PARTITION_NONE) this.writeB(BLOCK_SIZES[(bl * 10 + bp) * 2], node.o, n.b as Block);
-            else for (let k = 0; k < 4; k++) quarter(k);
+            else if (bp === PARTITION_H || bp === PARTITION_V) {
+                const bs = BLOCK_SIZES[(bl * 10 + bp) * 2], edges = bp === PARTITION_H ? node.h : node.v;
+                const dx = bp === PARTITION_V ? hsz : 0, dy = bp === PARTITION_H ? hsz : 0;
+                this.writeB(bs, edges[0], (n.kids[0] as Node).b as Block);
+                this.bx += dx;
+                this.by += dy;
+                this.writeB(bs, edges[1], (n.kids[1] as Node).b as Block);
+                this.bx -= dx;
+                this.by -= dy;
+            } else for (let k = 0; k < 4; k++) quarter(k);
         } else if (haveH) {
             // split or horizontal, by the gathered probabilities (always split)
             let prob = cdf[pc + PARTITION_V - 1] - cdf[pc + PARTITION_T_TOP_SPLIT];
