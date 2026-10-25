@@ -62,43 +62,74 @@ function outputRow(cur: Float32Array[], out: Float32Array[], y: number, w: numbe
     // (rows 2 away from the edges: the taps without mirroring)
     const innerRow = rows[0] === (y - 2) * w && rows[4] === (y + 2) * w;
     const row = y * w;
-    for (let x = 0; x < w; x++) {
-        const i = row + x;
-        const sg = sigma ? sigma[sigmaRow + (x >> 3)] : sigmaModular;
+    // per tap pair: the offsets of +u in the sums and in the row
+    const sumOff = TAPS.subarray(0, n), srcOff = TAPS.subarray(8, 8 + n);
+    for (let k = 0; k < n; k++) {
+        sumOff[k] = u[2 * k + 1] * pw + u[2 * k];
+        srcOff[k] = u[2 * k + 1] * w + u[2 * k];
+    }
+    for (let x0 = 0; x0 < w; x0 += 8) {
+        const x1 = Math.min(x0 + 8, w);
+        const sg = sigma ? sigma[sigmaRow + (x0 >> 3)] : sigmaModular;
         if (sg < 0.3) {
-            o0[i] = i0[i];
-            o1[i] = i1[i];
-            o2[i] = i2[i];
+            o0.set(i0.subarray(row + x0, row + x1), row + x0);
+            o1.set(i1.subarray(row + x0, row + x1), row + x0);
+            o2.set(i2.subarray(row + x0, row + x1), row + x0);
             continue;
         }
-        const sm = yBorder || (x & 7) === 0 || (x & 7) === 7 ? stepMul * borderMul : stepMul;
-        const negInvSigma = 6.6 * (Math.SQRT1_2 - 1) / sg * sm;
-        let sumW = 1, sum0 = i0[i], sum1 = i1[i], sum2 = i2[i];
-        const p = p0 + x, inner = innerRow && x >= 2 && x < w - 2;
-        for (let k = 0; k < n; k++) {
-            const ux = u[2 * k], uy = u[2 * k + 1], sum = sums[k];
-            let weight = 1 + sum[p] * negInvSigma;
-            if (weight > 0) {
-                const t = inner ? i + uy * w + ux : rows[2 + uy] + xs[x + 5 + ux];
-                sumW += weight;
-                sum0 += weight * i0[t];
-                sum1 += weight * i1[t];
-                sum2 += weight * i2[t];
+        // (the block's columns 0 and 7, and its rows 0 and 7, are weighted by borderMul)
+        const borderInvSigma = 6.6 * (Math.SQRT1_2 - 1) / sg * (stepMul * borderMul), innerInvSigma = 6.6 * (Math.SQRT1_2 - 1) / sg * stepMul;
+        for (let x = x0; x < x1; x++) {
+            const i = row + x;
+            const negInvSigma = yBorder || (x & 7) === 0 || (x & 7) === 7 ? borderInvSigma : innerInvSigma;
+            let sumW = 1, sum0 = i0[i], sum1 = i1[i], sum2 = i2[i];
+            const p = p0 + x;
+            if (innerRow && x >= 2 && x < w - 2) {
+                for (let k = 0; k < n; k++) {
+                    const sum = sums[k], so = sumOff[k], to = srcOff[k];
+                    let weight = 1 + sum[p] * negInvSigma;
+                    if (weight > 0) {
+                        sumW += weight;
+                        sum0 += weight * i0[i + to];
+                        sum1 += weight * i1[i + to];
+                        sum2 += weight * i2[i + to];
+                    }
+                    weight = 1 + sum[p - so] * negInvSigma;
+                    if (weight > 0) {
+                        sumW += weight;
+                        sum0 += weight * i0[i - to];
+                        sum1 += weight * i1[i - to];
+                        sum2 += weight * i2[i - to];
+                    }
+                }
+            } else {
+                for (let k = 0; k < n; k++) {
+                    const ux = u[2 * k], uy = u[2 * k + 1], sum = sums[k];
+                    let weight = 1 + sum[p] * negInvSigma;
+                    if (weight > 0) {
+                        const t = rows[2 + uy] + xs[x + 5 + ux];
+                        sumW += weight;
+                        sum0 += weight * i0[t];
+                        sum1 += weight * i1[t];
+                        sum2 += weight * i2[t];
+                    }
+                    weight = 1 + sum[p - uy * pw - ux] * negInvSigma;
+                    if (weight > 0) {
+                        const t = rows[2 - uy] + xs[x + 5 - ux];
+                        sumW += weight;
+                        sum0 += weight * i0[t];
+                        sum1 += weight * i1[t];
+                        sum2 += weight * i2[t];
+                    }
+                }
             }
-            weight = 1 + sum[p - uy * pw - ux] * negInvSigma;
-            if (weight > 0) {
-                const t = inner ? i - uy * w - ux : rows[2 - uy] + xs[x + 5 - ux];
-                sumW += weight;
-                sum0 += weight * i0[t];
-                sum1 += weight * i1[t];
-                sum2 += weight * i2[t];
-            }
+            o0[i] = sum0 / sumW;
+            o1[i] = sum1 / sumW;
+            o2[i] = sum2 / sumW;
         }
-        o0[i] = sum0 / sumW;
-        o1[i] = sum1 / sumW;
-        o2[i] = sum2 / sumW;
     }
 }
+const TAPS = new Int32Array(16);
 
 /**
  * The edge-preserving filter on 3 w x h channels

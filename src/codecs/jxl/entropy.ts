@@ -454,6 +454,8 @@ export class EntropyDecoder {
         const n = (config.splitExponent - inToken + ((token - config.split) >>> inToken)) & 31;
         const low = token & ((1 << config.lsb) - 1);
         const high = (token >>> config.lsb) & ((1 << config.msb) - 1) | 1 << config.msb;
+        // (in integers while it fits in 31 bits)
+        if (n + config.msb + config.lsb < 31) return ((high << n | r.bits(n)) << config.lsb) | low;
         return ((high * 2 ** n + r.bits(n)) * 2 ** config.lsb + low) >>> 0;
     }
 
@@ -464,28 +466,33 @@ export class EntropyDecoder {
 
     readClustered(r: BitReader, cluster: number, distMultiplier = 0): number {
         if (!this.lz77) return this.uint(r, this.configs[cluster], this.symbol(r, cluster));
+        // (small, so that it's inlined: the rest of a copy, else readLz77)
+        if (this.toCopy === 0) return this.readLz77(r, cluster, distMultiplier);
+        const window = this.window as Uint32Array, v = window[this.copyPos++ & WINDOW_MASK];
+        this.toCopy--;
+        window[this.decoded++ & WINDOW_MASK] = v;
+        return v;
+    }
+
+    // a value or the start of a copy, with LZ77
+    private readLz77(r: BitReader, cluster: number, distMultiplier: number): number {
         const window = this.window ??= new Uint32Array(1 << 20);
         let v: number;
-        if (this.toCopy > 0) {
+        const token = this.symbol(r, cluster);
+        if (token >= this.minSymbol) {
+            if (this.decoded === 0) throw new Error('JPEG XL: LZ77 copy before any value');
+            const distCluster = this.clusters[this.clusters.length - 1];
+            this.toCopy = this.uint(r, this.lenConfig as IntegerConfig, token - this.minSymbol) + this.minLength;
+            let distance = this.uint(r, this.configs[distCluster], this.symbol(r, distCluster));
+            if (distMultiplier) {
+                if (distance < 120) distance = Math.max(SPECIAL_DISTANCES[distance * 2] + distMultiplier * SPECIAL_DISTANCES[distance * 2 + 1] - 1, 0);
+                else distance -= 120;
+            }
+            distance = Math.min(Math.min(distance, WINDOW_MASK) + 1, this.decoded);
+            this.copyPos = this.decoded - distance;
             v = window[this.copyPos++ & WINDOW_MASK];
             this.toCopy--;
-        } else {
-            const token = this.symbol(r, cluster);
-            if (token >= this.minSymbol) {
-                if (this.decoded === 0) throw new Error('JPEG XL: LZ77 copy before any value');
-                const distCluster = this.clusters[this.clusters.length - 1];
-                this.toCopy = this.uint(r, this.lenConfig as IntegerConfig, token - this.minSymbol) + this.minLength;
-                let distance = this.uint(r, this.configs[distCluster], this.symbol(r, distCluster));
-                if (distMultiplier) {
-                    if (distance < 120) distance = Math.max(SPECIAL_DISTANCES[distance * 2] + distMultiplier * SPECIAL_DISTANCES[distance * 2 + 1] - 1, 0);
-                    else distance -= 120;
-                }
-                distance = Math.min(Math.min(distance, WINDOW_MASK) + 1, this.decoded);
-                this.copyPos = this.decoded - distance;
-                v = window[this.copyPos++ & WINDOW_MASK];
-                this.toCopy--;
-            } else v = this.uint(r, this.configs[cluster], token);
-        }
+        } else v = this.uint(r, this.configs[cluster], token);
         window[this.decoded++ & WINDOW_MASK] = v;
         return v;
     }

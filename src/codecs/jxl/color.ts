@@ -7,6 +7,9 @@ import { ImageHeader, TF_PQ, TF_HLG, PRI_BT2100, PRI_P3, EXTRA_ALPHA, EXTRA_SPOT
 import { toSRGB, hdrToLinear, ToneMapping, REFERENCE_WHITE } from '../hdr.ts';
 import type { Planes } from './frame.ts';
 
+// a sample (0-1) as a byte
+const byte = (v: number): number => v <= 0 ? 0 : v >= 1 ? 255 : Math.round(v * 255);
+
 // linear light to sRGB like libjxl (TF_SRGB::EncodedFromDisplay, lib/jxl/cms/transfer_functions-inl.h): a rational
 // polynomial of the square root instead of the power, within 5e-7
 const [P0, P1, P2, P3, P4] = [-5.135152395e-04, 5.287254571e-03, 3.903842876e-01, 1.474205315e+00, 7.352629620e-01].map(Math.fround);
@@ -119,16 +122,23 @@ export class ColorOutput {
             out = toSRGB(rgb, this.toneMapping);
         } else {
             out = new Uint8Array(4 * n);
-            const byte = (v: number): number => v <= 0 ? 0 : v >= 1 ? 255 : Math.round(v * 255);
-            for (let i = 0; i < n; i++) {
-                const a = premultiplied ? Math.max(alpha![i], 2 ** -26) : 1;
-                out[4 * i] = byte(r[i] / a);
-                out[4 * i + 1] = byte(g[i] / a);
-                out[4 * i + 2] = byte(b[i] / a);
-                out[4 * i + 3] = 255;
+            if (premultiplied) {
+                for (let i = 0, o = 0; i < n; i++, o += 4) {
+                    const a = Math.max(alpha![i], 2 ** -26);
+                    out[o] = byte(r[i] / a);
+                    out[o + 1] = byte(g[i] / a);
+                    out[o + 2] = byte(b[i] / a);
+                }
+            } else {
+                for (let i = 0, o = 0; i < n; i++, o += 4) {
+                    out[o] = byte(r[i]);
+                    out[o + 1] = byte(g[i]);
+                    out[o + 2] = byte(b[i]);
+                }
             }
         }
-        if (alpha) for (let i = 0; i < n; i++) out[4 * i + 3] = alpha[i] <= 0 ? 0 : alpha[i] >= 1 ? 255 : Math.round(alpha[i] * 255);
+        if (alpha) for (let i = 0, o = 3; i < n; i++, o += 4) out[o] = byte(alpha[i]);
+        else for (let o = 3; o < out.length; o += 4) out[o] = 255;
         return out;
     }
 }

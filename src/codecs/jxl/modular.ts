@@ -647,6 +647,23 @@ export function decodeModular(r: BitReader, image: ModularImage, stream: number,
     if (undo) image.undo();
 }
 
+// the channels of a tree with a single leaf (small functions, so that the entropy decoding is inlined): no prediction
+function decodeZero(r: BitReader, dec: EntropyDecoder, cluster: number, data: Int32Array, mult: number, offset: number, distMultiplier: number): void {
+    for (let i = 0; i < data.length; i++) data[i] = (Math.imul(unpackSigned(dec.readClustered(r, cluster, distMultiplier)), mult) + offset) | 0;
+}
+
+// the gradient predictor (with the first row and column from the left and top)
+function decodeGradient(r: BitReader, dec: EntropyDecoder, cluster: number, data: Int32Array, w: number, h: number, distMultiplier: number): void {
+    for (let x = 0; x < w; x++) data[x] = (unpackSigned(dec.readClustered(r, cluster, distMultiplier)) + (x ? data[x - 1] : 0)) | 0;
+    for (let y = 1, i = w; y < h; y++) {
+        data[i] = (unpackSigned(dec.readClustered(r, cluster, distMultiplier)) + data[i - w]) | 0;
+        i++;
+        for (let x = 1; x < w; x++, i++) {
+            data[i] = (unpackSigned(dec.readClustered(r, cluster, distMultiplier)) + clampedGradient(data[i - w], data[i - 1], data[i - w - 1])) | 0;
+        }
+    }
+}
+
 function decodeChannel(r: BitReader, dec: EntropyDecoder, globalTree: Tree, image: ModularImage, chan: number, stream: number, distMultiplier: number): void {
     const c = image.channels[chan], { w, h } = c, data = c.data;
     const t = specialize(globalTree, chan, stream);
@@ -670,16 +687,11 @@ function decodeChannel(r: BitReader, dec: EntropyDecoder, globalTree: Tree, imag
                 data.fill((Math.imul(unpackSigned(single), mult) + offset) | 0);
                 return;
             }
-            for (let i = 0; i < w * h; i++) data[i] = (Math.imul(unpackSigned(dec.readClustered(r, cluster, distMultiplier)), mult) + offset) | 0;
+            decodeZero(r, dec, cluster, data, mult, offset, distMultiplier);
             return;
         }
         if (pred === 5 && mult === 1 && offset === 0) {
-            for (let y = 0, i = 0; y < h; y++) {
-                for (let x = 0; x < w; x++, i++) {
-                    const left = x ? data[i - 1] : y ? data[i - w] : 0, top = y ? data[i - w] : left, topleft = x && y ? data[i - w - 1] : left;
-                    data[i] = (unpackSigned(dec.readClustered(r, cluster, distMultiplier)) + clampedGradient(top, left, topleft)) | 0;
-                }
-            }
+            decodeGradient(r, dec, cluster, data, w, h, distMultiplier);
             return;
         }
     }

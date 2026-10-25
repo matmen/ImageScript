@@ -97,7 +97,7 @@ export function dct(io: Float64Array, o: number, n: number, scratch: Float64Arra
     }
 }
 
-const work = { row: new Float64Array(256), scratch: new Float64Array(256), col: new Float64Array(256 * 2) };
+const work = { row: new Float64Array(256), scratch: new Float64Array(256) };
 
 const SEC8 = secHalf(8);
 
@@ -205,40 +205,7 @@ export function dct2d(b: Block, inverse: boolean): void {
         return;
     }
     for (let y = 0; y < h; y++) rowDct(y, w);
-    // (the square blocks of the size of the shorter side transposed, then the columns transformed as rows)
-    const size = Math.min(w, h);
-    const transposeSquares = (): void => {
-        for (let by = 0; by < h; by += size) {
-            for (let bx = 0; bx < w; bx += size) {
-                for (let dy = 0; dy < size; dy++) {
-                    for (let dx = dy + 1; dx < size; dx++) {
-                        const p = at(bx + dx, by + dy), q = at(bx + dy, by + dx), t = buf[p];
-                        buf[p] = buf[q];
-                        buf[q] = t;
-                    }
-                }
-            }
-        }
-    };
-    transposeSquares();
-    if (size === h) {
-        for (let y = 0; y < h; y++) for (let x0 = 0; x0 < w; x0 += h) rowDct(y, h, x0);
-    } else {
-        // (rows of w values, h / w of them make a column)
-        const col = work.col, scratch = work.scratch;
-        for (let y = 0; y < w; y++) {
-            for (let k = 0; k < h / size; k++) {
-                const p = at(0, y + k * size);
-                for (let x = 0; x < w; x++) col[k * w + x] = buf[p + x];
-            }
-            dct(col, 0, h, scratch, 0, inverse);
-            for (let k = 0; k < h / size; k++) {
-                const p = at(0, y + k * size);
-                for (let x = 0; x < w; x++) buf[p + x] = col[k * w + x];
-            }
-        }
-    }
-    transposeSquares();
+    for (let x = 0; x < w; x++) colDct(x, h);
 }
 
 // the DCT scale factors of the LF of large varblocks (for c up to 32 of a 256 point DCT)
