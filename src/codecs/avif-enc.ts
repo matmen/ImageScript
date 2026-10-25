@@ -1,7 +1,7 @@
 /*!
  * Encodes AVIFs: the image as an AV1 still picture (YUV of BT.601's matrix, full range, like avifenc's defaults; RGB
- * if lossless, monochrome if gray), transparency as a monochrome auxiliary image, in a HEIF container with the boxes
- * libavif writes. The quality maps to the quantizer like avifenc's, with libaom's quantizer_to_qindex (Copyright (c)
+ * if lossless, monochrome if gray), transparency as a monochrome auxiliary image, Exif as a metadata item, in a HEIF
+ * container with the boxes libavif writes. The quality maps to the quantizer like avifenc's, with libaom's quantizer_to_qindex (Copyright (c)
  * 2016, Alliance for Open Media, BSD-2-Clause License, see THIRD_PARTY_NOTICES.md)
  */
 import { encodeAV1 } from './av1/encode.ts';
@@ -16,6 +16,8 @@ export interface AVIFOptions {
     subsampling: '4:4:4' | '4:2:0';
     /** how hard to search for the best modes, 0-2 */
     effort: number;
+    /** Exif data (a TIFF header and IFDs) */
+    exif?: Uint8Array;
 }
 
 // libaom's quantizer_to_qindex (avifenc's quality: (100 - quality) * 63 / 100, rounded)
@@ -168,7 +170,7 @@ function seqMonochrome(d: Uint8Array, o: number): boolean {
 }
 
 /** Encodes RGBA pixels as an AVIF (with an alpha image if the image has transparency) */
-export function encode(rgba: Uint8Array, width: number, height: number, { quality, alphaQuality, subsampling, effort }: AVIFOptions): Uint8Array {
+export function encode(rgba: Uint8Array, width: number, height: number, { quality, alphaQuality, subsampling, effort, exif }: AVIFOptions): Uint8Array {
     if (width < 1 || height < 1) throw new RangeError('AVIF: dimensions must be at least 1');
     if (width > 65536 || height > 65536) throw new RangeError('AVIF: dimensions must be at most 65536');
     let opaque = true;
@@ -195,11 +197,18 @@ export function encode(rgba: Uint8Array, width: number, height: number, { qualit
     // the boxes: ftyp, meta (the items, their locations in mdat, their properties), mdat
     const profile = subsampled || gray ? 'MA1B' : 'MA1A';
     const ftyp = box('ftyp', ascii('avif'), u32(0), ascii('avif'), ascii('mif1'), ascii('miaf'), ascii(profile));
-    const hdlr = fullBox('hdlr', 0, 0, u32(0), ascii('pict'), u32(0), u32(0), u32(0), ascii('ImageScript'), [0]);
+    const hdlr = fullBox('hdlr', 0, 0, u32(0), ascii('pict'), u32(0), u32(0), u32(0), [0]);
     const pitm = fullBox('pitm', 0, 0, u16(1));
-    const infe = (id: number, name: string): number[] => fullBox('infe', 2, 0, u16(id), u16(0), ascii('av01'), ascii(name), [0]);
-    const iinf = fullBox('iinf', 0, 0, u16(alpha ? 2 : 1), infe(1, 'Color'), alpha ? infe(2, 'Alpha') : []);
-    const iref = alpha ? fullBox('iref', 0, 0, box('auxl', u16(2), u16(1), u16(1))) : [];
+    // the items: the color image (1), the alpha image, the Exif data (its TIFF header's offset, 0, then the TIFF data)
+    const items: { type: string, name: string, data: ArrayLike<number>[] }[] = [{ type: 'av01', name: 'Color', data: [color] }];
+    if (alpha) items.push({ type: 'av01', name: 'Alpha', data: [alpha] });
+    if (exif?.length) items.push({ type: 'Exif', name: 'Exif', data: [u32(0), exif] });
+    const sizes = items.map(item => item.data.reduce((n, d) => n + d.length, 0));
+    const infe = (id: number, type: string, name: string): number[] => fullBox('infe', 2, 0, u16(id), u16(0), ascii(type), ascii(name), [0]);
+    const iinf = fullBox('iinf', 0, 0, u16(items.length), ...items.map((item, i) => infe(i + 1, item.type, item.name)));
+    // (the alpha image is auxiliary to the color image, the Exif data describes it)
+    const exifId = exif?.length ? items.length : 0;
+    const iref = alpha || exifId ? fullBox('iref', 0, 0, alpha ? box('auxl', u16(2), u16(1), u16(1)) : [], exifId ? box('cdsc', u16(exifId), u16(1), u16(1)) : []) : [];
     const ispe = fullBox('ispe', 0, 0, u32(width), u32(height));
     const colr = box('colr', ascii('nclx'), u16(cicp[0]), u16(cicp[1]), u16(cicp[2]), [0x80]);
     const pixi = (channels: number): number[] => fullBox('pixi', 0, 0, [channels], new Array<number>(channels).fill(8));
@@ -208,18 +217,24 @@ export function encode(rgba: Uint8Array, width: number, height: number, { qualit
     const ipco = box('ipco', ispe, av1C(color), colr, pixi(gray ? 1 : 3), alpha ? av1C(alpha) : [], alpha ? pixi(1) : [], alpha ? auxC : []);
     const ipma = fullBox('ipma', 0, 0, u32(alpha ? 2 : 1), u16(1), [4, 1, 0x82, 3, 4], alpha ? [...u16(2), 4, 1, 0x85, 6, 7] : []);
     const iprp = box('iprp', ipco, ipma);
-    // the locations (absolute offsets into mdat, filled in once the size of meta is known)
-    const ilocFor = (offset: number): number[] => fullBox('iloc', 0, 0, [0x44, 0x00], u16(alpha ? 2 : 1),
-        u16(1), u16(0), u16(1), u32(offset), u32(color.length),
-        alpha ? [...u16(2), ...u16(0), ...u16(1), ...u32(offset + color.length), ...u32(alpha.length)] : []);
+    // the locations (absolute offsets into mdat, one after the other, filled in once the size of meta is known)
+    const ilocFor = (offset: number): number[] => fullBox('iloc', 0, 0, [0x44, 0x00], u16(items.length), ...items.map((_, i) => {
+        const at = offset + sizes.slice(0, i).reduce((n, size) => n + size, 0);
+        return [...u16(i + 1), ...u16(0), ...u16(1), ...u32(at), ...u32(sizes[i])];
+    }));
     const metaFor = (offset: number): number[] => fullBox('meta', 0, 0, hdlr, pitm, ilocFor(offset), iinf, iref, iprp);
     const headerSize = ftyp.length + metaFor(0).length + 8;
     const head = [...ftyp, ...metaFor(headerSize)];
-    const mdatSize = 8 + color.length + (alpha ? alpha.length : 0);
+    const mdatSize = 8 + sizes.reduce((n, size) => n + size, 0);
     const out = new Uint8Array(head.length + mdatSize);
     out.set(head);
     out.set([...u32(mdatSize), ...ascii('mdat')], head.length);
-    out.set(color, head.length + 8);
-    if (alpha) out.set(alpha, head.length + 8 + color.length);
+    let at = head.length + 8;
+    for (const item of items) {
+        for (const d of item.data) {
+            out.set(d, at);
+            at += d.length;
+        }
+    }
     return out;
 }

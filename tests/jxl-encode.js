@@ -41,6 +41,13 @@ const samples = image => {
     return [px, channels.length];
 };
 
+// the codestream of a container: the content of its last box, jxlc
+const codestream = jxl => {
+    let o = 0;
+    while (o + Buffer.from(jxl).readUInt32BE(o) < jxl.length) o += Buffer.from(jxl).readUInt32BE(o);
+    return jxl.subarray(o + 8);
+};
+
 (async () => {
     const {encode} = await import('../dist/codecs/jxl/fast-lossless.js');
     for (const [name, grey] of [['external.png'], ['circle.png'], ['readme.png'], ['potato.png'], ['external.png', true]]) {
@@ -49,7 +56,7 @@ const samples = image => {
         // (grey: the red channel)
         if (grey) for (let i = 0; i < image.bitmap.length; i += 4) image.bitmap[i + 1] = image.bitmap[i + 2] = image.bitmap[i];
         const jxl = await image.encodeJXL();
-        if (sha256(jxl) !== references[16][key]) panic(`${key}: not what cjxl -e 1 writes`);
+        if (sha256(codestream(jxl)) !== references[16][key]) panic(`${key}: not what cjxl -e 1 writes`);
         const [px, channels] = samples(image);
         if (sha256(encode(px, image.width, image.height, channels, 8)) !== references[8][key]) panic(`${key}: not what cjxl -e 1 writes without SIMD`);
         const decoded = await Image.decode(jxl);

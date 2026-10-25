@@ -1,7 +1,7 @@
 /*!
  * JPEG XL (ISO/IEC 18181): bare codestreams and the container (ISO/IEC 18181-2: jxlc, jxlp boxes), the image header,
  * the frames up to the first one shown (with its orientation); see ./jxl/ for the decoder, ported from jxl-oxide and
- * libjxl (see THIRD_PARTY_NOTICES.md)
+ * libjxl (see THIRD_PARTY_NOTICES.md). Encoded images with Exif get the container (signature, ftyp, Exif, jxlc boxes)
  */
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { BitReader } from './jxl/bits.ts';
@@ -10,7 +10,8 @@ import { frameHeader, toc } from './jxl/frame-header.ts';
 import { decodeFrame, DecoderState } from './jxl/frame.ts';
 import { ColorOutput } from './jxl/color.ts';
 import { ToneMapping } from './hdr.ts';
-export { encodeRGBA as encode } from './jxl/fast-lossless.ts';
+import { encodeRGBA } from './jxl/fast-lossless.ts';
+import { concat } from '../util/mem.ts';
 
 const CONTAINER = [0, 0, 0, 12, 0x4a, 0x58, 0x4c, 0x20, 0x0d, 0x0a, 0x87, 0x0a];
 
@@ -19,6 +20,21 @@ export function isJXL(d: Uint8Array): boolean {
     if (d.length >= 2 && d[0] === 0xff && d[1] === 0x0a) return true;
     return d.length >= 12 && CONTAINER.every((v, i) => d[i] === v);
 }
+
+/** Encodes RGBA pixels as a lossless JPEG XL: the codestream, in the container if there is Exif data (a TIFF header and IFDs) */
+export function encode(rgba: Uint8Array, width: number, height: number, exif?: Uint8Array): Uint8Array {
+    const stream = encodeRGBA(rgba, width, height);
+    if (!exif?.length) return stream;
+    // (ftyp: brand jxl, minor version 0, compatible jxl; Exif: the offset of the TIFF header, 0, then the TIFF data)
+    const jxl = [0x6a, 0x78, 0x6c, 0x20];
+    return concat([CONTAINER, ...box('ftyp', jxl, [0, 0, 0, 0], jxl), ...box('Exif', [0, 0, 0, 0], exif), ...box('jxlc', stream)]);
+}
+
+// a box: its header and content
+const box = (type: string, ...content: ArrayLike<number>[]): ArrayLike<number>[] => {
+    const size = 8 + content.reduce((n, c) => n + c.length, 0);
+    return [[size >>> 24, size >> 16 & 255, size >> 8 & 255, size & 255, ...Array.from(type, c => c.charCodeAt(0))], ...content];
+};
 
 const fourcc = (d: Uint8Array, o: number): string => String.fromCharCode(d[o], d[o + 1], d[o + 2], d[o + 3]);
 

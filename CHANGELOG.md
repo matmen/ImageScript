@@ -1,6 +1,12 @@
 # Changelog
 
-## 3.5.1
+## 3.6.0
+
+### Features
+
+- `Image.encodeAVIF()` and `Image.encodeJXL()` take `metadata` like the other encoders: author, description,
+  copyright, creation time and software (by default ImageScript and its version) as Exif. In AVIFs it is an Exif item
+  describing the image, JPEG XLs get the container (with an Exif box; the codestream stays what `cjxl -e 1` writes).
 
 ### Improvements
 

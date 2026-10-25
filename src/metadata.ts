@@ -9,7 +9,7 @@ import * as exif from './codecs/exif.ts';
  * |---|---|
  * | PNG, APNG | all (as text chunks) |
  * | JPEG | author, description, copyright, creation time, software (Exif); comment (comment marker) |
- * | WebP | author, description, copyright, creation time, software (Exif) |
+ * | WebP, AVIF, JPEG XL | author, description, copyright, creation time, software (Exif) |
  * | GIF | software, comment (comment extensions) |
  * | TGA | author, comment, creation time, software (extension area) |
  *
@@ -94,7 +94,7 @@ export function pngText(m: ResolvedMetadata): Record<string, string | undefined>
 }
 
 /**
- * @internal Exif data (a TIFF header and IFDs) for JPEG and WebP
+ * @internal Exif data (a TIFF header and IFDs) for JPEG, WebP, AVIF and JPEG XL
  * @ignore
  */
 export function exifData(m: ResolvedMetadata): Uint8Array {

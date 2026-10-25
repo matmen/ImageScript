@@ -19,6 +19,8 @@ const latin1 = (data, text) => Buffer.from(data).includes(Buffer.from(text, 'lat
         jpeg: m => image.encodeJPEG({quality: 90, metadata: m}),
         webp: m => image.encodeWebP({metadata: m}),
         tga: m => image.encodeTGA({metadata: m}),
+        avif: m => image.encodeAVIF({effort: 0, metadata: m}),
+        jxl: m => image.encodeJXL({metadata: m}),
         gif: m => animation.encodeGIF({metadata: m}),
         apng: m => animation.encodeAPNG({metadata: m}),
         'animated webp': m => animation.encodeWebP({metadata: m})
@@ -46,13 +48,20 @@ const latin1 = (data, text) => Buffer.from(data).includes(Buffer.from(text, 'lat
         if (!has(png, 'Thu, 15 Oct 2026 12:34:56 GMT')) panic('png: creation time missing');
     }
 
-    // JPEG and WebP: Exif (IFD0 strings, UTC date), JPEG also a comment marker
-    for (const format of ['jpeg', 'webp']) {
+    // JPEG, WebP, AVIF and JPEG XL: Exif (IFD0 strings, UTC date; AVIF and JPEG XL: the TIFF header's offset first),
+    // JPEG also a comment marker
+    for (const format of ['jpeg', 'webp', 'avif', 'jxl']) {
         const file = await encoders[format](metadata);
-        for (const text of ['Exif'.slice(format === 'webp' ? 4 : 0), 'MM\0*', 'Jörg', 'a description', 'Ⓒ someone', '2026:10:15 12:34:56\0', '+00:00'])
+        const header = {jpeg: 'Exif\0\0MM\0*', webp: 'EXIF', avif: '\0\0\0\0MM\0*', jxl: 'Exif\0\0\0\0MM\0*'}[format];
+        for (const text of [header, 'MM\0*', 'Jörg', 'a description', 'Ⓒ someone', '2026:10:15 12:34:56\0', '+00:00'])
             if (!has(file, text)) panic(`${format}: ${JSON.stringify(text)} missing from the Exif data`);
         if (format === 'jpeg' && !has(file, Buffer.from([0xff, 0xfe, 0, 11, ...Buffer.from('a comment')]))) panic('jpeg: comment marker missing');
     }
+
+    // AVIF: the Exif item (3, after the alpha image) describes the image (cdsc); JPEG XL: the container's boxes
+    if (!has(await encoders.avif(metadata), Buffer.from([...Buffer.from('cdsc'), 0, 3, 0, 1, 0, 1]))) panic('avif: Exif item reference missing');
+    if (Buffer.from(await encoders.jxl(metadata)).subarray(0, 48).toString('latin1').replace(/[^ -~]/g, '.') !== '....JXL ........ftypjxl ....jxl ....Exif....MM.*')
+        panic('jxl: container boxes wrong');
 
     // GIF: comment extensions
     if (!has(await animation.encodeGIF({metadata}), Buffer.from([0x21, 0xfe, 9, ...Buffer.from('a comment'), 0]))) panic('gif: comment extension missing');

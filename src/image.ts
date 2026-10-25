@@ -119,7 +119,7 @@ export interface WebPEncodeOptions {
     metadata?: Metadata;
 }
 
-/** Options of {@link Image.encodeTGA} */
+/** Options of {@link Image.encodeTGA} and {@link Image.encodeJXL} */
 export interface EncodeOptions {
     /** Metadata to include, see {@link Metadata} */
     metadata?: Metadata;
@@ -185,6 +185,8 @@ export interface AVIFEncodeOptions {
     subsampling?: '4:4:4' | '4:2:0';
     /** How hard the encoder searches for the best modes: 0-2, faster to smaller. Default: `1` */
     effort?: number;
+    /** Metadata to include, see {@link Metadata} */
+    metadata?: Metadata;
 }
 
 /** Text style options of {@link Image.renderText} */
@@ -2080,17 +2082,20 @@ export class Image {
      * Encodes the image as AVIF (AV1, with an alpha image if the image has transparency)
      * @param options See {@link AVIFEncodeOptions}
      */
-    async encodeAVIF({ quality = 60, alphaQuality = 100, subsampling = '4:4:4', effort = 1 }: AVIFEncodeOptions = {}): Promise<Uint8Array> {
-        return avifEnc.encode(this.__bytes__(), this.width, this.height, { quality: finite(quality, 'quality'), alphaQuality: finite(alphaQuality, 'alphaQuality'), subsampling, effort });
+    async encodeAVIF({ quality = 60, alphaQuality = 100, subsampling = '4:4:4', effort = 1, metadata = {} }: AVIFEncodeOptions = {}): Promise<Uint8Array> {
+        const exif = exifData(resolveMetadata(metadata));
+        return avifEnc.encode(this.__bytes__(), this.width, this.height, { quality: finite(quality, 'quality'), alphaQuality: finite(alphaQuality, 'alphaQuality'), subsampling, effort, exif });
     }
 
     /**
-     * Encodes the image as lossless JPEG XL, byte for byte like libjxl's `cjxl -e 1` on CPUs with AVX2 or NEON (its
-     * fast lossless mode: the gradient predictor, a palette if the image has at most 511 colors besides black, else
-     * YCoCg); greyscale if the image is, with alpha if it has transparency
+     * Encodes the image as lossless JPEG XL, the codestream byte for byte like libjxl's `cjxl -e 1` on CPUs with AVX2
+     * or NEON (its fast lossless mode: the gradient predictor, a palette if the image has at most 511 colors besides
+     * black, else YCoCg); greyscale if the image is, with alpha if it has transparency. The codestream is in the
+     * container, with the metadata as Exif
+     * @param options See {@link EncodeOptions}
      */
-    async encodeJXL(): Promise<Uint8Array> {
-        return jxl.encode(this.__bytes__(), this.width, this.height);
+    async encodeJXL({ metadata = {} }: EncodeOptions = {}): Promise<Uint8Array> {
+        return jxl.encode(this.__bytes__(), this.width, this.height, exifData(resolveMetadata(metadata)));
     }
 
     /**
