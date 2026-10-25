@@ -17,8 +17,11 @@ export function cdefActive(f: Frame): boolean {
     return f.seq.cdef && (c.yStrengths.some(s => s) || c.uvStrengths.some(s => s));
 }
 
-/** Applies CDEF: reads the deblocked frame (src, a copy of the frame's planes), writes into the frame */
-export function cdef(f: Frame, src: Uint16Array[]): void {
+/**
+ * Applies CDEF: reads the deblocked frame (src, a copy of the frame's planes), writes into the frame. The directions
+ * and variances of the 8x8 blocks can be kept between calls on the same source (dirs: 2 per 8x8 block, -1 for unknown)
+ */
+export function cdef(f: Frame, src: Uint16Array[], dirs?: Int32Array): void {
     const c = f.hdr.cdef;
     const coeffShift = f.bitdepth - 8;
     const s4 = f.b4Stride;
@@ -32,8 +35,21 @@ export function cdef(f: Frame, src: Uint16Array[]): void {
 
             // the direction and variance of the luma block (used by the primary filters only)
             const usesDirection = c.yStrengths[idx] >> 2 || (f.planes.length > 1 && c.uvStrengths[idx] >> 2);
-            const yDir = usesDirection ? direction(src[0], r * 4 * f.strides[0] + col * 4, f.strides[0], coeffShift) : 0;
-            const variance = usesDirection ? directionVariance : 0;
+            let yDir = 0, variance = 0;
+            if (usesDirection) {
+                const k = (r >> 1) * (s4 >> 1) + (col >> 1);
+                if (dirs && dirs[2 * k] >= 0) {
+                    yDir = dirs[2 * k];
+                    variance = dirs[2 * k + 1];
+                } else {
+                    yDir = direction(src[0], r * 4 * f.strides[0] + col * 4, f.strides[0], coeffShift);
+                    variance = directionVariance;
+                    if (dirs) {
+                        dirs[2 * k] = yDir;
+                        dirs[2 * k + 1] = variance;
+                    }
+                }
+            }
 
             const ys = c.yStrengths[idx];
             let priStr = (ys >> 2) << coeffShift;

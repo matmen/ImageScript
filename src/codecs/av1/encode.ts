@@ -15,7 +15,7 @@ import {
     CDF, BLOCK_DIMENSIONS, TXFM_DIMENSIONS, MAX_TXFM_SIZE_FOR_BS, AL_PART_CTX, BLOCK_SIZES, PARTITION_TYPE_COUNT, INTRA_MODE_CONTEXT,
     TXTP_FROM_UVMODE, TX_TYPES_PER_SET, LO_CTX_OFFSETS, SKIP_CTX, CFL_ALLOWED_MASK, BL_64X64, BL_8X8,
     PARTITION_NONE, PARTITION_H, PARTITION_V, PARTITION_SPLIT, PARTITION_T_TOP_SPLIT, PARTITION_T_LEFT_SPLIT,
-    PARTITION_T_RIGHT_SPLIT, PARTITION_H4, PARTITION_V4, DC_PRED, VERT_PRED, VERT_LEFT_PRED, SMOOTH_PRED, SMOOTH_V_PRED,
+    PARTITION_T_RIGHT_SPLIT, PARTITION_H4, PARTITION_V4, DC_PRED, VERT_PRED, HOR_PRED, VERT_LEFT_PRED, SMOOTH_PRED, SMOOTH_V_PRED,
     SMOOTH_H_PRED, PAETH_PRED, CFL_PRED, TX_4X4, TX_64X64, TX_16X16, RTX_4X8, DCT_DCT, IDTX, WHT_WHT, EDGE_I444_TOP_HAS_RIGHT,
     EDGE_I444_LEFT_HAS_BOTTOM, EDGE_I420_TOP_HAS_RIGHT, EDGE_I420_LEFT_HAS_BOTTOM, EdgeNode, edgeTree, defaultCdfs,
     scan, dequant
@@ -258,8 +258,22 @@ class TileEncoder {
             return { node: { bp: PARTITION_NONE, b: r.b, kids: [] }, cost: r.cost };
         }
         const saved = this.saveArea(bl);
+        if (bl <= BL_64X64 + 1) {
+            // 64x64 and 32x32: the quarters first, the whole block only if few of them split further (rarely better
+            // then; below effort 2)
+            const sp = split([0, 1, 2, 3]);
+            const deeper = sp.node.kids.filter(k => k && k.bp === PARTITION_SPLIT).length;
+            if (this.params.effort < 2 && deeper >= (bl === BL_64X64 ? 2 : 4)) return { node: sp.node, cost: sp.cost + this.lambda * 2 };
+            const spArea = this.saveArea(bl), contexts = this.saveContexts(bs);
+            this.restoreArea(bl, saved);
+            const none = this.searchBlock(bs, node.o);
+            if (none.cost + this.lambda < sp.cost + this.lambda * 2) return { node: { bp: PARTITION_NONE, b: none.b, kids: [] }, cost: none.cost + this.lambda };
+            this.restoreArea(bl, spArea);
+            this.restoreContexts(contexts);
+            return { node: sp.node, cost: sp.cost + this.lambda * 2 };
+        }
+        // 16x16: the whole block first (one without coefficients is rarely worth splitting)
         const none = this.searchBlock(bs, node.o);
-        // (a block without coefficients is rarely worth splitting)
         if (none.b.skip && this.params.effort < 2) return { node: { bp: PARTITION_NONE, b: none.b, kids: [] }, cost: none.cost + this.lambda };
         const noneArea = this.saveArea(bl);
         this.restoreArea(bl, saved);
@@ -373,6 +387,8 @@ class TileEncoder {
                     uvCandidates.push({ mode, angle: 0, alpha, est: this.satd(1, bs) + this.satd(2, bs) + sadLambda * 7 });
                     continue;
                 }
+                // (below effort 2: the modes that predict chroma best most often)
+                if (this.params.effort < 2 && mode !== b.yMode && mode !== DC_PRED && mode !== VERT_PRED && mode !== HOR_PRED && mode !== SMOOTH_PRED && mode !== PAETH_PRED) continue;
                 b.uvMode = mode;
                 b.uvAngle = 0;
                 this.predictChroma(bs, edgeFlags, b);
@@ -422,6 +438,21 @@ class TileEncoder {
             this.aUvmode.fill(b.uvMode, cbx4, cbx4 + (bdim(bs, 0) + this.ssx >> this.ssx));
             this.lUvmode.fill(b.uvMode, cby4, cby4 + (bdim(bs, 1) + this.ssy >> this.ssy));
         }
+    }
+
+    // the mode contexts of a block's area
+    private saveContexts(bs: number): Uint8Array[] {
+        const bx4 = this.bx, by4 = this.by & 31, aw = bdim(bs, 0), lh = bdim(bs, 1);
+        const cbx4 = bx4 >> this.ssx, cby4 = by4 >> this.ssy, cw = aw + this.ssx >> this.ssx, ch = lh + this.ssy >> this.ssy;
+        return [this.aMode.slice(bx4, bx4 + aw), this.lMode.slice(by4, by4 + lh), this.aUvmode.slice(cbx4, cbx4 + cw), this.lUvmode.slice(cby4, cby4 + ch)];
+    }
+
+    private restoreContexts(c: Uint8Array[]): void {
+        const bx4 = this.bx, by4 = this.by & 31, cbx4 = bx4 >> this.ssx, cby4 = by4 >> this.ssy;
+        this.aMode.set(c[0], bx4);
+        this.lMode.set(c[1], by4);
+        this.aUvmode.set(c[2], cbx4);
+        this.lUvmode.set(c[3], cby4);
     }
 
     // whether chroma from luma is allowed (of lossless blocks only with 4x4 chroma)
@@ -631,8 +662,15 @@ class TileEncoder {
         let eob = -1;
         if (!(this.w && b.skip)) {
             const res = this.res, coefs = this.coefs, q = this.q;
-            for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) res[y * w + x] = src[d + y * stride + x] - pic[d + y * stride + x];
+            let sse = 0;
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    const e = res[y * w + x] = src[d + y * stride + x] - pic[d + y * stride + x];
+                    sse += e * e;
+                }
+            }
             if (this.lossless) eob = this.whtCoefs(res, q);
+            else if (sse < this.zeroBound(plane, tx)) eob = -1;
             else {
                 forwardTransform(res, tx, txtp, coefs);
                 eob = this.quantize(plane, tx, txtp, coefs, q, sw * sh);
@@ -656,6 +694,13 @@ class TileEncoder {
             }
         }
         return dist;
+    }
+
+    // the squared error of residuals below which all of a transform's coefficients round to zero (their squares, in
+    // quantizer steps, add up to less than a quarter; with a margin for the basis' uneven energies)
+    private zeroBound(plane: number, tx: number): number {
+        const step = Math.min(this.dq[plane][0], this.dq[plane][1]) / 2 ** Math.max(0, tdim(tx, CTX) - 2);
+        return 0.2 * pixelEnergy(tx) * step * step;
     }
 
     // the coefficients of a lossless block (exact: q[rc] in the decoder's layout), the end of block
@@ -1126,7 +1171,7 @@ function chooseFilters(f: Frame, src: Uint16Array[], qidx: number, effort: numbe
     // the loop filter
     const guess = Math.max(0, Math.min(63, (q * 20723 + 1015158 + (1 << 17) >> 18) - 4));
     let bestLevel = guess, bestError = Infinity;
-    for (const level of effort ? [guess - 6, guess - 3, guess, guess + 3, guess + 6] : [guess]) {
+    for (const level of [[guess], [guess - 4, guess, guess + 4], [guess - 6, guess - 3, guess, guess + 3, guess + 6]][effort]) {
         if (level < 0 || level > 63) continue;
         setLevel(level);
         f.planes = recon.map(p => p.slice());
@@ -1144,15 +1189,15 @@ function chooseFilters(f: Frame, src: Uint16Array[], qidx: number, effort: numbe
     const deblocked = f.planes;
 
     // CDEF: each candidate strength's errors per 64x64 block (luma, chroma), of the blocks with coefficients
-    const strengths = effort ? [0, 1, 4, 5, 8, 9, 13, 17, 25, 33, 41, 61] : [0, 5, 9, 17, 33];
+    const strengths = [[0, 5, 9, 17, 33], [0, 1, 4, 5, 9, 17, 33, 61], [0, 1, 4, 5, 8, 9, 13, 17, 25, 33, 41, 61]][effort];
     const errY = strengths.map(() => new Float64Array(n)), errUv = strengths.map(() => new Float64Array(n));
-    const coded = Array.from(f.cdefIdx, i => i >= 0);
+    const coded = Array.from(f.cdefIdx, i => i >= 0), dirs = new Int32Array(f.b4Stride * (f.bh + 1)).fill(-1);
     strengths.forEach((strength, k) => {
         hdr.cdef.yStrengths = [strength];
         hdr.cdef.uvStrengths = [strength];
         f.planes = deblocked.map(p => p.slice());
         f.cdefIdx.set(Int8Array.from(coded, c => c ? 0 : -1));
-        if (strength) cdef(f, deblocked);
+        if (strength) cdef(f, deblocked, dirs);
         blockErrors(f, f.planes, src, errY[k], errUv[k]);
     });
     // a set of (luma, chroma) strength pairs, added greedily; the size with the least error and signaling
