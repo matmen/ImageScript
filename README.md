@@ -67,6 +67,7 @@ deno add jsr:@matmen/imagescript     # Deno (npm:imagescript works too)
   , [JPEGs](https://imagescript.matmen.dev/classes/Image.html#encodejpeg)
   , lossless and lossy [WebPs](https://imagescript.matmen.dev/classes/Image.html#encodewebp) (lossy ones byte for
   byte like libwebp's cwebp)
+  , [AVIFs](https://imagescript.matmen.dev/classes/Image.html#encodeavif) (lossy and lossless, with alpha)
   , lossless [JPEG XLs](https://imagescript.matmen.dev/classes/Image.html#encodejxl) (byte for byte like libjxl's
   `cjxl -e 1`)
   , [BMPs](https://imagescript.matmen.dev/classes/Image.html#encodebmp)
@@ -129,7 +130,7 @@ the text shaping is ported from [HarfBuzz](https://github.com/harfbuzz/harfbuzz)
 [dav1d](https://code.videolan.org/videolan/dav1d), AVIFs are converted to RGB like
 [libavif](https://github.com/AOMediaCodec/libavif) does, the JPEG XL decoder is ported from
 [jxl-oxide](https://github.com/tirr-c/jxl-oxide) and [libjxl](https://github.com/libjxl/libjxl), the JPEG XL encoder
-from libjxl's fast lossless encoder.
+from libjxl's fast lossless encoder, the AV1 encoder mirrors the decoder and uses libaom's symbol encoder.
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for their licenses.
 
 ---

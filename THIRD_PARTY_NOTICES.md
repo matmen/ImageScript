@@ -13,7 +13,8 @@ following projects, under their own licenses. Each derived file says so in its h
 | [RFC 9649](https://www.rfc-editor.org/rfc/rfc9649) (WebP Image Format) | `src/codecs/vp8l.ts` (lossless bitstream, short distance code table), `src/codecs/webp.ts` (container) | BSD-3-Clause (Revised BSD) |
 | [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386) (VP8 Data Format and Decoding Guide, with the libvpx reference decoder) | `src/codecs/vp8-tables.ts` (probability and quantizer tables), `src/codecs/vp8.ts` (decoding procedures) | BSD-3-Clause |
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | `src/codecs/vp8.ts` (YUV to RGB conversion, "fancy" chroma upsampling), `src/codecs/webp.ts` (animation frame blending), `src/codecs/vp8-enc.ts`, `src/codecs/vp8-enc-dsp.ts` (the lossy encoder: RGB to YUV conversion, analysis, segments, rate-distortion optimized mode decisions, quantization, token probabilities, bitstream, alpha filtering), `src/codecs/vp8-enc-tables.ts` (its tables, generated from libwebp by `scripts/vp8-enc-tables.py`) | BSD-3-Clause |
-| [dav1d](https://code.videolan.org/videolan/dav1d) by VideoLAN, the dav1d authors and Two Orioles | `src/codecs/av1/*` (the AV1 decoder: bitstream parsing, symbol decoding, prediction, inverse transforms, loop filters, film grain; the tables in `src/codecs/av1/data.ts`, generated from dav1d by `scripts/av1-tables.c`) | BSD-2-Clause |
+| [dav1d](https://code.videolan.org/videolan/dav1d) by VideoLAN, the dav1d authors and Two Orioles | `src/codecs/av1/*` (the AV1 decoder, and the encoder's syntax, contexts and reconstruction mirrored from it: bitstream parsing, symbol decoding, prediction, inverse transforms, loop filters, film grain; the tables in `src/codecs/av1/data.ts`, generated from dav1d by `scripts/av1-tables.c`) | BSD-2-Clause |
+| [libaom](https://aomedia.googlesource.com/aom/) by the Alliance for Open Media | `src/codecs/av1/msac-enc.ts` (the symbol encoder), `src/codecs/av1/fdct.ts` (the forward Walsh-Hadamard transform), `src/codecs/av1/encode.ts` (the loop filter level from the quantizer), `src/codecs/avif-enc.ts` (the quantizer to qindex table) | BSD-2-Clause |
 | [libavif](https://github.com/AOMediaCodec/libavif) by Joe Drago | `src/codecs/avif.ts` (YUV to RGB conversion with bilinear chroma upsampling, alpha range expansion and unpremultiplication) | BSD-2-Clause |
 | [jxl-oxide](https://github.com/tirr-c/jxl-oxide) by Wonwoo Choi | `src/codecs/jxl/*` (the JPEG XL decoder: bit reader, header and frame header fields, entropy decoding, VarDCT, dequantization matrices, transforms, restoration filters, upsampling, the parsing of patches, splines and noise) | MIT (or Apache-2.0) |
 | [libjxl](https://github.com/libjxl/libjxl) by the JPEG XL Project Authors | `src/codecs/jxl/modular.ts` (Modular decoding: MA trees, predictors, the self-correcting predictor, transforms), `src/codecs/jxl/frame.ts` (the sections of frames, the order of the rendering stages, reference frames), `src/codecs/jxl/blend.ts`, `src/codecs/jxl/color.ts` (XYB to RGB), `src/codecs/jxl/features.ts` (rendering patches, splines and noise), `src/codecs/jxl/fast-lossless.ts` (the lossless encoder: palette detection, YCoCg, the gradient predictor, prefix codes, runs as LZ77, the headers) | BSD-3-Clause |
@@ -186,6 +187,41 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
 ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+## libaom
+
+The AV1 encoder's symbol encoder and forward Walsh-Hadamard transform are ported from libaom, the AV1 reference
+implementation, as are its guess of the loop filter level and the quantizer table of the quality. AV1 is covered by the
+[Alliance for Open Media Patent License 1.0](https://aomedia.org/license/patent-license/).
+
+```
+Copyright (c) 2016, Alliance for Open Media. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in
+   the documentation and/or other materials provided with the
+   distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ## libavif

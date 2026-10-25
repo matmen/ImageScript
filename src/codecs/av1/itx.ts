@@ -958,6 +958,27 @@ const SHIFT = [0, 1, 2, 2, 2, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2];
 const tmp = new Int32Array(64 * 64);
 
 /**
+ * The basis of a 1D inverse transform (for encoders), by size (log2 of 4-64) and 1D type: n x min(n, 32) values, column
+ * k (at k + i * min(n, 32)) the output of coefficient k (without clipping, of 4096 scaled down)
+ */
+export function inverseBasis(log2: number, type: number): Float64Array {
+    const n = 4 << log2, k = Math.min(n, 32), out = new Float64Array(n * k), c = new Int32Array(n);
+    lo = -(2 ** 31);
+    hi = 2 ** 31 - 1;
+    for (let j = 0; j < k; j++) {
+        c.fill(0);
+        c[j] = 4096;
+        (TX1D[log2][type] as Transform1D)(c, 0, 1);
+        for (let i = 0; i < n; i++) out[i * k + j] = c[i] / 4096;
+    }
+    return out;
+}
+
+/** The 1D types (rows, columns) of a transform type, and the shift between the passes of a transform size */
+export const transformTypes1D = (txtp: number): number[] => TX1D_TYPES[MIRROR[txtp]];
+export const passShift = (tx: number): number => SHIFT[tx];
+
+/**
  * Adds the inverse transform of the coefficients (stored transposed: coeff[y + x * min(h, 32)], cleared afterwards) to
  * the pixels at dst[d] (stride: the pixels' row stride)
  */

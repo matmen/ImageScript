@@ -4,6 +4,15 @@
 
 ### Features
 
+- `Image.encodeAVIF({ quality, alphaQuality, subsampling, effort })` encodes AVIFs: an AV1 encoder of its own (still
+  pictures, intra coding) whose syntax mirrors the dav1d based decoder, so dav1d decodes its files to exactly the
+  encoder's reconstruction. It chooses partitions (64x64 to 8x8), the 13 intra modes, chroma from luma and the transform
+  types by rate and distortion, quantizes the coefficients by rate and distortion, and picks the loop filter level and
+  up to 8 CDEF strengths (per 64x64 block) by the filtered image. On photos its files are within a few percent of
+  libaom's (avifenc's default speed) at the same PSNR, but encoding takes about 15 times as long. `quality` (0-100,
+  default 60) maps to the quantizer like avifenc's -q; 100 is lossless (RGB, identity matrix). Transparency is a
+  monochrome alpha image, lossless by default (`alphaQuality`). `subsampling`: '4:4:4' (default) or '4:2:0'. `effort`
+  (0-2, default 1): how many modes and partitions are tried.
 - `Image.encodeJXL()` encodes lossless JPEG XLs: ported from libjxl's fast lossless encoder, the codestream is byte for
   byte what `cjxl -e 1` writes on CPUs with AVX2 or NEON (libjxl's output depends on the CPU: it works in chunks of 16
   pixels there, of 8 without SIMD, of 32 with AVX-512). Images of at most 511 colors besides black get a palette,

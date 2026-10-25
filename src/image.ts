@@ -9,6 +9,7 @@ import * as qoi from './codecs/qoi.ts';
 import * as netpbm from './codecs/netpbm.ts';
 import * as hdr from './codecs/hdr.ts';
 import * as avif from './codecs/avif.ts';
+import * as avifEnc from './codecs/avif-enc.ts';
 import * as jxl from './codecs/jxl.ts';
 import type { ToneMapping } from './codecs/hdr.ts';
 import * as quantize from './codecs/quantize.ts';
@@ -172,6 +173,18 @@ export interface DecodeOptions {
      * brighter than white. Default: `'reinhard'`
      */
     toneMapping?: ToneMapping;
+}
+
+/** Options of {@link Image.encodeAVIF} */
+export interface AVIFEncodeOptions {
+    /** 0-100, like avifenc's: higher is better and larger, 100 is lossless. Default: `60` */
+    quality?: number;
+    /** The quality of the alpha channel (if the image has transparency), like avifenc's. Default: `100` (lossless) */
+    alphaQuality?: number;
+    /** Chroma subsampling: `'4:4:4'` keeps the full color resolution, `'4:2:0'` halves it (smaller). Default: `'4:4:4'` */
+    subsampling?: '4:4:4' | '4:2:0';
+    /** How hard the encoder searches for the best modes: 0-2, faster to smaller. Default: `1` */
+    effort?: number;
 }
 
 /** Text style options of {@link Image.renderText} */
@@ -2061,6 +2074,14 @@ export class Image {
      */
     async encodeQOI(): Promise<Uint8Array> {
         return qoi.encode(this.__bytes__(), this.width, this.height);
+    }
+
+    /**
+     * Encodes the image as AVIF (AV1, with an alpha image if the image has transparency)
+     * @param options See {@link AVIFEncodeOptions}
+     */
+    async encodeAVIF({ quality = 60, alphaQuality = 100, subsampling = '4:4:4', effort = 1 }: AVIFEncodeOptions = {}): Promise<Uint8Array> {
+        return avifEnc.encode(this.__bytes__(), this.width, this.height, { quality: finite(quality, 'quality'), alphaQuality: finite(alphaQuality, 'alphaQuality'), subsampling, effort });
     }
 
     /**
