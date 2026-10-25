@@ -327,10 +327,10 @@ function filterIntra(dst: Uint16Array, d: number, stride: number, width: number,
     const e = edgeBuffer;
     const taps = filter * 56;
     // the top row comes from the edge buffer for the first two rows, from the block afterwards
-    let topArr = e, top = EDGE + 1;
+    let topArr: Uint16Array = e, top = EDGE + 1;
     for (let y = 0; y < height; y += 2) {
-        let tlArr = e, tl = EDGE - y;
-        let leftArr = e, left = tl - 1, leftStride = -1;
+        let tlArr: Uint16Array = e, tl = EDGE - y;
+        let leftArr: Uint16Array = e, left = tl - 1, leftStride = -1;
         for (let x = 0; x < width; x += 4) {
             const p0 = tlArr[tl];
             const p1 = topArr[top], p2 = topArr[top + 1], p3 = topArr[top + 2], p4 = topArr[top + 3];

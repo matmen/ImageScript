@@ -421,7 +421,7 @@ function toRgba(y: Yuv, alpha: Yuv | null, toneMapping: ToneMapping, premultipli
         tableY[i] = (i - biasY) / rangeY;
         tableUV[i] = identity ? tableY[i] : (i - biasUV) / rangeUV;
     }
-    let out = new Uint8Array(width * height * 4);
+    let out: Uint8Array = new Uint8Array(width * height * 4);
     // HDR (PQ, HLG): the non-linear RGB values, converted to linear light and tone mapped after
     const hdr = y.transfer === TRANSFER_PQ || y.transfer === TRANSFER_HLG;
     const rgb = hdr ? new Float32Array(width * height * 3) : null;
