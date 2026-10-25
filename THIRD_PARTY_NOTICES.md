@@ -16,7 +16,7 @@ following projects, under their own licenses. Each derived file says so in its h
 | [dav1d](https://code.videolan.org/videolan/dav1d) by VideoLAN, the dav1d authors and Two Orioles | `src/codecs/av1/*` (the AV1 decoder: bitstream parsing, symbol decoding, prediction, inverse transforms, loop filters, film grain; the tables in `src/codecs/av1/data.ts`, generated from dav1d by `scripts/av1-tables.c`) | BSD-2-Clause |
 | [libavif](https://github.com/AOMediaCodec/libavif) by Joe Drago | `src/codecs/avif.ts` (YUV to RGB conversion with bilinear chroma upsampling, alpha range expansion and unpremultiplication) | BSD-2-Clause |
 | [jxl-oxide](https://github.com/tirr-c/jxl-oxide) by Wonwoo Choi | `src/codecs/jxl/*` (the JPEG XL decoder: bit reader, header and frame header fields, entropy decoding, VarDCT, dequantization matrices, transforms, restoration filters, upsampling, the parsing of patches, splines and noise) | MIT (or Apache-2.0) |
-| [libjxl](https://github.com/libjxl/libjxl) by the JPEG XL Project Authors | `src/codecs/jxl/modular.ts` (Modular decoding: MA trees, predictors, the self-correcting predictor, transforms), `src/codecs/jxl/frame.ts` (the sections of frames, the order of the rendering stages, reference frames), `src/codecs/jxl/blend.ts`, `src/codecs/jxl/color.ts` (XYB to RGB), `src/codecs/jxl/features.ts` (rendering patches, splines and noise) | BSD-3-Clause |
+| [libjxl](https://github.com/libjxl/libjxl) by the JPEG XL Project Authors | `src/codecs/jxl/modular.ts` (Modular decoding: MA trees, predictors, the self-correcting predictor, transforms), `src/codecs/jxl/frame.ts` (the sections of frames, the order of the rendering stages, reference frames), `src/codecs/jxl/blend.ts`, `src/codecs/jxl/color.ts` (XYB to RGB), `src/codecs/jxl/features.ts` (rendering patches, splines and noise), `src/codecs/jxl/fast-lossless.ts` (the lossless encoder: palette detection, YCoCg, the gradient predictor, prefix codes, runs as LZ77, the headers) | BSD-3-Clause |
 | [JPEG XL conformance](https://github.com/libjxl/conformance) by the JPEG XL Project Authors | `tests/jxl/alpha-*.jxl`, `animation-spline.jxl`, `blendmodes.jxl`, `mul-no-extra-channels.jxl` (test files) | BSD-3-Clause |
 | [FreeType](https://freetype.org) | `src/render/hinting.ts` (behavior and parts of the logic of the TrueType interpreter) | FreeType License |
 | [QOI](https://github.com/phoboslab/qoi) by Dominic Szablewski | `src/codecs/qoi.ts` (the reference encoder's choices of operations) | MIT |
@@ -254,7 +254,8 @@ DEALINGS IN THE SOFTWARE.
 ## libjxl, JPEG XL conformance
 
 The Modular decoding, the rendering pipeline, blending, the XYB conversion and the rendering of patches, splines and
-noise follow libjxl, the JPEG XL reference implementation; tests/jxl includes files of its conformance suite. JPEG XL
+noise follow libjxl, the JPEG XL reference implementation, and the lossless encoder is ported from its fast lossless
+encoder; tests/jxl includes files of its conformance suite. JPEG XL
 is covered by Google's patent grant for libjxl (the "Additional IP Rights Grant" in libjxl's PATENTS file).
 
 ```

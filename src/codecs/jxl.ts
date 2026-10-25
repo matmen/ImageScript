@@ -10,6 +10,7 @@ import { frameHeader, toc } from './jxl/frame-header.ts';
 import { decodeFrame, DecoderState } from './jxl/frame.ts';
 import { ColorOutput } from './jxl/color.ts';
 import { ToneMapping } from './hdr.ts';
+export { encodeRGBA as encode } from './jxl/fast-lossless.ts';
 
 const CONTAINER = [0, 0, 0, 12, 0x4a, 0x58, 0x4c, 0x20, 0x0d, 0x0a, 0x87, 0x0a];
 

@@ -2064,6 +2064,15 @@ export class Image {
     }
 
     /**
+     * Encodes the image as lossless JPEG XL, byte for byte like libjxl's `cjxl -e 1` on CPUs with AVX2 or NEON (its
+     * fast lossless mode: the gradient predictor, a palette if the image has at most 511 colors besides black, else
+     * YCoCg); greyscale if the image is, with alpha if it has transparency
+     */
+    async encodeJXL(): Promise<Uint8Array> {
+        return jxl.encode(this.__bytes__(), this.width, this.height);
+    }
+
+    /**
      * Encodes the image as the smallest fitting Netpbm format: PBM for black and white images, PGM for greyscale ones,
      * PPM for others, PAM if the image has transparency
      */

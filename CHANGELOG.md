@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.5.0
+
+### Features
+
+- `Image.encodeJXL()` encodes lossless JPEG XLs: ported from libjxl's fast lossless encoder, the codestream is byte for
+  byte what `cjxl -e 1` writes on CPUs with AVX2 or NEON (libjxl's output depends on the CPU: it works in chunks of 16
+  pixels there, of 8 without SIMD, of 32 with AVX-512). Images of at most 511 colors besides black get a palette,
+  others YCoCg; greyscale images are encoded as one channel, alpha only if the image has transparency. Unlike libjxl,
+  two colors whose hashes collide within 8 pixels don't end up as one (libjxl then writes a palette that loses one of
+  them; such images are encoded with YCoCg instead).
+
+### Performance
+
+- JPEG XL decoding is about 25% faster: lossy 2048x1536 images take about 0.87 s instead of 1.2 s, lossless ones of
+  the default effort 2.6 s instead of 3.7 s. The output is the same, except for rounding: linear light becomes sRGB
+  like libjxl does (a rational polynomial of the square root instead of a power).
+
 ## 3.4.0
 
 ### Features
