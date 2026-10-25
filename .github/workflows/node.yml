@@ -73,3 +73,6 @@ jobs:
       run: deno run -A tests/run.js
     - if: matrix.runtime == 'bun'
       run: bun tests/run.js
+    # (JSR type checks the sources with Deno's TypeScript, stricter than ours: what release.yml would publish)
+    - if: matrix.runtime == 'deno' && matrix.os == 'ubuntu-latest'
+      run: deno publish --dry-run --allow-dirty
