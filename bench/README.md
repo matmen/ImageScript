@@ -19,26 +19,26 @@ Photon and ImageScript 1 are WebAssembly.
 
 ## Numbers
 
-Operations per second (more is faster), measured 2026-10-23 with Node.js v24.21.0 on AMD EPYC 7763 64-Core Processor, ImageScript 3.3.0.
+Operations per second (more is faster), measured 2026-10-25 with Node.js v24.21.0 on AMD EPYC 9V74 80-Core Processor, ImageScript 3.4.0.
 
 | | **ImageScript 3** | **ImageScript 1** | **Jimp** | **image-js** | **PureJsImage** | **Photon** | **sharp** | **@napi-rs/canvas** |
 |---|--:|--:|--:|--:|--:|--:|--:|--:|
-| decode JPEG | **11.9** | 6.45 | 6.59 | 6.01 | 8.04 | 21.3 | 69.0 | 49.1 |
-| decode PNG | **33.1** | 30.5 | 15.8 | 8.32 | 11.8 | 40.8 | 52.5 | 53.6 |
-| decode WebP (lossy) | **10.0** | – | – | – | 9.85 | 11.1 | 35.9 | 60.4 |
-| encode JPEG (quality 80) | **12.6** | 19.3 | 2.51 | 9.42 | 7.18 | 8.86 | 55.2 | 34.7 |
-| encode PNG | **8.20** | 3.73 | 4.13 | 2.67 | 1.81 | 9.71 | 7.31 | 2.14 |
-| encode WebP (lossless) | **1.64** | – | – | – | 0.36 | 23.7 | 0.66 | 2.09 |
-| resize to half | **72.3** | 337 | 63.8 | 11.0 | 16.6 | 15.0 | 58.5 | 361 |
-| rotate by 30° | **28.1** | 5.28 | 1.77 | 1.16 | 1.99 | 4.51 | 14.0 | 37.7 |
-| blur (radius 5) | **14.0** | – | 0.01 | 1.24 | – | 6.56 | 29.3 | 60.2 |
-| composite an overlay | **414** | 614 | 31.4 | 119 | – | 165 | 110 | 397 |
-| crop | **817** | 666 | 48.9 | 64.3 | 98.6 | 199 | 1,191 | 1,156 |
-| clone | **1,153** | 907 | 1,183 | 873 | 1,308 | 381 | 1,372 | 452 |
-| render text | **2,030** | 57.9 | – | – | – | – | 2,250 | 2,594 |
-| render SVG | **6.65** | fails | – | – | – | – | 25.2 | 92.1 |
-| decode animated GIF | **14.8** | 7.69 | – | – | – | – | 16.5 | – |
-| encode animated GIF | **5.06** | 1.14 | – | – | – | – | 0.87 | – |
+| decode JPEG | **16.8** | 8.02 | 8.07 | 7.11 | 9.87 | 25.4 | 84.7 | 56.4 |
+| decode PNG | **39.1** | 36.4 | 19.9 | 11.1 | 15.7 | 49.1 | 62.3 | 62.9 |
+| decode WebP (lossy) | **13.2** | – | – | – | 12.3 | 13.6 | 43.8 | 80.2 |
+| encode JPEG (quality 80) | **15.0** | 22.6 | 2.97 | 11.3 | 8.57 | 11.0 | 67.0 | 44.2 |
+| encode PNG | **9.80** | 4.79 | 5.08 | 3.72 | 2.08 | 11.6 | 8.83 | 2.38 |
+| encode WebP (lossless) | **1.95** | – | – | – | 0.45 | 28.7 | 0.83 | 2.57 |
+| resize to half | **85.9** | 475 | 80.6 | 13.7 | 20.1 | 21.3 | 70.2 | 398 |
+| rotate by 30° | **33.2** | 8.39 | 2.08 | 1.45 | 2.35 | 6.09 | 17.7 | 40.9 |
+| blur (radius 5) | **16.3** | – | 0.01 | 1.56 | – | 7.65 | 38.5 | 75.4 |
+| composite an overlay | **545** | 779 | 37.7 | 153 | – | 198 | 121 | 573 |
+| crop | **1,063** | 886 | 55.0 | 79.9 | 121 | 214 | 1,401 | 1,681 |
+| clone | **1,626** | 1,140 | 1,513 | 1,164 | 1,825 | 472 | 1,776 | 657 |
+| render text | **2,591** | 71.2 | – | – | – | – | 2,268 | 3,420 |
+| render SVG | **7.70** | fails | – | – | – | – | 31.2 | 120 |
+| decode animated GIF | **17.7** | 9.28 | – | – | – | – | 19.0 | – |
+| encode animated GIF | **6.14** | 1.47 | – | – | – | – | 1.10 | – |
 
 Encoded sizes:
 
@@ -55,8 +55,8 @@ Encoded sizes:
 | | **ImageScript 3** | **ImageScript 1** | **Jimp** | **image-js** | **PureJsImage** | **Photon** | **sharp** | **@napi-rs/canvas** |
 |---|---|---|---|---|---|---|---|---|
 | kind | JavaScript | WebAssembly | JavaScript | JavaScript | JavaScript | WebAssembly | native (libvips) | native (Skia) |
-| package | `imagescript@3.3.0` | `imagescript@1.3.1` | `jimp@1.6.1` | `image-js@1.7.1` | `purejsimage@0.17.0` | `@silvia-odwyer/photon-node@0.3.4` | `sharp@0.35.5` | `@napi-rs/canvas@1.0.11` |
-| install size | 1.1 MB | 6.7 MB | 26.8 MB | 47.8 MB | 6.7 MB | 2.3 MB | 20.3 MB | 35.0 MB |
+| package | `imagescript@3.4.0` | `imagescript@1.3.1` | `jimp@1.6.1` | `image-js@1.7.1` | `purejsimage@0.17.0` | `@silvia-odwyer/photon-node@0.3.4` | `sharp@0.35.5` | `@napi-rs/canvas@1.0.11` |
+| install size | 1.8 MB | 6.7 MB | 26.8 MB | 47.8 MB | 6.7 MB | 2.3 MB | 20.3 MB | 35.0 MB |
 | packages | 1 | 1 | 64 | 55 | 1 | 1 | 6 | 2 |
 
 ## Method
