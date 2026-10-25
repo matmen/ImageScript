@@ -40,7 +40,14 @@ function toYUV(rgba: Uint8Array, width: number, height: number, subsampled: bool
         v[i] = (r - l) / (2 * (1 - KR)) + 128;
     }
     const byte = (x: number): number => x < 0 ? 0 : x > 255 ? 255 : Math.round(x);
-    if (!subsampled) return [y, Uint8Array.from(u, byte), Uint8Array.from(v, byte)];
+    if (!subsampled) {
+        const cu = new Uint8Array(n), cv = new Uint8Array(n);
+        for (let i = 0; i < n; i++) {
+            cu[i] = byte(u[i]);
+            cv[i] = byte(v[i]);
+        }
+        return [y, cu, cv];
+    }
     // (the average of each 2x2 block)
     const cw = width + 1 >> 1, ch = height + 1 >> 1, cu = new Uint8Array(cw * ch), cv = new Uint8Array(cw * ch);
     for (let cy = 0; cy < ch; cy++) {

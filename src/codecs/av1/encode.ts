@@ -332,7 +332,9 @@ class TileEncoder {
         candidates.sort((x, y) => x.est - y.est);
         // (the best one's reconstruction kept)
         let best = Infinity, bestMode = candidates[0], dist = 0, bits = 0, coded = false, kept: Uint16Array | null = null, bestTx = DCT_DCT;
-        const tries = candidates.slice(0, [1, 2, 3][this.params.effort]);
+        // (below effort 2 only those about as good as the best)
+        const close = this.params.effort < 2 ? 1.1 : Infinity;
+        const tries = candidates.slice(0, [1, 2, 3][this.params.effort]).filter(c => c.est <= candidates[0].est * close);
         for (const [i, c] of tries.entries()) {
             b.yMode = c.mode;
             b.yAngle = c.angle;
@@ -396,7 +398,8 @@ class TileEncoder {
             }
             uvCandidates.sort((x, y) => x.est - y.est);
             let bestUv = Infinity, bestUvMode = uvCandidates[0], uvDist = 0, uvBits = 0, uvCoded = false, keptUv: Uint16Array[] | null = null;
-            const uvTries = uvCandidates.slice(0, [1, 2, 2][this.params.effort]);
+            const uvClose = this.params.effort < 2 ? 1.2 : Infinity;
+            const uvTries = uvCandidates.slice(0, [1, 2, 2][this.params.effort]).filter(c => c.est <= uvCandidates[0].est * uvClose);
             for (const [i, c] of uvTries.entries()) {
                 b.uvMode = c.mode;
                 b.uvAngle = c.angle;

@@ -5,6 +5,7 @@
  */
 import { TXFM_DIMENSIONS } from './tables.ts';
 import { inverseBasis, transformTypes1D, passShift } from './itx.ts';
+import { dct4, dct8, dct16 } from './fdct-lee.ts';
 
 // the pseudo inverse (B^T B)^-1 B^T of a basis of n x k values: k x n
 function pseudoInverse(b: Float64Array, n: number, k: number): Float64Array {
@@ -62,19 +63,16 @@ const tmp = new Float64Array(64 * 32);
 
 // the unnormalized DCT-II (X_k = sum of x_i cos(pi (2i + 1) k / 2n)) of n values at x[o] (step 1) in place, by Lee's
 // recursion (scratch: n values)
-// (1 / (2 cos(pi (2i + 1) / 2n)) for n = 2-64, at n / 2 + i)
+// (1 / (2 cos(pi (2i + 1) / 2n)) for n = 32 and 64, at n / 2 + i)
 const TWIDDLES = new Float64Array(64);
-for (let n = 2; n <= 64; n *= 2) for (let i = 0; i < n / 2; i++) TWIDDLES[n / 2 + i] = 1 / (2 * Math.cos(Math.PI * (2 * i + 1) / (2 * n)));
+for (let n = 32; n <= 64; n *= 2) for (let i = 0; i < n / 2; i++) TWIDDLES[n / 2 + i] = 1 / (2 * Math.cos(Math.PI * (2 * i + 1) / (2 * n)));
 
 function dct(x: Float64Array, o: number, n: number, scratch: Float64Array, so: number): void {
-    if (n === 1) return;
+    // (up to 16: unrolled)
+    if (n === 4) return dct4(x, o);
+    if (n === 8) return dct8(x, o);
+    if (n === 16) return dct16(x, o);
     const half = n / 2;
-    if (n === 2) {
-        const a = x[o], b = x[o + 1];
-        x[o] = a + b;
-        x[o + 1] = (a - b) * TWIDDLES[1];
-        return;
-    }
     for (let i = 0; i < half; i++) {
         const a = x[o + i], b = x[o + n - 1 - i];
         scratch[so + i] = a + b;
@@ -113,11 +111,22 @@ function forward1D(log2: number, type: number, inp: Float64Array, io: number, st
         for (let j = 0; j < k; j++) out[oo + j * outStep] = line[j] * s[j];
         return;
     }
+    // (four coefficients at a time)
     const p = projection(log2, type);
-    for (let j = 0; j < k; j++) {
-        let sum = 0;
-        for (let i = 0; i < n; i++) sum += p[j * n + i] * inp[io + i * step];
-        out[oo + j * outStep] = sum;
+    for (let i = 0; i < n; i++) line[i] = inp[io + i * step];
+    for (let j = 0; j < k; j += 4) {
+        let s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+        for (let i = 0, r = j * n; i < n; i++, r++) {
+            const v = line[i];
+            s0 += p[r] * v;
+            s1 += p[r + n] * v;
+            s2 += p[r + 2 * n] * v;
+            s3 += p[r + 3 * n] * v;
+        }
+        out[oo + j * outStep] = s0;
+        out[oo + (j + 1) * outStep] = s1;
+        out[oo + (j + 2) * outStep] = s2;
+        out[oo + (j + 3) * outStep] = s3;
     }
 }
 
