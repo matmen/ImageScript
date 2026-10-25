@@ -44,18 +44,38 @@ function mulShift24(a: number, b: number): number {
     return Number((BigInt(a) * BigInt(b)) >> 24n);
 }
 
+// a weight of the subpredictors from their errors around (x, y): the errors' sum (wrapping, as unsigned 32 bits)
+function weight(w: number, e: Uint32Array, posN: number, posNE: number, posNW: number): number {
+    const sum = (e[posN] + e[posNE] + e[posNW]) >>> 0;
+    const shift = sum === 0xffffffff ? 27 : Math.max(floorLog2(sum + 1) - 5, 0);
+    return 4 + ((w * DIV_LOOKUP[sum >>> shift]) >>> shift);
+}
+
 /** The self-correcting (weighted) predictor's state over a channel */
 class WeightedPredictor {
-    private readonly predErrors: Uint32Array[];
+    // (the subpredictors' errors and the error of the prediction, of two rows)
+    private readonly e0: Uint32Array;
+    private readonly e1: Uint32Array;
+    private readonly e2: Uint32Array;
+    private readonly e3: Uint32Array;
     private readonly error: Int32Array;
-    private readonly prediction = new Float64Array(4);
+    private readonly w0: number;
+    private readonly w1: number;
+    private readonly w2: number;
+    private readonly w3: number;
+    private p0 = 0;
+    private p1 = 0;
+    private p2 = 0;
+    private p3 = 0;
     private pred = 0;
     /** the property (the largest error of the neighbors) of the last prediction */
     maxError = 0;
 
     constructor(private readonly header: WPHeader, private readonly xsize: number) {
-        this.predErrors = [0, 1, 2, 3].map(() => new Uint32Array((xsize + 2) * 2));
-        this.error = new Int32Array((xsize + 2) * 2);
+        const n = (xsize + 2) * 2;
+        [this.e0, this.e1, this.e2, this.e3] = [0, 1, 2, 3].map(() => new Uint32Array(n));
+        this.error = new Int32Array(n);
+        [this.w0, this.w1, this.w2, this.w3] = header.w;
     }
 
     /** the prediction (rounded) of (x, y) from its neighbors */
@@ -63,14 +83,8 @@ class WeightedPredictor {
         const h = this.header, xsize = this.xsize;
         const cur = y & 1 ? 0 : xsize + 2, prev = y & 1 ? xsize + 2 : 0;
         const posN = prev + x, posNE = x < xsize - 1 ? posN + 1 : posN, posNW = x > 0 ? posN - 1 : posN;
-        const weights = [0, 0, 0, 0];
-        for (let i = 0; i < 4; i++) {
-            const e = this.predErrors[i];
-            // (wrapping, as unsigned 32 bits)
-            const sum = (e[posN] + e[posNE] + e[posNW]) >>> 0;
-            const shift = Math.max((sum === 0xffffffff ? 32 : floorLog2(sum + 1)) - 5, 0);
-            weights[i] = 4 + ((h.w[i] * DIV_LOOKUP[Math.floor(sum / 2 ** shift)]) >>> shift);
-        }
+        let w0 = weight(this.w0, this.e0, posN, posNE, posNW), w1 = weight(this.w1, this.e1, posN, posNE, posNW);
+        let w2 = weight(this.w2, this.e2, posN, posNE, posNW), w3 = weight(this.w3, this.e3, posN, posNE, posNW);
         N *= 8;
         W *= 8;
         NE *= 8;
@@ -83,35 +97,44 @@ class WeightedPredictor {
         if (Math.abs(teNW) > Math.abs(p)) p = teNW;
         if (Math.abs(teNE) > Math.abs(p)) p = teNE;
         this.maxError = p;
-        const sumWN = teN + teW, pr = this.prediction;
-        pr[0] = W + NE - N;
-        pr[1] = N - Math.floor((sumWN + teNE) * h.p1 / 32);
-        pr[2] = W - Math.floor((sumWN + teNW) * h.p2 / 32);
-        pr[3] = N - Math.floor((teNW * h.p3a + teN * h.p3b + teNE * h.p3c + (NN - N) * h.p3d + (NW - W) * h.p3e) / 32);
+        const sumWN = teN + teW;
+        const p0 = this.p0 = W + NE - N;
+        const p1 = this.p1 = N - Math.floor((sumWN + teNE) * h.p1 / 32);
+        const p2 = this.p2 = W - Math.floor((sumWN + teNW) * h.p2 / 32);
+        const p3 = this.p3 = N - Math.floor((teNW * h.p3a + teN * h.p3b + teNE * h.p3c + (NN - N) * h.p3d + (NW - W) * h.p3e) / 32);
         // the weighted average
-        let weightSum = weights[0] + weights[1] + weights[2] + weights[3];
-        const logWeight = floorLog2(weightSum) - 4;
-        weightSum = 0;
-        for (let i = 0; i < 4; i++) weightSum += weights[i] >>= logWeight;
-        let sum = (weightSum >> 1) - 1;
-        for (let i = 0; i < 4; i++) sum += pr[i] * weights[i];
+        const logWeight = floorLog2(w0 + w1 + w2 + w3) - 4;
+        w0 >>= logWeight;
+        w1 >>= logWeight;
+        w2 >>= logWeight;
+        w3 >>= logWeight;
+        const weightSum = w0 + w1 + w2 + w3;
+        const sum = (weightSum >> 1) - 1 + p0 * w0 + p1 * w1 + p2 * w2 + p3 * w3;
         let pred = mulShift24(sum, DIV_LOOKUP[weightSum - 1]);
         // (clamped unless the errors have the same sign)
-        if (((teN ^ teW) | (teN ^ teNW)) <= 0) pred = Math.min(Math.max(pred, Math.min(W, NE, N)), Math.max(W, NE, N));
+        if (((teN ^ teW) | (teN ^ teNW)) <= 0) {
+            const lo = W < NE ? (W < N ? W : N) : (NE < N ? NE : N), hi = W > NE ? (W > N ? W : N) : (NE > N ? NE : N);
+            pred = pred < lo ? lo : pred > hi ? hi : pred;
+        }
         this.pred = pred;
         return Math.floor((pred + 3) / 8);
     }
 
     update(value: number, x: number, y: number): void {
-        const xsize = this.xsize, cur = y & 1 ? 0 : xsize + 2, prev = y & 1 ? xsize + 2 : 0;
+        const xsize = this.xsize, cur = y & 1 ? 0 : xsize + 2, i = cur + x, j = (y & 1 ? xsize + 2 : 0) + x + 1;
         const val = value * 8;
-        this.error[cur + x] = this.pred - val;
-        for (let i = 0; i < 4; i++) {
-            const e = Math.floor((Math.abs(this.prediction[i] - val) + 3) / 8) >>> 0;
-            const errors = this.predErrors[i];
-            errors[cur + x] = e;
-            errors[prev + x + 1] = (errors[prev + x + 1] + e) >>> 0;
-        }
+        this.error[i] = this.pred - val;
+        const e0 = Math.floor((Math.abs(this.p0 - val) + 3) / 8) >>> 0, e1 = Math.floor((Math.abs(this.p1 - val) + 3) / 8) >>> 0;
+        const e2 = Math.floor((Math.abs(this.p2 - val) + 3) / 8) >>> 0, e3 = Math.floor((Math.abs(this.p3 - val) + 3) / 8) >>> 0;
+        const E0 = this.e0, E1 = this.e1, E2 = this.e2, E3 = this.e3;
+        E0[i] = e0;
+        E0[j] = (E0[j] + e0) >>> 0;
+        E1[i] = e1;
+        E1[j] = (E1[j] + e1) >>> 0;
+        E2[i] = e2;
+        E2[j] = (E2[j] + e2) >>> 0;
+        E3[i] = e3;
+        E3[j] = (E3[j] + e3) >>> 0;
     }
 }
 

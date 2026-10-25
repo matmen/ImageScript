@@ -7,7 +7,15 @@ import { ImageHeader, TF_PQ, TF_HLG, PRI_BT2100, PRI_P3, EXTRA_ALPHA, EXTRA_SPOT
 import { toSRGB, hdrToLinear, ToneMapping, REFERENCE_WHITE } from '../hdr.ts';
 import type { Planes } from './frame.ts';
 
-const srgbEncode = (v: number): number => v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055;
+// linear light to sRGB like libjxl (TF_SRGB::EncodedFromDisplay, lib/jxl/cms/transfer_functions-inl.h): a rational
+// polynomial of the square root instead of the power, within 5e-7
+const [P0, P1, P2, P3, P4] = [-5.135152395e-04, 5.287254571e-03, 3.903842876e-01, 1.474205315e+00, 7.352629620e-01].map(Math.fround);
+const [Q0, Q1, Q2, Q3, Q4] = [1.004519624e-02, 3.036675394e-01, 1.340816930e+00, 9.258482155e-01, 2.424867759e-02].map(Math.fround);
+const srgbEncode = (v: number): number => {
+    if (v <= 0.0031308) return 12.92 * v;
+    const x = Math.sqrt(v);
+    return ((((P4 * x + P3) * x + P2) * x + P1) * x + P0) / ((((Q4 * x + Q3) * x + Q2) * x + Q1) * x + Q0);
+};
 
 /**
  * How frames become output colors: XYB to sRGB (or to linear light, 1 being SDR white, for HDR images), other images

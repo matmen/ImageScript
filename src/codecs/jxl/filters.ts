@@ -13,10 +13,15 @@ export function gaborish(channels: Float32Array[], w: number, h: number, weights
         const out = new Float32Array(w * h);
         for (let y = 0; y < h; y++) {
             const t = mirror(y - 1, h) * w, m = y * w, b = mirror(y + 1, h) * w;
-            for (let x = 0; x < w; x++) {
-                const l = mirror(x - 1, w), r = mirror(x + 1, w);
-                out[m + x] = (src[m + x] + (src[t + x] + src[b + x] + src[m + l] + src[m + r]) * w0 + (src[t + l] + src[t + r] + src[b + l] + src[b + r]) * w1) * norm;
+            const at = (x: number, l: number, r: number): number =>
+                (src[m + x] + (src[t + x] + src[b + x] + src[m + l] + src[m + r]) * w0 + (src[t + l] + src[t + r] + src[b + l] + src[b + r]) * w1) * norm;
+            out[m] = at(0, mirror(-1, w), mirror(1, w));
+            // (the columns between the edges: no mirroring)
+            for (let x = 1; x < w - 1; x++) {
+                out[m + x] = (src[m + x] + (src[t + x] + src[b + x] + src[m + x - 1] + src[m + x + 1]) * w0 +
+                    (src[t + x - 1] + src[t + x + 1] + src[b + x - 1] + src[b + x + 1]) * w1) * norm;
             }
+            if (w > 1) out[m + w - 1] = at(w - 1, w - 2, mirror(w, w));
         }
         return out;
     });
