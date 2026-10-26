@@ -17,6 +17,11 @@
 
 - `AVIFEncodeOptions` is exported (with the new `JXLEncodeOptions`).
 
+### Performance
+
+- AVIF encoding is about 8% faster: the SATD is unrolled, the transform types are tried on one prediction, 16x16
+  blocks whose coefficients take few bits aren't split further. The files are about as large as before.
+
 ## 3.6.0
 
 ### Features

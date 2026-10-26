@@ -81,8 +81,6 @@ const smFlag = (mode: number): number => mode === SMOOTH_PRED || mode === SMOOTH
 const ZERO_BITS = 0.6;
 const coefBits = (q: number): number => q === 0 ? ZERO_BITS : q === 1 ? 2.2 : q === 2 ? 3.4 : q < 15 ? 4.6 + Math.log2(q - 2) : 9 + 2 * Math.log2(q - 14);
 
-const SATD_BLOCK = new Int32Array(16);
-
 // whether the 8 most frequent of colors (their counts) cover most of n pixels (palettes are rarely better otherwise)
 const mostlyFew = (counts: number[], n: number): boolean => {
     if (counts.length <= 8) return true;
@@ -323,9 +321,9 @@ class TileEncoder {
                 result = { node: sp.node, cost: splitCost };
             }
         } else {
-            // 16x16: the whole block first (one without coefficients is rarely worth splitting)
+            // 16x16: the whole block first (one without coefficients, or with few, is rarely worth splitting)
             const none = this.searchBlock(bs, node.o);
-            if (none.b.skip && this.params.effort < 2) return { node: { bp: PARTITION_NONE, b: none.b, kids: [] }, cost: none.cost + this.lambda };
+            if ((none.b.skip || none.bits < 30) && this.params.effort < 2) return { node: { bp: PARTITION_NONE, b: none.b, kids: [] }, cost: none.cost + this.lambda };
             const noneArea = this.saveArea(bl);
             this.restoreArea(bl, saved);
             const sp = split([0, 1, 2, 3]);
@@ -412,7 +410,7 @@ class TileEncoder {
     }
 
     // the modes of a block (by rate and distortion), its reconstruction left in the frame
-    private searchBlock(bs: number, edgeFlags: number): { b: Block, cost: number } {
+    private searchBlock(bs: number, edgeFlags: number): { b: Block, cost: number, bits: number } {
         const f = this.f, layout = f.layout;
         const lw4 = bdim(bs, 2), lh4 = bdim(bs, 3);
         const b: Block = {
@@ -495,9 +493,17 @@ class TileEncoder {
         if (tdim(b.tx, MAX) <= TX_16X16 && this.params.effort && coded && !this.lossless) {
             // (the type's symbol: about 1 bit for DCT, 2.5 for the others)
             let keptTx = this.savePlane(0, bs), bestTxCost = best + lambda;
+            // (a block of one transform: its prediction is the same for each type)
+            const single = tdim(b.tx, W) >= Math.min(bdim(bs, 0), this.f.bw - this.bx) && tdim(b.tx, H) >= Math.min(bdim(bs, 1), this.f.bh - this.by);
+            let prediction: Uint16Array | null = null;
+            if (single) {
+                this.codeLuma(bs, edgeFlags, b, true);
+                prediction = this.savePlane(0, bs);
+            }
             for (const txtp of [ADST_ADST, ADST_DCT, DCT_ADST, IDTX]) {
                 b.txtp = txtp;
-                const d = this.codeLuma(bs, edgeFlags, b);
+                if (prediction) this.restorePlane(0, bs, prediction);
+                const d = this.codeLuma(bs, edgeFlags, b, false, prediction !== null);
                 const cost = d + lambda * (this.bits + 2.5 + (b.yMode === DC_PRED ? 2 : 4.5));
                 if (cost < bestTxCost) {
                     bestTxCost = cost;
@@ -593,7 +599,7 @@ class TileEncoder {
         }
         b.skip = coded ? 0 : 1;
         this.modeContexts(bs, b);
-        return { b, cost: dist + lambda * (bits + 1 + 3) };
+        return { b, cost: dist + lambda * (bits + 1 + 3), bits };
     }
 
     // a palette for a block's luma, if it costs less than cost: its distortion and bits (without the mode's), the
@@ -769,22 +775,35 @@ class TileEncoder {
     private satd(p: number, bs: number): number {
         const f = this.f, sx = p ? this.ssx : 0, sy = p ? this.ssy : 0, stride = f.strides[p];
         const w = bdim(bs, 0) * 4 >> sx, h = bdim(bs, 1) * 4 >> sy, x0 = this.bx * 4 >> sx, y0 = this.by * 4 >> sy;
-        const pred = f.planes[p], src = this.src[p], d = SATD_BLOCK;
+        const pred = f.planes[p], src = this.src[p];
         let sum = 0;
         for (let by = 0; by < h; by += 4) {
             for (let bx = 0; bx < w; bx += 4) {
-                for (let y = 0; y < 4; y++) {
-                    const o = (y0 + by + y) * stride + x0 + bx;
-                    for (let x = 0; x < 4; x++) d[y * 4 + x] = src[o + x] - pred[o + x];
-                }
-                for (let y = 0; y < 4; y++) {
-                    const a = d[y * 4] + d[y * 4 + 1], b = d[y * 4] - d[y * 4 + 1], c = d[y * 4 + 2] + d[y * 4 + 3], e = d[y * 4 + 2] - d[y * 4 + 3];
-                    d[y * 4] = a + c; d[y * 4 + 1] = b + e; d[y * 4 + 2] = a - c; d[y * 4 + 3] = b - e;
-                }
-                for (let x = 0; x < 4; x++) {
-                    const a = d[x] + d[4 + x], b = d[x] - d[4 + x], c = d[8 + x] + d[12 + x], e = d[8 + x] - d[12 + x];
-                    sum += Math.abs(a + c) + Math.abs(b + e) + Math.abs(a - c) + Math.abs(b - e);
-                }
+                // (rows, then columns; unrolled)
+                let o = (y0 + by) * stride + x0 + bx;
+                const d00 = src[o] - pred[o], d01 = src[o + 1] - pred[o + 1], d02 = src[o + 2] - pred[o + 2], d03 = src[o + 3] - pred[o + 3];
+                o += stride;
+                const d10 = src[o] - pred[o], d11 = src[o + 1] - pred[o + 1], d12 = src[o + 2] - pred[o + 2], d13 = src[o + 3] - pred[o + 3];
+                o += stride;
+                const d20 = src[o] - pred[o], d21 = src[o + 1] - pred[o + 1], d22 = src[o + 2] - pred[o + 2], d23 = src[o + 3] - pred[o + 3];
+                o += stride;
+                const d30 = src[o] - pred[o], d31 = src[o + 1] - pred[o + 1], d32 = src[o + 2] - pred[o + 2], d33 = src[o + 3] - pred[o + 3];
+                const a0 = d00 + d01, b0 = d00 - d01, c0 = d02 + d03, e0 = d02 - d03;
+                const r00 = a0 + c0, r01 = b0 + e0, r02 = a0 - c0, r03 = b0 - e0;
+                const a1 = d10 + d11, b1 = d10 - d11, c1 = d12 + d13, e1 = d12 - d13;
+                const r10 = a1 + c1, r11 = b1 + e1, r12 = a1 - c1, r13 = b1 - e1;
+                const a2 = d20 + d21, b2 = d20 - d21, c2 = d22 + d23, e2 = d22 - d23;
+                const r20 = a2 + c2, r21 = b2 + e2, r22 = a2 - c2, r23 = b2 - e2;
+                const a3 = d30 + d31, b3 = d30 - d31, c3 = d32 + d33, e3 = d32 - d33;
+                const r30 = a3 + c3, r31 = b3 + e3, r32 = a3 - c3, r33 = b3 - e3;
+                let a = r00 + r10, b = r00 - r10, c = r20 + r30, e = r20 - r30;
+                sum += Math.abs(a + c) + Math.abs(b + e) + Math.abs(a - c) + Math.abs(b - e);
+                a = r01 + r11; b = r01 - r11; c = r21 + r31; e = r21 - r31;
+                sum += Math.abs(a + c) + Math.abs(b + e) + Math.abs(a - c) + Math.abs(b - e);
+                a = r02 + r12; b = r02 - r12; c = r22 + r32; e = r22 - r32;
+                sum += Math.abs(a + c) + Math.abs(b + e) + Math.abs(a - c) + Math.abs(b - e);
+                a = r03 + r13; b = r03 - r13; c = r23 + r33; e = r23 - r33;
+                sum += Math.abs(a + c) + Math.abs(b + e) + Math.abs(a - c) + Math.abs(b - e);
             }
         }
         // (the 4x4 Hadamard transform is 4 times as large as orthonormal)
@@ -834,7 +853,7 @@ class TileEncoder {
     }
 
     // predicts and codes a block's luma (only predicts: predictOnly), returns the squared error
-    private codeLuma(bs: number, edgeFlags: number, b: Block, predictOnly = false): number {
+    private codeLuma(bs: number, edgeFlags: number, b: Block, predictOnly = false, predicted = false): number {
         const f = this.f, seq = this.seq;
         const bx = this.bx, by = this.by, bx4 = bx, by4 = by & 31;
         const bw4 = bdim(bs, 0), bh4 = bdim(bs, 1);
@@ -865,7 +884,7 @@ class TileEncoder {
                         const tx4 = bx + x;
                         const flags = (((y > initY || !sbHasTr) && x + tw >= subW4) ? 0 : EDGE_I444_TOP_HAS_RIGHT) |
                             ((x > initX || (!sbHasBl && y + th >= subH4)) ? 0 : EDGE_I444_LEFT_HAS_BOTTOM);
-                        if (!palIdx) {
+                        if (!palIdx && !predicted) {
                             const mode = prepareEdges(tx4, tx4 > this.colStart, ty, ty > this.rowStart, this.colEnd, this.rowEnd, flags,
                                 pic, d, stride, b.yMode, b.yAngle, tw, th, seq.intraEdgeFilter, f.bitdepth);
                             predict(mode, pic, d, stride, tw * 4, th * 4, preparedAngle | intraFlags, 4 * f.bw - 4 * tx4, 4 * f.bh - 4 * ty, f.bitdepthMax);
