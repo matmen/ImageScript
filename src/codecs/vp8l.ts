@@ -766,9 +766,10 @@ interface Stream {
 }
 
 /**
- * Finds backward references (greedy, hash chains over pixel pairs) and color cache hits
+ * Finds backward references (hash chains over pixel pairs; a match is put off by a pixel if the next one starts a
+ * longer one)
  */
-function tokenize(pixels: Uint32Array, width: number, cacheBits: number): Stream {
+function tokenize(pixels: Uint32Array, width: number): Stream {
     const n = pixels.length;
     const ops = new Uint8Array(n), values = new Uint32Array(n), distances = new Uint32Array(n);
     let count = 0;
@@ -788,11 +789,14 @@ function tokenize(pixels: Uint32Array, width: number, cacheBits: number): Stream
     // hashes of the pixel pairs starting at every index (but the last)
     const hashes = new Int32Array(n);
     for (let i = 0; i + 1 < n; i++) hashes[i] = Math.imul(Math.imul(pixels[i], 0x1e35a7bd) ^ pixels[i + 1], 0x9e3779b1) >>> 32 - HASH_BITS;
-    const insert = (i: number): void => {
-        if (i + 1 >= n) return;
-        const h = hashes[i];
-        chain[i] = head[h];
-        head[h] = i;
+    let inserted = 0;
+    const insertUpTo = (end: number): void => {
+        for (; inserted < end && inserted + 1 < n; inserted++) {
+            const h = hashes[inserted];
+            chain[inserted] = head[h];
+            head[h] = inserted;
+        }
+        if (inserted < end) inserted = end;
     };
     const matchLength = (i: number, j: number): number => {
         const max = Math.min(MAX_LENGTH, n - i);
@@ -800,14 +804,11 @@ function tokenize(pixels: Uint32Array, width: number, cacheBits: number): Stream
         while (l < max && pixels[i + l] === pixels[j + l]) l++;
         return l;
     };
-
-    const cache = cacheBits ? new Uint32Array(1 << cacheBits) : null;
-    const cacheShift = 32 - cacheBits;
-    let cached = 0;
-
-    for (let i = 0; i < n;) {
-        let bestLength = 0, bestDistance = 0;
-
+    // the longest match at i (of the chains' pixels before it): [length, distance]
+    let bestLength = 0, bestDistance = 0;
+    const find = (i: number): void => {
+        bestLength = 0;
+        bestDistance = 0;
         // the pixel to the left and the one above are the cheapest references
         if (i >= 1) {
             const l = matchLength(i, i - 1);
@@ -828,49 +829,61 @@ function tokenize(pixels: Uint32Array, width: number, cacheBits: number): Stream
                 if (l === MAX_LENGTH) break;
             }
         }
+    };
 
+    for (let i = 0; i < n;) {
+        insertUpTo(i);
+        find(i);
+        if (bestLength >= MIN_LENGTH && bestLength < MAX_LENGTH && i + 1 < n) {
+            // (lazily: a literal first if the next pixel starts a match longer by more than one)
+            const length = bestLength, distance = bestDistance;
+            insertUpTo(i + 1);
+            find(i + 1);
+            if (bestLength > length + 1) {
+                ops[count] = Op.LITERAL;
+                values[count++] = pixels[i++];
+                continue;
+            }
+            bestLength = length;
+            bestDistance = distance;
+        }
         if (bestLength >= MIN_LENGTH) {
             ops[count] = Op.COPY;
             values[count] = bestLength;
             distances[count++] = distanceCode(bestDistance);
-            for (let k = 0; k < bestLength; k++) insert(i + k);
             i += bestLength;
             continue;
         }
-
-        const argb = pixels[i];
-        if (cache) {
-            for (; cached < i; cached++) cache[Math.imul(pixels[cached], 0x1e35a7bd) >>> cacheShift] = pixels[cached];
-            const key = Math.imul(argb, 0x1e35a7bd) >>> cacheShift;
-            if (cache[key] === argb) {
-                ops[count] = Op.CACHE;
-                values[count++] = key;
-                insert(i++);
-                continue;
-            }
-        }
         ops[count] = Op.LITERAL;
-        values[count++] = argb;
-        insert(i++);
+        values[count++] = pixels[i++];
     }
 
     return { ops, values, distances, count };
 }
 
-/**
- * Writes an entropy coded image (main image with a single prefix group, or a transform's sub-image)
- */
-function writeImage(w: BitWriter, pixels: Uint32Array, width: number, isMain: boolean): void {
-    // the color cache pays off for photos, sub-images are tiny
-    const cacheBits = isMain && pixels.length > 4096 ? 10 : 0;
-    const stream = tokenize(pixels, width, cacheBits);
+// the stream with color cache hits instead of the literals that are in the cache (of every pixel before them)
+function withCache(stream: Stream, pixels: Uint32Array, bits: number): Stream {
+    if (!bits) return stream;
+    const { ops, values, distances, count } = stream;
+    const out = { ops: ops.slice(0, count), values: values.slice(0, count), distances, count };
+    const cache = new Uint32Array(1 << bits), shift = 32 - bits;
+    for (let k = 0, i = 0; k < count; k++) {
+        if (ops[k] === Op.COPY) {
+            for (const end = i + values[k]; i < end; i++) cache[Math.imul(pixels[i], 0x1e35a7bd) >>> shift] = pixels[i];
+            continue;
+        }
+        const argb = pixels[i++], key = Math.imul(argb, 0x1e35a7bd) >>> shift;
+        if (cache[key] === argb) {
+            out.ops[k] = Op.CACHE;
+            out.values[k] = key;
+        }
+        cache[key] = argb;
+    }
+    return out;
+}
 
-    if (cacheBits) {
-        w.write(1, 1);
-        w.write(cacheBits, 4);
-    } else w.write(0, 1);
-    if (isMain) w.write(0, 1); // no meta prefix codes
-
+// the histograms of a stream's symbols (green with lengths and cache indices, red, blue, alpha, distances)
+function histograms(stream: Stream, cacheBits: number): Int32Array[] {
     const greenSize = NUM_LITERAL_CODES + NUM_LENGTH_CODES + (cacheBits ? 1 << cacheBits : 0);
     const counts = [new Int32Array(greenSize), new Int32Array(256), new Int32Array(256), new Int32Array(256), new Int32Array(NUM_DISTANCE_CODES)];
     const { ops, values, distances, count } = stream;
@@ -886,22 +899,279 @@ function writeImage(w: BitWriter, pixels: Uint32Array, width: number, isMain: bo
             counts[4][prefixEncode(distances[k]).symbol]++;
         } else counts[0][NUM_LITERAL_CODES + NUM_LENGTH_CODES + v]++;
     }
+    return counts;
+}
 
-    const codes = counts.map(c => writeCode(w, c));
-    for (let k = 0; k < count; k++) {
+// the color cache size (0-10 bits) whose literals and hits are estimated to take the fewest bits: the caches of
+// every size in one pass (the lengths and distances are the same for each)
+function bestCacheBits(stream: Stream, pixels: Uint32Array): number {
+    const { ops, values, count } = stream;
+    const caches = Array.from({ length: 11 }, (_, b) => new Uint32Array(1 << b));
+    const literals = Array.from({ length: 11 }, () => [0, 1, 2, 3].map(() => new Float64Array(256)));
+    const hits = Array.from({ length: 11 }, (_, b) => new Float64Array(1 << b));
+    for (let k = 0, i = 0; k < count; k++) {
+        if (ops[k] === Op.COPY) {
+            for (const end = i + values[k]; i < end; i++) {
+                const p = pixels[i], h = Math.imul(p, 0x1e35a7bd);
+                for (let b = 1; b <= 10; b++) caches[b][h >>> 32 - b] = p;
+            }
+            continue;
+        }
+        const p = pixels[i++], h = Math.imul(p, 0x1e35a7bd);
+        // (no cache: every literal is one)
+        const l0 = literals[0];
+        l0[0][p >> 8 & 255]++;
+        l0[1][p >> 16 & 255]++;
+        l0[2][p & 255]++;
+        l0[3][p >>> 24]++;
+        for (let b = 1; b <= 10; b++) {
+            const key = h >>> 32 - b, cache = caches[b];
+            if (cache[key] === p) hits[b][key]++;
+            else {
+                const l = literals[b];
+                l[0][p >> 8 & 255]++;
+                l[1][p >> 16 & 255]++;
+                l[2][p & 255]++;
+                l[3][p >>> 24]++;
+                cache[key] = p;
+            }
+        }
+    }
+    // (the green code also has the lengths: the same for each size, left out)
+    const bitsOf = (h: ArrayLike<number>, total: number): number => {
+        let bits = 0;
+        for (let i = 0; i < h.length; i++) if (h[i]) bits += 5 - h[i] * Math.log2(h[i] / total);
+        return bits;
+    };
+    let best = 0, bestBits = Infinity;
+    for (let b = 0; b <= 10; b++) {
+        const l = literals[b];
+        let n = 0;
+        for (let i = 0; i < 256; i++) n += l[0][i];
+        let hitCount = 0;
+        for (let i = 0; i < hits[b].length; i++) hitCount += hits[b][i];
+        const green = n + hitCount;
+        let bits = bitsOf(l[1], n) + bitsOf(l[2], n) + bitsOf(l[3], n);
+        // (green: the literals' and the hits' symbols share a code)
+        for (let i = 0; i < 256; i++) if (l[0][i]) bits += 5 - l[0][i] * Math.log2(l[0][i] / green);
+        if (b) for (let i = 0; i < hits[b].length; i++) if (hits[b][i]) bits += 5 - hits[b][i] * Math.log2(hits[b][i] / green);
+        if (bits < bestBits) {
+            bestBits = bits;
+            best = b;
+        }
+    }
+    return best;
+}
+
+// the estimated bits of histograms (their entropies, about 5 bits per symbol used for the codes)
+function entropyBits(counts: Int32Array[]): number {
+    let bits = 0;
+    for (const c of counts) {
+        let total = 0;
+        for (let i = 0; i < c.length; i++) total += c[i];
+        for (let i = 0; i < c.length; i++) if (c[i]) bits += 5 - c[i] * Math.log2(c[i] / total);
+    }
+    return bits;
+}
+
+// the symbols of a token (green with lengths and cache indices, red, blue, alpha, distance; -1: none)
+function tokenSymbols(stream: Stream, k: number, out: Int32Array): void {
+    const v = stream.values[k], op = stream.ops[k];
+    out[1] = out[2] = out[3] = out[4] = -1;
+    if (op === Op.LITERAL) {
+        out[0] = v >> 8 & 255;
+        out[1] = v >> 16 & 255;
+        out[2] = v & 255;
+        out[3] = v >>> 24;
+    } else if (op === Op.COPY) {
+        out[0] = NUM_LITERAL_CODES + prefixEncode(v).symbol;
+        out[4] = prefixEncode(stream.distances[k]).symbol;
+    } else out[0] = NUM_LITERAL_CODES + NUM_LENGTH_CODES + v;
+}
+
+/**
+ * The prefix groups of an image's blocks (2^bits pixels square), clustered by their symbols (k-means by the bits the
+ * clusters' codes would take, from the blocks farthest apart); [groups of the blocks, their histograms], or null if a
+ * single group is estimated to be no worse
+ */
+function prefixGroups(stream: Stream, width: number, height: number, cacheBits: number, bits: number): [Int32Array, Int32Array[][], number] | null {
+    const bw = subSize(width, bits), bh = subSize(height, bits), nb = bw * bh;
+    const greenSize = NUM_LITERAL_CODES + NUM_LENGTH_CODES + (cacheBits ? 1 << cacheBits : 0);
+    const sizes = [greenSize, 256, 256, 256, NUM_DISTANCE_CODES], offsets = [0, greenSize, greenSize + 256, greenSize + 512, greenSize + 768];
+    const total = greenSize + 768 + NUM_DISTANCE_CODES;
+    // each block's histogram (sparse: symbol, count; of green, red, blue, alpha, distances one after the other): the
+    // symbols keyed by block and sorted
+    const syms = new Int32Array(5), keys: number[] = [];
+    for (let k = 0, i = 0; k < stream.count; k++) {
+        const x = i % width, y = (i / width) | 0, blk = (y >> bits) * bw + (x >> bits);
+        tokenSymbols(stream, k, syms);
+        for (let c = 0; c < 5; c++) if (syms[c] >= 0) keys.push(blk * total + offsets[c] + syms[c]);
+        i += stream.ops[k] === Op.COPY ? stream.values[k] : 1;
+    }
+    const sorted = Int32Array.from(keys).sort();
+    const starts = new Int32Array(nb + 1), sparse: number[] = [];
+    let blk = 0;
+    for (let e = 0; e < sorted.length;) {
+        const key = sorted[e], b = Math.floor(key / total);
+        while (blk < b) starts[++blk] = sparse.length;
+        let n = 0;
+        while (e < sorted.length && sorted[e] === key) {
+            n++;
+            e++;
+        }
+        sparse.push(key - b * total, n);
+    }
+    // (the last block with symbols and those after it end here)
+    while (blk < nb) starts[++blk] = sparse.length;
+    // the bits of a block coded with a cluster's (smoothed) probabilities
+    const entries = Float64Array.from(sparse);
+    const logs = (cl: Float64Array): Float64Array => {
+        const t = totals(cl), out = new Float64Array(total);
+        for (let c = 0; c < 5; c++) {
+            const o = offsets[c], d = t[c] + 0.5 * sizes[c];
+            for (let s = 0; s < sizes[c]; s++) out[o + s] = -Math.log2((cl[o + s] + 0.5) / d);
+        }
+        return out;
+    };
+    const cost = (blk: number, log: Float64Array): number => {
+        let bitsSum = 0;
+        for (let e = starts[blk]; e < starts[blk + 1]; e += 2) bitsSum += entries[e + 1] * log[entries[e]];
+        return bitsSum;
+    };
+    const totals = (cl: Float64Array): Float64Array => Float64Array.from(offsets, (o, c) => {
+        let t = 0;
+        for (let s = 0; s < sizes[c]; s++) t += cl[o + s];
+        return t;
+    });
+    // a cluster's entropy and the bits of its codes (about 5 per symbol used)
+    const clusterBits = (cl: Float64Array): number => {
+        let b = 0;
+        const t = totals(cl);
+        for (let c = 0; c < 5; c++) {
+            for (let s = 0; s < sizes[c]; s++) {
+                const n = cl[offsets[c] + s];
+                if (n) b += 5 - n * Math.log2(n / t[c]);
+            }
+        }
+        return b;
+    };
+    const used = Array.from({ length: nb }, (_, i) => i).filter(i => starts[i + 1] > starts[i]);
+    const single = new Float64Array(total);
+    for (const blk of used) for (let e = starts[blk]; e < starts[blk + 1]; e += 2) single[entries[e]] += entries[e + 1];
+    let bestBits = clusterBits(single), best: [Int32Array, Float64Array[]] | null = null;
+    const assign = new Int32Array(nb);
+    for (const k of [4, 8, 16]) {
+        if (k > used.length) break;
+        // (the farthest-first centers)
+        const blockHistogram = (blk: number): Float64Array => {
+            const h = new Float64Array(total);
+            for (let e = starts[blk]; e < starts[blk + 1]; e += 2) h[entries[e]] = entries[e + 1];
+            return h;
+        };
+        const centers: Float64Array[] = [blockHistogram(used[0])];
+        const dist = new Float64Array(nb).fill(Infinity);
+        while (centers.length < k) {
+            const log = logs(centers[centers.length - 1]);
+            let far = -1;
+            for (const blk of used) {
+                dist[blk] = Math.min(dist[blk], cost(blk, log));
+                if (far < 0 || dist[blk] > dist[far]) far = blk;
+            }
+            centers.push(blockHistogram(far));
+        }
+        let clusters = centers;
+        for (let iter = 0; iter < 3; iter++) {
+            const ls = clusters.map(logs);
+            for (const blk of used) {
+                let bc = 0, bv = Infinity;
+                for (let j = 0; j < ls.length; j++) {
+                    const v = cost(blk, ls[j]);
+                    if (v < bv) { bv = v; bc = j; }
+                }
+                assign[blk] = bc;
+            }
+            clusters = clusters.map(() => new Float64Array(total));
+            for (const blk of used) {
+                const cl = clusters[assign[blk]];
+                for (let e = starts[blk]; e < starts[blk + 1]; e += 2) cl[entries[e]] += entries[e + 1];
+            }
+        }
+        // (the groups used, renumbered; their entropy image about a bit per block)
+        const remap = new Int32Array(k).fill(-1), kept: Float64Array[] = [];
+        for (const blk of used) if (remap[assign[blk]] < 0) { remap[assign[blk]] = kept.length; kept.push(clusters[assign[blk]]); }
+        const groups = new Int32Array(nb);
+        for (const blk of used) groups[blk] = remap[assign[blk]];
+        const b = kept.reduce((sum, cl) => sum + clusterBits(cl), 0) + nb;
+        if (b < bestBits) {
+            bestBits = b;
+            best = [groups, kept];
+        } else break;
+    }
+    if (!best) return null;
+    const [groups, kept] = best;
+    return [groups, kept.map(cl => sizes.map((size, c) => Int32Array.from(cl.subarray(offsets[c], offsets[c] + size)))), bestBits];
+}
+
+/**
+ * Writes an entropy coded image (main image with prefix groups per block, or a transform's sub-image with one): with
+ * the color cache size (none, or 1-10 bits) and groups whose symbols are estimated to take the fewest bits
+ */
+function writeImage(w: BitWriter, pixels: Uint32Array, width: number, isMain: boolean): void {
+    const tokens = tokenize(pixels, width);
+    const cacheBits = isMain ? bestCacheBits(tokens, pixels) : 0;
+    const stream = withCache(tokens, pixels, cacheBits), counts = histograms(stream, cacheBits);
+    const best = entropyBits(counts);
+    const height = pixels.length / width;
+    // (the groups of blocks of 16 pixels)
+    let groups: Int32Array | null = null, groupCounts: Int32Array[][] = [counts], prefixBits = 0;
+    if (isMain && pixels.length > 4096) {
+        const r = prefixGroups(stream, width, height, cacheBits, 4);
+        if (r && r[2] < best) {
+            [groups, groupCounts] = r;
+            prefixBits = 4;
+        }
+    }
+
+    if (cacheBits) {
+        w.write(1, 1);
+        w.write(cacheBits, 4);
+    } else w.write(0, 1);
+    if (isMain) {
+        // (the groups: an image of their indices in red and green)
+        w.write(groups ? 1 : 0, 1);
+        if (groups) {
+            w.write(prefixBits - 2, 3);
+            writeImage(w, Uint32Array.from(groups, g => g << 8), subSize(width, prefixBits), false);
+        }
+    }
+
+    const { ops, values, distances, count } = stream;
+    const codes = groupCounts.map(g => g.map(c => writeCode(w, c)));
+    const bw = subSize(width, prefixBits);
+    let group = codes[0];
+    for (let k = 0, i = 0; k < count; k++) {
+        if (groups) {
+            const x = i % width, y = (i / width) | 0;
+            group = codes[groups[(y >> prefixBits) * bw + (x >> prefixBits)]];
+        }
         const v = values[k];
         if (ops[k] === Op.LITERAL) {
-            writeSymbol(w, codes[0], v >> 8 & 255);
-            writeSymbol(w, codes[1], v >> 16 & 255);
-            writeSymbol(w, codes[2], v & 255);
-            writeSymbol(w, codes[3], v >>> 24);
+            writeSymbol(w, group[0], v >> 8 & 255);
+            writeSymbol(w, group[1], v >> 16 & 255);
+            writeSymbol(w, group[2], v & 255);
+            writeSymbol(w, group[3], v >>> 24);
+            i++;
         } else if (ops[k] === Op.COPY) {
             const length = prefixEncode(v), distance = prefixEncode(distances[k]);
-            writeSymbol(w, codes[0], NUM_LITERAL_CODES + length.symbol);
+            writeSymbol(w, group[0], NUM_LITERAL_CODES + length.symbol);
             w.write(length.extra, length.bits);
-            writeSymbol(w, codes[4], distance.symbol);
+            writeSymbol(w, group[4], distance.symbol);
             w.write(distance.extra, distance.bits);
-        } else writeSymbol(w, codes[0], NUM_LITERAL_CODES + NUM_LENGTH_CODES + v);
+            i += v;
+        } else {
+            writeSymbol(w, group[0], NUM_LITERAL_CODES + NUM_LENGTH_CODES + v);
+            i++;
+        }
     }
 }
 
@@ -960,10 +1230,23 @@ function applyPredictor(p: Uint32Array, width: number, height: number, bits: num
 }
 
 /**
- * Encodes ARGB pixels into a VP8L bitstream (the payload of a VP8L chunk)
+ * Encodes ARGB pixels into a VP8L bitstream (the payload of a VP8L chunk): with a palette for up to 256 colors, unless
+ * predicting them compresses better (smooth gradients, like alpha)
  */
 export function encode(argb: Uint32Array, width: number, height: number): Uint8Array {
     if (width < 1 || height < 1 || width > 16384 || height > 16384) throw new RangeError('VP8L: dimensions must be 1-16384');
+    const colors = new Map<number, number>();
+    for (let i = 0; i < argb.length && colors.size <= 256; i++) if (!colors.has(argb[i])) colors.set(argb[i], colors.size);
+    if (colors.size > 256) return encodeWith(argb, width, height, null);
+    const indexed = encodeWith(argb, width, height, colors);
+    // (few colors: their packed indices win)
+    if (colors.size <= 16) return indexed;
+    const predicted = encodeWith(argb, width, height, null);
+    return predicted.length < indexed.length ? predicted : indexed;
+}
+
+// the bitstream with a palette (the colors' indices) or with the green subtracted and predicted
+function encodeWith(argb: Uint32Array, width: number, height: number, colors: Map<number, number> | null): Uint8Array {
     const w = new BitWriter();
     let hasAlpha = false;
     for (let i = 0; i < argb.length; i++) if (argb[i] >>> 24 !== 255) { hasAlpha = true; break; }
@@ -974,17 +1257,12 @@ export function encode(argb: Uint32Array, width: number, height: number): Uint8A
     w.write(hasAlpha ? 1 : 0, 1);
     w.write(0, 3);
 
-    // up to 256 colors: a palette, with several pixels packed per byte for up to 16 colors
-    const colors = new Map<number, number>();
-    for (let i = 0; i < argb.length && colors.size <= 256; i++) if (!colors.has(argb[i])) colors.set(argb[i], colors.size);
-
     let pixels: Uint32Array, codedWidth = width;
-    if (colors.size <= 256) {
-        // sorted palettes delta-code better
+    if (colors) {
+        // (a palette, with several pixels packed per byte for up to 16 colors; sorted palettes delta-code better)
         const palette = Uint32Array.from([...colors.keys()].sort((a, b) => a - b));
         palette.forEach((c, i) => colors.set(c, i));
         const bits = palette.length <= 2 ? 3 : palette.length <= 4 ? 2 : palette.length <= 16 ? 1 : 0;
-
         w.write(1, 1);
         w.write(Transform.COLOR_INDEXING, 2);
         w.write(palette.length - 1, 8);
@@ -1002,12 +1280,17 @@ export function encode(argb: Uint32Array, width: number, height: number): Uint8A
             }
     } else {
         pixels = argb.slice();
-        w.write(1, 1);
-        w.write(Transform.SUBTRACT_GREEN, 2);
-        for (let i = 0; i < pixels.length; i++) {
-            const p = pixels[i], green = p >> 8 & 255;
-            // the set bits between red and blue absorb blue's borrow
-            pixels[i] = (p & 0xff00ff00 | (p | 0x0000ff00) - (green << 16 | green) & 0x00ff00ff) >>> 0;
+        // (subtracting green: not if red and blue are zero, like alpha planes', it would copy green into them)
+        let redBlue = false;
+        for (let i = 0; i < pixels.length && !redBlue; i++) if (pixels[i] & 0x00ff00ff) redBlue = true;
+        if (redBlue) {
+            w.write(1, 1);
+            w.write(Transform.SUBTRACT_GREEN, 2);
+            for (let i = 0; i < pixels.length; i++) {
+                const p = pixels[i], green = p >> 8 & 255;
+                // the set bits between red and blue absorb blue's borrow
+                pixels[i] = (p & 0xff00ff00 | (p | 0x0000ff00) - (green << 16 | green) & 0x00ff00ff) >>> 0;
+            }
         }
 
         const bits = 4;

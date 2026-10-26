@@ -13,6 +13,14 @@
   effort 1 (3.5% at effort 2) and within 1-4% of `cjxl -e 7`'s (up to 9% for screenshots); effort 0 is within 1.5%
   of `cjxl -e 3`. A 1920x1080 photo takes about 1 s at effort 0, 5 s at effort 1, 10 s at effort 2.
 
+### Improvements
+
+- Lossless WebPs (and the alpha of lossy ones) are smaller: the encoder groups blocks of 16 pixels by their
+  statistics (prefix codes per group, like libwebp's entropy image), picks the color cache's size, delays matches by a
+  pixel where the next one is longer, and predicts images of up to 256 colors instead of indexing them where that's
+  smaller (smooth alpha). Lossless files are about 6% smaller (within about 7% of cwebp's), the alpha of lossy ones
+  about 17% (at the default effort smaller than cwebp's). Lossless encoding takes about 65% longer.
+
 ### Fixes
 
 - `AVIFEncodeOptions` is exported (with the new `JXLEncodeOptions`).
