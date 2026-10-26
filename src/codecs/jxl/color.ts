@@ -20,6 +20,49 @@ const srgbEncode = (v: number): number => {
     return ((((P4 * x + P3) * x + P2) * x + P1) * x + P0) / ((((Q4 * x + Q3) * x + Q2) * x + Q1) * x + Q0);
 };
 
+// the sRGB bytes of linear light (what byte(fround(srgbEncode(v))) gives, which only grows with v): the smallest value
+// of each byte (by bisection), and per 1/4096 the byte there
+const THRESHOLDS = new Float64Array(257), LINEAR_BYTE = new Uint8Array(4097);
+{
+    const f = (v: number): number => byte(Math.fround(srgbEncode(v)));
+    THRESHOLDS[0] = -Infinity;
+    THRESHOLDS[256] = Infinity;
+    for (let k = 1; k < 256; k++) {
+        let lo = 0, hi = 1;
+        for (let i = 0; i < 80; i++) {
+            const mid = (lo + hi) / 2;
+            if (mid === lo || mid === hi) break;
+            if (f(mid) >= k) hi = mid;
+            else lo = mid;
+        }
+        THRESHOLDS[k] = hi;
+    }
+    for (let i = 0, k = 0; i <= 4096; i++) {
+        while (k < 255 && THRESHOLDS[k + 1] <= i / 4096) k++;
+        LINEAR_BYTE[i] = k;
+    }
+}
+const linearByte = (v: number): number => {
+    if (!(v > 0)) return 0;
+    if (v >= 1) return 255;
+    let k = LINEAR_BYTE[(v * 4096) | 0];
+    while (v >= THRESHOLDS[k + 1]) k++;
+    return k;
+};
+
+// XYB to interleaved sRGB bytes (out: RGBA, alpha left)
+function xybToBytes(x: Float32Array, y: Float32Array, b: Float32Array, m: number[], bias: number[], k: number, out: Uint8Array): void {
+    const m0 = m[0], m1 = m[1], m2 = m[2], m3 = m[3], m4 = m[4], m5 = m[5], m6 = m[6], m7 = m[7], m8 = m[8];
+    const b0 = bias[0], b1 = bias[1], b2 = bias[2], c0 = Math.cbrt(b0), c1 = Math.cbrt(b1), c2 = Math.cbrt(b2);
+    for (let i = 0, o = 0; i < x.length; i++, o += 4) {
+        const gr = y[i] + x[i] - c0, gg = y[i] - x[i] - c1, gb = b[i] - c2;
+        const mr = gr * gr * gr + b0, mg = gg * gg * gg + b1, mb = gb * gb * gb + b2;
+        out[o] = linearByte((m0 * mr + m1 * mg + m2 * mb) * k);
+        out[o + 1] = linearByte((m3 * mr + m4 * mg + m5 * mb) * k);
+        out[o + 2] = linearByte((m6 * mr + m7 * mg + m8 * mb) * k);
+    }
+}
+
 /**
  * How frames become output colors: XYB to sRGB (or to linear light, 1 being SDR white, for HDR images), other images
  * stay in their color space (HDR ones become linear light at the end)
@@ -39,8 +82,11 @@ export class ColorOutput {
         this.scale = this.linear ? image.toneMapping.intensityTarget / REFERENCE_WHITE : 1;
     }
 
-    /** the color transform of a frame's planes (YCbCr and XYB ones become 3 RGB ones) */
-    transform(p: Planes, ycbcr: boolean): Planes {
+    /**
+     * the color transform of a frame's planes (YCbCr and XYB ones become 3 RGB ones); final: whether only toRGBA uses
+     * them (straight alpha, no black or spot channels), then XYB ones become interleaved sRGB bytes right away
+     */
+    transform(p: Planes, ycbcr: boolean, final = false): Planes {
         const image = this.image, n = p.width * p.height, ch = p.channels.slice();
         if (ycbcr) {
             const [cb, y, cr] = ch, r = new Float32Array(n), g = new Float32Array(n), b = new Float32Array(n);
@@ -54,6 +100,12 @@ export class ColorOutput {
         } else if (image.xybEncoded) {
             const [x, y, b] = ch, m = image.opsinInverse, bias = image.opsinBias, cbrt = bias.map(Math.cbrt);
             const k = 255 / image.toneMapping.intensityTarget * this.scale;
+            if (final && !this.linear) {
+                // (the bytes right away, interleaved: the planes keep the extra channels only)
+                const rgba = new Uint8Array(4 * n);
+                xybToBytes(x, y, b, m, bias, k, rgba);
+                return { width: p.width, height: p.height, channels: ch.slice(3), rgba };
+            }
             const R = new Float32Array(n), G = new Float32Array(n), B = new Float32Array(n);
             for (let i = 0; i < n; i++) {
                 const gr = y[i] + x[i] - cbrt[0], gg = y[i] - x[i] - cbrt[1], gb = b[i] - cbrt[2];
@@ -76,6 +128,13 @@ export class ColorOutput {
     /** the image (its planes after the color transform) as 8-bit RGBA, unpremultiplied */
     toRGBA(p: Planes): Uint8Array {
         const n = p.width * p.height, ch = p.channels, image = this.image;
+        if (p.rgba) {
+            // (the colors are bytes already, the channels are the extra ones: straight alpha or none)
+            const out = p.rgba, alpha = ch.find((_, i) => image.extraChannels[i].type === EXTRA_ALPHA);
+            if (alpha) for (let i = 0, o = 3; i < n; i++, o += 4) out[o] = byte(alpha[i]);
+            else for (let o = 3; o < out.length; o += 4) out[o] = 255;
+            return out;
+        }
         const numColor = ch.length - image.extraChannels.length, grey = numColor === 1;
         let [r, g, b] = grey ? [ch[0], ch[0], ch[0]] : ch;
         // CMYK (a black channel): the color channels and black are stored as 1 - ink, the color becomes their product

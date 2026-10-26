@@ -19,6 +19,9 @@
 
 ### Performance
 
+- Lossy JPEG XL decoding is about 15% faster (a 2048x1536 image: 0.73 s instead of 0.87 s), with identical results:
+  XYB becomes sRGB bytes right away for images shown as they are (an exact lookup of linear light), Gaborish and the
+  edge preserving filter's usual pass load fewer samples.
 - AVIF encoding is about 8% faster: the SATD is unrolled, the transform types are tried on one prediction, 16x16
   blocks whose coefficients take few bits aren't split further. The files are about as large as before.
 

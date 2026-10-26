@@ -5,7 +5,7 @@
  * Project Authors, BSD-3-Clause License (see THIRD_PARTY_NOTICES.md)
  */
 import { BitReader } from './bits.ts';
-import { ImageHeader } from './headers.ts';
+import { ImageHeader, EXTRA_ALPHA } from './headers.ts';
 import {
     FrameHeader, TOC, frameHeader, toc, passShifts, FRAME_LF, FRAME_REGULAR, FRAME_SKIP_PROGRESSIVE, BLEND_REPLACE, BLEND_ADD,
     BLEND_BLEND, BLEND_MULADD, BLEND_MUL, FLAG_PATCHES, FLAG_SPLINES, FLAG_NOISE, FLAG_USE_LF_FRAME
@@ -23,6 +23,8 @@ export interface Planes {
     width: number;
     height: number;
     channels: Float32Array[];
+    /** the colors as interleaved sRGB bytes (RGBA), then the channels are the extra ones (see ColorOutput.transform) */
+    rgba?: Uint8Array;
 }
 
 /** What frames share: the image header, the references (saved frames) and the LF frames */
@@ -319,8 +321,11 @@ function render(p: Planes, f: FrameHeader, state: DecoderState): Frame {
         state.references[f.saveAsReference] = planes;
         state.referenceIsXYB[f.saveAsReference] = image.xybEncoded;
     }
-    planes = state.output.transform(planes, f.doYCbCr);
     const normal = f.type === FRAME_REGULAR || f.type === FRAME_SKIP_PROGRESSIVE;
+    // (only toRGBA uses the planes of a frame shown as it is: replacing all, not referenced; with straight alpha only)
+    const replaces = !f.haveCrop && f.blending.mode === BLEND_REPLACE && f.ecBlending.every(b => b.mode === BLEND_REPLACE) && p.width === image.width && p.height === image.height;
+    const final = normal && replaces && !canReference && image.extraChannels.every(e => e.type === EXTRA_ALPHA && !e.alphaAssociated);
+    planes = state.output.transform(planes, f.doYCbCr, final);
     const canvas = normal ? blend(planes, f, state) : planes;
     if (canReference && !f.saveBeforeCT) {
         state.references[f.saveAsReference] = canvas;

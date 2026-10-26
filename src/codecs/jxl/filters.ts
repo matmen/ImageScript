@@ -16,10 +16,18 @@ export function gaborish(channels: Float32Array[], w: number, h: number, weights
             const at = (x: number, l: number, r: number): number =>
                 (src[m + x] + (src[t + x] + src[b + x] + src[m + l] + src[m + r]) * w0 + (src[t + l] + src[t + r] + src[b + l] + src[b + r]) * w1) * norm;
             out[m] = at(0, mirror(-1, w), mirror(1, w));
-            // (the columns between the edges: no mirroring)
+            // (the columns between the edges: no mirroring; the left and center columns carried along, in the same order
+            // of operations)
+            let tl = src[t], tc = src[t + 1], ml = src[m], mc = src[m + 1], bl = src[b], bc = src[b + 1];
             for (let x = 1; x < w - 1; x++) {
-                out[m + x] = (src[m + x] + (src[t + x] + src[b + x] + src[m + x - 1] + src[m + x + 1]) * w0 +
-                    (src[t + x - 1] + src[t + x + 1] + src[b + x - 1] + src[b + x + 1]) * w1) * norm;
+                const tr = src[t + x + 1], mr = src[m + x + 1], br = src[b + x + 1];
+                out[m + x] = (mc + (tc + bc + ml + mr) * w0 + (tl + tr + bl + br) * w1) * norm;
+                tl = tc;
+                tc = tr;
+                ml = mc;
+                mc = mr;
+                bl = bc;
+                bc = br;
             }
             if (w > 1) out[m + w - 1] = at(w - 1, w - 2, mirror(w, w));
         }
@@ -79,6 +87,47 @@ function outputRow(cur: Float32Array[], out: Float32Array[], y: number, w: numbe
         }
         // (the block's columns 0 and 7, and its rows 0 and 7, are weighted by borderMul)
         const borderInvSigma = 6.6 * (Math.SQRT1_2 - 1) / sg * (stepMul * borderMul), innerInvSigma = 6.6 * (Math.SQRT1_2 - 1) / sg * stepMul;
+        if (n === 2 && innerRow && x0 >= 2 && x1 <= w - 2) {
+            // (the passes of 2 tap pairs, below and right, inside the frame: unrolled, the same order of operations)
+            const sa = sums[0], sb = sums[1], soA = sumOff[0], soB = sumOff[1], toA = srcOff[0], toB = srcOff[1];
+            for (let x = x0; x < x1; x++) {
+                const i = row + x, p = p0 + x;
+                const negInvSigma = yBorder || (x & 7) === 0 || (x & 7) === 7 ? borderInvSigma : innerInvSigma;
+                let sumW = 1, sum0 = i0[i], sum1 = i1[i], sum2 = i2[i];
+                let weight = 1 + sa[p] * negInvSigma;
+                if (weight > 0) {
+                    sumW += weight;
+                    sum0 += weight * i0[i + toA];
+                    sum1 += weight * i1[i + toA];
+                    sum2 += weight * i2[i + toA];
+                }
+                weight = 1 + sa[p - soA] * negInvSigma;
+                if (weight > 0) {
+                    sumW += weight;
+                    sum0 += weight * i0[i - toA];
+                    sum1 += weight * i1[i - toA];
+                    sum2 += weight * i2[i - toA];
+                }
+                weight = 1 + sb[p] * negInvSigma;
+                if (weight > 0) {
+                    sumW += weight;
+                    sum0 += weight * i0[i + toB];
+                    sum1 += weight * i1[i + toB];
+                    sum2 += weight * i2[i + toB];
+                }
+                weight = 1 + sb[p - soB] * negInvSigma;
+                if (weight > 0) {
+                    sumW += weight;
+                    sum0 += weight * i0[i - toB];
+                    sum1 += weight * i1[i - toB];
+                    sum2 += weight * i2[i - toB];
+                }
+                o0[i] = sum0 / sumW;
+                o1[i] = sum1 / sumW;
+                o2[i] = sum2 / sumW;
+            }
+            continue;
+        }
         for (let x = x0; x < x1; x++) {
             const i = row + x;
             const negInvSigma = yBorder || (x & 7) === 0 || (x & 7) === 7 ? borderInvSigma : innerInvSigma;
