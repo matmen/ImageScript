@@ -1,13 +1,27 @@
-# Writes the TIFFs of tests/tiffs that Pillow can't write: python3 scripts/tiff-fixtures.py (needs Pillow)
-# Most store the pixels of an existing fixture (rgba-tiff_lzw-pred, la-tiff_lzw, bw-tiff_deflate) in another way, so
-# they have to decode to the same output; the YCbCr ones are compared with libtiff (through Pillow)
+# Writes the TIFFs of tests/tiffs: python3 scripts/tiff-fixtures.py (needs Pillow with libtiff)
+# First the ones Pillow (libtiff) writes, from tests/targets/external.png scaled to 157x101, then those it can't write.
+# Most of these store the pixels of the first ones (rgba-tiff_lzw-pred, la-tiff_lzw, bw-tiff_deflate) in another way,
+# so they have to decode to the same output; the YCbCr ones are compared with libtiff (through Pillow)
 import struct
 import zlib
 from pathlib import Path
+import numpy as np
 from PIL import Image
 
 root = Path(__file__).resolve().parent.parent
 out = root / 'tests' / 'tiffs'
+
+source = Image.open(root / 'tests' / 'targets' / 'external.png').convert('RGB').resize((157, 101), Image.BICUBIC)
+source.convert('1').save(out / 'bw-tiff_deflate.tif', compression='tiff_adobe_deflate')
+source.convert('CMYK').save(out / 'cmyk-tiff_lzw-pred.tif', compression='tiff_lzw', tiffinfo={317: 2})
+source.convert('L').convert('F').save(out / 'f-tiff_adobe_deflate-pred.tif', compression='tiff_adobe_deflate', tiffinfo={317: 3})
+# (16 bits, big endian: v * 257, the high bytes are the 8-bit image)
+Image.frombytes('I;16B', source.size, (np.asarray(source.convert('L'), np.uint32) * 257).astype('>u2').tobytes()).save(out / 'i16b.tif')
+source.convert('LA').save(out / 'la-tiff_lzw.tif', compression='tiff_lzw')
+source.quantize(64).save(out / 'p-packbits.tif', compression='packbits')
+source.save(out / 'rgb-jpeg.tif', compression='jpeg')
+source.convert('RGBA').save(out / 'rgba-tiff_lzw-pred.tif', compression='tiff_lzw', tiffinfo={317: 2})
+
 rgb = Image.open(out / 'rgba-tiff_lzw-pred.tif').convert('RGB')
 grey = Image.open(out / 'la-tiff_lzw.tif').convert('L')
 bw = Image.open(out / 'bw-tiff_deflate.tif').convert('1')

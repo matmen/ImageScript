@@ -14,7 +14,7 @@ tmp = Path(tempfile.mkdtemp())
 
 
 def images():
-    for name in ['external.png', 'circle.png', 'profile-card.png', 'potato.png']:
+    for name in ['external.png', 'circle.png', 'screen.png', 'potato.png']:
         yield name, np.asarray(Image.open(root / 'tests' / 'targets' / name).convert('RGBA'))
     # (grey: the red channel)
     red = np.asarray(Image.open(root / 'tests' / 'targets' / 'external.png').convert('RGBA'))[..., 0]

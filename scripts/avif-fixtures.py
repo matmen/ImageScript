@@ -265,7 +265,7 @@ write('segments', avif([image(encode([yuv(photo(96, 64), '420', 8)], '420', 8, [
 write('grain', avif([image(encode([yuv(photo(48, 40), '420', 8)], '420', 8, ['--cq-level=30', '--film-grain-test=1']), '420', 8, 48, 40)]))
 write('superres', avif([image(encode([yuv(photo(128, 96), '420', 8)], '420', 8, ['--cq-level=35', '--cpu-used=0', '--superres-mode=1',
                                                                              '--superres-kf-denominator=13', '--enable-restoration=1']), '420', 8, 128, 96)]))
-write('screen', avif([image(encode([yuv(source('profile-card.png', 200, 150), '420', 8)], '420', 8, ['--cq-level=30', '--tune-content=screen']), '420', 8, 200, 150)]))
+write('screen', avif([image(encode([yuv(source('screen.png', 200, 150), '420', 8)], '420', 8, ['--cq-level=30', '--tune-content=screen']), '420', 8, 200, 150)]))
 
 # alpha (an auxiliary image), premultiplied too
 color, alpha = photo(48, 40), alpha_ramp(48, 40)

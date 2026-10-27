@@ -23,7 +23,7 @@ const panic = message => {
         if ([image.width, image.height].some(v => v !== 638))
             panic('dimensions don\'t match');
 
-        if (!Buffer.from(image.bitmap.subarray(0, 4)).equals(Buffer.from([70, 65, 62, 255])))
+        if (!Buffer.from(image.bitmap.subarray(0, 4)).equals(Buffer.from([221, 228, 220, 255])))
             panic('pixel doesn\'t match');
     }
 })();

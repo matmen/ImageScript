@@ -12,7 +12,7 @@ const sha = image => crypto.createHash('sha256').update(new Uint8Array(image.bit
 // the HDRs of scripts/format-fixtures.py: the same pixels in every orientation and encoding (none brighter than white,
 // so tone mapping doesn't change them), as OpenCV decodes rle.hdr (linear light clamped to 0..1 as sRGB)
 (async () => {
-    const rle = 'ad1856b57d64401720070cf94612bc27110a1b60fa9762457a0a78d6f4a4b55f';
+    const rle = '30e3c8514c13c83d1b5fb420bada90a7ad96025b0db97072e7a9b0f802e4b45a';
     for (const name of ['rle', 'flat', 'old-rle', 'bottom-up', 'mirrored', 'columns', 'columns-flipped']) {
         const binary = await fs.readFile(`./tests/hdr/${name}.hdr`);
         if (ImageType.getType(binary) !== 'hdr') panic(`${name}: not detected as HDR`);
@@ -26,9 +26,9 @@ const sha = image => crypto.createHash('sha256').update(new Uint8Array(image.bit
     // brighter than white: tone mapped by default (scripts/format-fixtures.py computes Reinhard's operator), or clamped
     // like OpenCV decodes it
     const bright = await fs.readFile('./tests/hdr/bright.hdr');
-    if (sha(await Image.decode(bright)) !== '239cfd3dac81939bddfe32480a93fa3482cb51511fd94a3177e01770d71fa65a') panic('bright: tone mapped pixels don\'t match');
-    if (sha(await Image.decode(bright, {toneMapping: 'clamp'})) !== '799436ecd1aa9a435430af70d6e00c47680a61115e7901f5f3f5b947810c317d') panic('bright: clamped pixels don\'t match');
-    if (sha(await decode(bright, {toneMapping: 'clamp'})) !== '799436ecd1aa9a435430af70d6e00c47680a61115e7901f5f3f5b947810c317d') panic('decode() should pass toneMapping on');
+    if (sha(await Image.decode(bright)) !== 'a1a2b278f6c6b3cc4f49c6524bbbc27764a8ae864c5171cb4537a7eea2a4cc03') panic('bright: tone mapped pixels don\'t match');
+    if (sha(await Image.decode(bright, {toneMapping: 'clamp'})) !== '5d034eaf0755d5be5e15ca7a259d81d933ce0f4d5427d2c322b7470db013bf58') panic('bright: clamped pixels don\'t match');
+    if (sha(await decode(bright, {toneMapping: 'clamp'})) !== '5d034eaf0755d5be5e15ca7a259d81d933ce0f4d5427d2c322b7470db013bf58') panic('decode() should pass toneMapping on');
     if (!await Image.decode(bright, {toneMapping: 'aces'}).then(() => false, e => e instanceof TypeError)) panic('an unknown toneMapping should throw');
 
     // XYZE: the same pixels as CIE XYZ, by Radiance's primaries (rounded differently by the shared exponents)

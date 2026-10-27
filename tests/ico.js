@@ -11,21 +11,21 @@ const sha = image => crypto.createHash('sha256').update(new Uint8Array(image.bit
 
 // sha256 of the expected RGBA output, as Pillow decodes the same image (scripts/format-fixtures.py); the pixels the
 // AND mask makes transparent are transparent black
-const bits24 = '30f8827e84129d1e46acd729b29e4f51f5e62792bde515d6a06f28dfc8e5c1ea';
+const bits24 = 'b5fa3f2de13337692e5672fa711981eecf939311942c9d042719665c55d4b23a';
 const expected = {
-    '1bit.ico': ['ico', 32, '81ffeaa556f91d42c2ee594637e4578049721197f856d5b991ae9017dc8a385d'],
-    '4bit.ico': ['ico', 32, '82b6e7d666b1c8a25dd9df9f825f447505986a95f3bd665fb8d0a5b8d9c0c30f'],
-    '8bit.ico': ['ico', 32, 'c5b122413ec511ef9ce56c6f7d7d7ad2c49fd4959607b2e44d8e68f06e799909'],
+    '1bit.ico': ['ico', 32, '52124dcb35bc47f2dcf23c98b193a723e1f4e7a136d8ee4ddb90dba544952aed'],
+    '4bit.ico': ['ico', 32, 'a6922eb94f2a74743f074ceeb155cc48ad0098a2043e3f66772df6d8d4848bc5'],
+    '8bit.ico': ['ico', 32, '55d71be52c8bde8b3a6f57c8656d3692da7484e0c2017dd7d295200689b92b48'],
     '24bit.ico': ['ico', 32, bits24],
     // with alpha, the AND mask isn't used
-    '32bit.ico': ['ico', 32, '1ef374e8b807462e3da6cb1e0d3b26f4ea4c574cedf73ba6ccd7cc3c5aefd41b'],
+    '32bit.ico': ['ico', 32, '0a03c438922ffc2569acdad888c3255d4776f267db402cbd95675d5b46ba1240'],
     // alpha that is zero everywhere isn't used, the AND mask is (like for 24 bits)
     '32bit-zero-alpha.ico': ['ico', 32, bits24],
     // the largest image, and of those as large the one with the most bits (not the first)
-    'sizes.ico': ['ico', 48, '3cbce1e96af38a9dd273eedf192f1b89c6fd9ff69f6dd45d1bdb99769f247ca4'],
+    'sizes.ico': ['ico', 48, '2b93ec7aab249551358a004f9e362bdc10b21e2b0b3b1d060dc856d76836be1a'],
     // a PNG
-    'png.ico': ['ico', 64, 'b813ea755cdd849729a15e70af7935e01a62e608bced18f9f7c20a679b41fc8a'],
-    'cursor.cur': ['cur', 32, '1ef374e8b807462e3da6cb1e0d3b26f4ea4c574cedf73ba6ccd7cc3c5aefd41b'],
+    'png.ico': ['ico', 64, '07f56f345c3e9bbbc1f7b69fd9b7ff509d0b3a676f3be417bb9088c0fbae796a'],
+    'cursor.cur': ['cur', 32, '0a03c438922ffc2569acdad888c3255d4776f267db402cbd95675d5b46ba1240'],
 };
 
 (async () => {

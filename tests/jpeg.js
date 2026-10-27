@@ -24,7 +24,7 @@ const expected = {
 
 	if ([image.width, image.height].some(v => v !== 638))
 		panic('dimensions don\'t match');
-	if (!Buffer.from(image.bitmap.slice(0, 4)).equals(Buffer.from([70, 65, 61, 255])))
+	if (!Buffer.from(image.bitmap.slice(0, 4)).equals(Buffer.from([220, 227, 219, 255])))
 		panic('pixel doesn\'t match');
 
 	for (const [name, hash] of Object.entries(expected)) {
@@ -53,7 +53,8 @@ const expected = {
 			for (let k = 0; k < 3; k++) error += (image.bitmap[i + k] - decoded.bitmap[i + k]) ** 2;
 		const psnr = 10 * Math.log10(255 * 255 / (error / (image.width * image.height * 3)));
 
-		if (psnr < 28) panic(`q${quality}: psnr too low (${psnr.toFixed(2)}dB)`);
+		// (libjpeg gets 27.7 dB at quality 10 on this photo)
+		if (psnr < 27) panic(`q${quality}: psnr too low (${psnr.toFixed(2)}dB)`);
 		if (previous && (encoded.length <= previous.size || psnr <= previous.psnr))
 			panic(`q${quality}: not better than the previous quality`);
 		previous = {size: encoded.length, psnr};
