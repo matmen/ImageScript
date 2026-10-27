@@ -1287,30 +1287,30 @@ export class Image {
         const blend = BLEND_MODES[mode];
         if (!blend || !Object.prototype.hasOwnProperty.call(BLEND_MODES, mode))
             throw new RangeError(`Invalid blend mode: ${mode}`);
-        if (opacity !== 1 || mode !== 'normal') return this.__blend__(source, x, y, opacity, blend);
+        if (mode !== 'normal') return this.__blend__(source, x, y, opacity, blend);
+        if (opacity === 0) return this;
 
         const left = Math.max(0, x), top = Math.max(0, y);
         const right = Math.min(this.width, x + source.width), bottom = Math.min(this.height, y + source.height);
         const dst = this.bitmap, src = source.bitmap;
-        // whole pixels are copied through 32-bit views
-        const dst32 = new Uint32Array(dst.buffer, dst.byteOffset, dst.length >> 2);
-        const src32 = new Uint32Array(src.buffer, src.byteOffset, src.length >> 2);
 
         for (let row = top; row < bottom; row++) {
-            for (let column = left; column < right; column++) {
-                const sp = (row - y) * source.width + column - x, s = 4 * sp;
+            for (let column = left, s = 4 * ((row - y) * source.width + left - x), d = 4 * (row * this.width + left); column < right; column++, s += 4, d += 4) {
                 const sa = src[s + 3];
                 if (sa === 0) continue;
 
-                const dp = row * this.width + column, d = 4 * dp;
                 const da = dst[d + 3];
-                if (sa === 255 || da === 0) {
-                    dst32[dp] = src32[sp];
+                if ((sa === 255 && opacity === 1) || da === 0) {
+                    dst[d] = src[s];
+                    dst[d + 1] = src[s + 1];
+                    dst[d + 2] = src[s + 2];
+                    dst[d + 3] = sa * opacity;
                     continue;
                 }
 
-                // source over with straight alpha, the clamped bitmap rounds on assignment
-                const fa = sa / 255, ba = da / 255 * (1 - fa);
+                // source over with straight alpha (the source's scaled by the opacity), the clamped bitmap rounds on
+                // assignment
+                const fa = sa / 255 * opacity, ba = da / 255 * (1 - fa);
                 const a = fa + ba;
                 dst[d] = (src[s] * fa + dst[d] * ba) / a;
                 dst[d + 1] = (src[s + 1] * fa + dst[d + 1] * ba) / a;

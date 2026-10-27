@@ -441,6 +441,18 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         assert(rgba(base.clone().composite(top, 0, 0, {mode: 'multiply'}), 0, 0).join() === '64,128,192,255', 'blend over transparency');
         assert(Buffer.from(base.clone().composite(top, 0, 0, {mode: 'normal', opacity: 1}).bitmap).equals(Buffer.from(base.clone().composite(top).bitmap)), 'normal mode');
 
+        // normal mode with an opacity (source over with the source alpha scaled) matches the general compositing model,
+        // also for translucent pixels, off the edges
+        let seed = 3;
+        const random = () => (seed = Math.imul(seed, 1103515245) + 12345 >>> 0) / 2 ** 32;
+        const pixel = () => Image.rgbaToColor(random() * 256 | 0, random() * 256 | 0, random() * 256 | 0, [0, 255, random() * 256 | 0][random() * 3 | 0]);
+        const backdrop = new Image(24, 16).fill(pixel), source = new Image(16, 24).fill(pixel);
+        for (const opacity of [0.3, 0.85, 0.999]) {
+            const expected = backdrop.clone().__blend__(source, 12, -4, opacity, (_, s) => s).bitmap;
+            const actual = backdrop.clone().composite(source, 12, -4, {opacity}).bitmap;
+            assert(actual.every((v, i) => Math.abs(v - expected[i]) <= 1), `normal mode with opacity ${opacity} differs from the compositing model`);
+        }
+
         let threw = 0;
         for (const options of [{mode: 'foo'}, {mode: 'toString'}, {opacity: 2}, {opacity: NaN}])
             try { base.clone().composite(top, 0, 0, options); } catch { threw++; }
