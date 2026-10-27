@@ -884,6 +884,28 @@ export class Image {
      * @param height The new images height
      */
     crop(x: number, y: number, width: number, height: number): this {
+        return this.__apply__(this.__crop__(...this.__crop_bounds__(x, y, width, height)));
+    }
+
+    /**
+     * Copies a region of the image into a new image, this one stays unchanged (like {@link Image.crop} on a clone,
+     * without copying the whole image). The region is clipped to the image, so the result can be smaller than the
+     * requested size
+     * @param x The x offset (0-based)
+     * @param y The y offset (0-based)
+     * @param width The region's width
+     * @param height The region's height
+     */
+    region(x: number, y: number, width: number, height: number): Image {
+        return this.__crop__(...this.__crop_bounds__(x, y, width, height));
+    }
+
+    /**
+     * A crop region clipped to the image as [x, y, width, height]
+     * @internal
+     * @ignore
+     */
+    protected __crop_bounds__(x: number, y: number, width: number, height: number): [number, number, number, number] {
         x = ~~finite(x, 'x');
         y = ~~finite(y, 'y');
         width = ~~finite(width, 'width');
@@ -894,7 +916,7 @@ export class Image {
         if (right <= left || bottom <= top)
             throw new RangeError('Crop region does not overlap the image');
 
-        return this.__apply__(this.__crop__(left, top, right - left, bottom - top));
+        return [left, top, right - left, bottom - top];
     }
 
     /**

@@ -2,6 +2,11 @@
 
 ## 3.7.1
 
+### Features
+
+- `Image#region(x, y, width, height)` copies a region into a new image and leaves the image as it is (like `crop`
+  on a clone, without copying the whole image). It's clipped like `crop`; on a frame it gives a plain image.
+
 ### Improvements
 
 - Optimized lossy WebP animations are smaller: like libwebp's, they leave out pixels that changed by up to a tolerance
