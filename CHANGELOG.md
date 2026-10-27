@@ -2,7 +2,14 @@
 
 ## 3.7.1
 
-### Fixes
+### Improvements
+
+- Optimized lossy WebP animations are smaller: like libwebp's, they leave out pixels that changed by up to a tolerance
+  from the quality (3 per channel at quality 85, 1 at 100), and make unchanged pixels transparent only in whole 8x8
+  blocks. Making each unchanged pixel transparent gave speckled alpha masks where most pixels change a little
+  (cross-fades), which could cost more than they saved. On six cross-faded radar-like animations at quality 85 the
+  files are 2% larger to 13% smaller than before and 7-46% smaller than unoptimized ones, at 0.1 dB PSNR below
+  unoptimized ones (before: 0.8-1 dB below); where nearly every pixel changes a little, they're 10x smaller.
 
 - Lossless WebPs, and lossy ones with alpha (most optimized animations), could be undecodable since 3.7.0 (#82): a
   prefix group whose code had a single symbol of 256 or more (a length code) took a bit per symbol instead of none.

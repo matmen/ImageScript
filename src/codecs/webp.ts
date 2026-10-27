@@ -380,6 +380,16 @@ export interface WebPEncodeFrame {
 }
 
 /**
+ * How much a color channel of a lossy animation's pixel may change for it to count as unchanged (libwebp's
+ * QualityToMaxDiff: 1 at quality 100, 3 at 85, 31 at 0)
+ * @param quality 0-100
+ */
+export function lossyTolerance(quality: number): number {
+    const value = Math.sqrt(quality / 100);
+    return Math.max(1, Math.round(31 * (1 - value) + value));
+}
+
+/**
  * Encodes frames into an animated WebP, lossless or (with a quality) lossy. Frame offsets have to be even (the format
  * stores them halved)
  * @param plays How often to play the animation, 0 = forever

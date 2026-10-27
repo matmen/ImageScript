@@ -59,7 +59,8 @@ export interface AnimationEncodeOptions {
 export interface WebPAnimationEncodeOptions extends AnimationEncodeOptions {
     /**
      * Lossy frames (0-100, like libwebp's quality: 75 is its default), much smaller than lossless ones. Without it the
-     * frames are lossless
+     * frames are lossless. Optimized lossy frames, like libwebp's, leave out 8x8 blocks that only changed a little (by
+     * up to 3 per channel at quality 85, 1 at 100)
      */
     quality?: number;
     /** How much effort lossy frames take (0-6), see {@link WebPEncodeOptions.effort}. Default: `2` */
@@ -296,7 +297,8 @@ export class Animation extends Array<Frame> {
             if (!Number.isInteger(effort) || effort < 0 || effort > 6) throw new RangeError(`effort must be an integer 0-6, not ${effort}`);
         }
 
-        const frames = optimize ? this.__optimized__({ replace: true, even: true, alpha: 'frame' }) : this.__webpFrames__();
+        const tolerance = quality === undefined ? undefined : webp.lossyTolerance(quality);
+        const frames = optimize ? this.__optimized__({ replace: true, even: true, alpha: 'frame', tolerance }) : this.__webpFrames__();
         return webp.encodeAnimation(frames, this.width, this.height, toPlays(this.loopCount), exifData(resolveMetadata(metadata)), quality, effort);
     }
 

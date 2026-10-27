@@ -58,6 +58,12 @@ export interface OptimizeOptions {
      * transparent, others the background color)
      */
     cover?: boolean;
+    /**
+     * For lossy frames (WebP): how much a color channel may change (at full alpha) for a pixel to count as unchanged,
+     * like libwebp's lossy animations. Unchanged pixels then only become transparent in whole 8x8 blocks (the alpha of
+     * scattered unchanged pixels costs more than leaving them as they are). Needs `replace`
+     */
+    tolerance?: number;
 }
 
 // what transparent pixels make an opaque frame cost: an alpha channel, 4 channels instead of 3 (or a palette entry
@@ -69,14 +75,14 @@ const ALPHA_COST = 4 / 3;
  * @param width The canvas width
  * @param height The canvas height
  */
-export function optimize(frames: InputFrame[], width: number, height: number, { replace, even, alpha, palette, cover }: OptimizeOptions): OptimizedFrame[] {
+export function optimize(frames: InputFrame[], width: number, height: number, { replace, even, alpha, palette, cover, tolerance }: OptimizeOptions): OptimizedFrame[] {
     const size = width * height * 4;
     // the input animation's canvas, and what the optimized animation shows after its last frame (and its disposal)
     const canvas = new Uint8Array(size), canvas32 = new Int32Array(canvas.buffer);
     const shown = new Uint8Array(size), shown32 = new Int32Array(shown.buffer);
     const output: OptimizedFrame[] = [];
 
-    const state: State = { canvas32, shown32, width, replace };
+    const state: State = { canvas32, shown32, width, replace, tolerance };
 
     // for a shared pixel format: whether the animation is opaque when all frames are stored dense, and the changes
     // from pixel to pixel all dense and as chosen
@@ -94,7 +100,7 @@ export function optimize(frames: InputFrame[], width: number, height: number, { 
             return;
         }
         if (even) changed = evenArea(changed);
-        let area = sparse(state, changed);
+        let area = tolerance === undefined ? sparse(state, changed) : sparseBlocks(state, changed);
         let blend = true;
         if (area.unblendable && replace) blend = false;
         else if (area.unblendable) {
@@ -115,25 +121,31 @@ export function optimize(frames: InputFrame[], width: number, height: number, { 
         // compresses better when the unchanged pixels are scattered (e.g. in videos): choose the one with fewer
         // changes from pixel to pixel, which estimates the compressed size well and costs a lot less than compressing
         // both. GIFs blend the dense area too (its unchanged pixels are the same or transparent in both), the others
-        // replace the area with it
+        // replace the area with it. Lossy frames are sparse whenever a block is unchanged (like libwebp's)
         const { x, y, width: w, height: h } = changed;
         const pixels = area.pixels;
         if (!output.length && (w !== width || h !== height)) opaque = false;
         if (!area.denseOpaque) opaque = false;
         const sparseCost = alpha === 'frame' && area.denseOpaque ? area.sparseChanges * ALPHA_COST : area.sparseChanges;
-        const dense = !blend || area.denseChanges < sparseCost
+        const dense = !blend || (tolerance !== undefined ? !area.unchangedBlocks : area.denseChanges < sparseCost
             || (palette !== undefined && colors(new Int32Array(pixels.buffer), w, { x: 0, y: 0, width: w, height: h }, palette + 1) > palette
-                && colors(canvas32, width, changed, palette + 1) <= palette);
+                && colors(canvas32, width, changed, palette + 1) <= palette));
         denseTotal += area.denseChanges;
         chosenTotal += dense ? area.denseChanges : area.sparseChanges;
         if (dense) {
             for (let row = 0; row < h; row++) pixels.set(canvas.subarray(((y + row) * width + x) * 4, ((y + row) * width + x + w) * 4), row * w * 4);
             if (replace) blend = false;
         }
-        for (let row = 0; row < h; row++) {
-            const start = ((y + row) * width + x) * 4;
-            shown.set(canvas.subarray(start, start + w * 4), start);
-        }
+        // (lossy frames keep showing the pixels of unchanged blocks as they were, with tolerance they can differ)
+        if (!dense && tolerance !== undefined) {
+            const pixels32 = new Int32Array(pixels.buffer);
+            for (let row = 0, k = 0; row < h; row++)
+                for (let p = (y + row) * width + x, end = p + w; p < end; p++, k++) if (pixels32[k] & ALPHA) shown32[p] = pixels32[k];
+        } else
+            for (let row = 0; row < h; row++) {
+                const start = ((y + row) * width + x) * 4;
+                shown.set(canvas.subarray(start, start + w * 4), start);
+            }
         output.push({ x, y, width: w, height: h, duration, dispose: false, blend, pixels });
     };
 
@@ -221,6 +233,18 @@ interface State {
     shown32: Int32Array;
     width: number;
     replace: boolean;
+    tolerance?: number;
+}
+
+/**
+ * Whether two pixels (their offsets in RGBA bytes) look the same within a tolerance, like libwebp's PixelsAreSimilar:
+ * the same alpha, and each color channel differs by at most the tolerance at full alpha
+ */
+function similar(a: Uint8Array, i: number, b: Uint8Array, j: number, tolerance: number): boolean {
+    const alpha = a[i + 3];
+    if (alpha !== b[j + 3]) return false;
+    const limit = tolerance * 255;
+    return Math.abs(a[i] - b[j]) * alpha <= limit && Math.abs(a[i + 1] - b[j + 1]) * alpha <= limit && Math.abs(a[i + 2] - b[j + 2]) * alpha <= limit;
 }
 
 // the area grown to even offsets (WebP stores them halved)
@@ -236,6 +260,65 @@ interface SparseArea {
     unblendable: Rect | null;
     /** whether the area as it is has no transparent pixels */
     denseOpaque: boolean;
+    /** lossy frames: how many blocks are unchanged (and transparent in the pixels) */
+    unchangedBlocks?: number;
+}
+
+// the size of the blocks lossy frames make transparent (libwebp's)
+const BLOCK = 8;
+
+/**
+ * For lossy frames: the area with the 8x8 blocks (from its top left) that didn't change, within the tolerance,
+ * transparent (their color is the average of what's shown, for the encoder's prediction). The other blocks are as they
+ * are, they can't be blended where they aren't opaque, unless transparent in both
+ */
+function sparseBlocks({ canvas32, shown32, width, tolerance = 0 }: State, { x, y, width: w, height: h }: Rect): SparseArea {
+    const canvas = new Uint8Array(canvas32.buffer), shown = new Uint8Array(shown32.buffer);
+    const pixels = new Uint8Array(w * h * 4), pixels32 = new Int32Array(pixels.buffer);
+    let left = w, right = -1, top = h, bottom = -1, translucent = 0, unchangedBlocks = 0;
+    for (let by = 0; by < h; by += BLOCK)
+        for (let bx = 0; bx < w; bx += BLOCK) {
+            const bw = Math.min(BLOCK, w - bx), bh = Math.min(BLOCK, h - by);
+            let unchanged = true;
+            for (let row = by; row < by + bh && unchanged; row++)
+                for (let p = (y + row) * width + x + bx, end = p + bw; p < end; p++) {
+                    const value = canvas32[p], before = shown32[p];
+                    if (value !== before && ((value | before) & ALPHA) !== 0 && !similar(canvas, p * 4, shown, p * 4, tolerance)) {
+                        unchanged = false;
+                        break;
+                    }
+                }
+
+            if (unchanged) {
+                unchangedBlocks++;
+                let r = 0, g = 0, b = 0;
+                for (let row = by; row < by + bh; row++)
+                    for (let p = ((y + row) * width + x + bx) * 4, end = p + bw * 4; p < end; p += 4) {
+                        r += shown[p]; g += shown[p + 1]; b += shown[p + 2];
+                    }
+                const n = bw * bh;
+                r = r / n | 0; g = g / n | 0; b = b / n | 0;
+                for (let row = by; row < by + bh; row++)
+                    for (let k = ((row * w) + bx) * 4, end = k + bw * 4; k < end; k += 4) {
+                        pixels[k] = r; pixels[k + 1] = g; pixels[k + 2] = b;
+                    }
+            }
+            for (let row = by; row < by + bh; row++)
+                for (let i = bx, k = row * w + bx, p = (y + row) * width + x + bx; i < bx + bw; i++, k++, p++) {
+                    const value = canvas32[p];
+                    translucent |= ~value & ALPHA;
+                    if (unchanged) continue;
+                    pixels32[k] = value;
+                    if ((value & ALPHA) !== ALPHA && ((value | shown32[p]) & ALPHA) !== 0) {
+                        if (i < left) left = i;
+                        if (i > right) right = i;
+                        if (row < top) top = row;
+                        if (row > bottom) bottom = row;
+                    }
+                }
+        }
+    const unblendable: Rect | null = right < 0 ? null : { x: x + left, y: y + top, width: right - left + 1, height: bottom - top + 1 };
+    return { pixels, sparseChanges: 0, denseChanges: 0, unblendable, denseOpaque: translucent === 0, unchangedBlocks };
 }
 
 /**
@@ -279,14 +362,15 @@ function sparse({ canvas32, shown32, width, replace }: State, { x, y, width: w, 
 }
 
 /**
- * The bounding box of the changed pixels within an area. Searches from the edges inwards, so it stops early when much
+ * The bounding box of the changed pixels (within the tolerance) within an area. Searches from the edges inwards, so it stops early when much
  * changed
  */
-function bounds({ canvas32, shown32, width }: State, area: Rect): Rect | null {
+function bounds({ canvas32, shown32, width, tolerance }: State, area: Rect): Rect | null {
     const x0 = area.x, x1 = area.x + area.width, y0 = area.y, y1 = area.y + area.height;
+    const canvas = new Uint8Array(canvas32.buffer), shown = new Uint8Array(shown32.buffer);
     const test = (p: number): boolean => {
         const c = canvas32[p], s = shown32[p];
-        return c !== s && ((c | s) & ALPHA) !== 0;
+        return c !== s && ((c | s) & ALPHA) !== 0 && (tolerance === undefined || !similar(canvas, p * 4, shown, p * 4, tolerance));
     };
     const rowHas = (y: number, from: number, to: number): number => {
         for (let x = from, p = y * width + from; x < to; x++, p++) if (test(p)) return x;

@@ -162,4 +162,48 @@ const disc = (size, color) => new Image(size, size).fill((x, y) => {
                 panic(`screen recording: ${format} is ${size} bytes, the changes aren't stored alone`);
         }
     }
+
+    // lossy WebP: pixels that change by up to the tolerance count as unchanged, and unchanged pixels only become
+    // transparent in whole 8x8 blocks. A translucent layer over a textured map changes its color a little each frame
+    // (most pixels change by 1-2, scattered ones not at all), a box moves and one in the far corner changes its color
+    {
+        let seed = 5;
+        const random = () => (seed = Math.imul(seed, 1103515245) + 12345 >>> 0) / 2 ** 32;
+        const map = new Image(100, 60).fill((x, y) => {
+            const g = 150 + 40 * Math.sin(x / 9) * Math.cos(y / 13) + (random() - 0.5) * 30;
+            return Image.rgbaToColor(g | 0, g * 0.9 | 0, g * 0.8 | 0, 255);
+        });
+        const animation = new Animation(Array.from({length: 8}, (_, i) => {
+            const layer = new Image(100, 60).fill(x => x < 80 ? Image.rgbaToColor(i % 4, 180 + i * 7 % 5, 250 + i * 3 % 4, 150) : 0);
+            return Frame.from(map.clone().composite(layer).drawBox(5 + i * 10, 20, 12, 12, 0xff0000ff)
+                .drawBox(90, 50, 6, 6, Image.rgbaToColor(0, i * 30, 0, 255)), 50);
+        }));
+
+        const tolerance = 3;
+        const frames = animation.__optimized__({replace: true, even: true, alpha: 'frame', tolerance});
+        if (frames.length !== animation.length) panic(`lossy WebP: ${frames.length} frames instead of ${animation.length}, the box moves in each`);
+        for (const [i, f] of frames.entries()) {
+            if (i && !f.blend) panic(`lossy WebP: frame ${i} isn't sparse`);
+            // the transparent pixels of each block (from the frame's top left): all or none
+            for (let by = 0; by < f.height; by += 8)
+                for (let bx = 0; bx < f.width; bx += 8) {
+                    let transparent = 0, count = 0;
+                    for (let y = by; y < Math.min(by + 8, f.height); y++)
+                        for (let x = bx; x < Math.min(bx + 8, f.width); x++, count++) if (!f.pixels[(y * f.width + x) * 4 + 3]) transparent++;
+                    if (transparent && transparent !== count) panic(`lossy WebP: frame ${i} has a partly transparent block at ${bx},${by}`);
+                }
+        }
+        // what the frames show is within the tolerance of the animation
+        const png = await import('../dist/codecs/png.js');
+        const shown = png.compositeAnimation({width: 100, height: 60, frames: frames.map(f => ({...f, dispose: f.dispose ? 1 : 0}))});
+        shown.forEach(({pixels}, i) => {
+            const expected = animation[i].bitmap;
+            for (let k = 0; k < pixels.length; k++)
+                if (Math.abs(pixels[k] - expected[k]) > tolerance) panic(`lossy WebP: frame ${i} differs by ${Math.abs(pixels[k] - expected[k])} at pixel ${k >> 2}`);
+        });
+        // and it's smaller than without optimizing (storing the scattered unchanged pixels as transparent made it larger)
+        const optimized = await animation.encodeWebP({quality: 85}), plain = await animation.encodeWebP({quality: 85, optimize: false});
+        if (optimized.length >= plain.length / 2) panic(`lossy WebP: ${optimized.length} bytes optimized, ${plain.length} without`);
+        if ((await Animation.decode(optimized)).length !== animation.length) panic('lossy WebP: the optimized animation doesn\'t decode');
+    }
 })();
