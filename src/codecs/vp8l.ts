@@ -684,8 +684,9 @@ function writeCode(w: BitWriter, counts: ArrayLike<number>): Code {
         return { lengths, codes: canonicalCodes(lengths) };
     }
 
+    // a single symbol >= 256 can't be a simple code, a normal code with one non-zero length takes zero bits per symbol
+    // too (then the code length 1 it gets is only transmitted)
     const code = buildEncodeCode(counts);
-    // a normal code needs at least two symbols with non-zero length, which is given here
 
     // run length encode the code lengths: 16 repeats the previous non-zero length, 17/18 are runs of zeros
     const tokens: number[] = [], extras: number[] = [];
@@ -743,7 +744,7 @@ function writeCode(w: BitWriter, counts: ArrayLike<number>): Code {
         else if (t === 18) w.write(extras[i], 7);
     }
 
-    return code;
+    return used.length === 1 ? { lengths: code.lengths, codes: new Uint16Array(0) } : code;
 }
 
 // prefix symbol and extra bits of a length or distance value (>= 1)

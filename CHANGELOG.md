@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.7.1
+
+### Fixes
+
+- Lossless WebPs, and lossy ones with alpha (most optimized animations), could be undecodable since 3.7.0 (#82): a
+  prefix group whose code had a single symbol of 256 or more (a length code) took a bit per symbol instead of none.
+
 ## 3.7.0
 
 ### Features

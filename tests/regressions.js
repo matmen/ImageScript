@@ -535,6 +535,25 @@ const rgba = (image, x, y) => Image.colorToRGBA(image.getPixelAt(x, y));
         assert(crc32(data) === zlib.crc32(data), 'crc32: wrong for a long buffer');
     }
 
+    // a VP8L prefix code with a single symbol >= 256 (here: a prefix group whose green alphabet only has one length
+    // code) takes zero bits per symbol, the encoder wrote one (#82). Lossy WebPs code their alpha as VP8L too
+    {
+        for (const [colors, width, height, rows, start] of [[16, 128, 128, 8, 2], [4, 128, 256, 16, 5], [2, 256, 600, 64, 3]]) {
+            let seed = start;
+            const random = () => (seed = seed * 1103515245 + 12345 >>> 0) / 2 ** 32;
+            // noisy rows on top and a noisy strip in the bottom left, the rest transparent
+            const image = new Image(width, height).fill((x, y) => {
+                const c = y < rows || y > height * 2 / 3 && x < 64 ? random() * colors | 0 : 0;
+                return c ? Image.rgbaToColor(c * 37, c * 11, c, 255) : 0;
+            });
+            for (const options of [{}, {quality: 85}]) {
+                const decoded = await Image.decode(await image.encodeWebP(options)).catch(err => assert(false, `WebP ${JSON.stringify(options)} of the ${width}x${height} mask: ${err.message}`));
+                for (let i = 3; i < image.bitmap.length; i += 4)
+                    assert(decoded.bitmap[i] === image.bitmap[i], `WebP ${JSON.stringify(options)} of the ${width}x${height} mask: wrong alpha`);
+            }
+        }
+    }
+
     // damaged fonts (truncated, bytes changed) render or throw a font error, quickly: no runaway memory or time (contours
     // with decreasing end points, composite glyphs containing themselves, huge COLR clip boxes)
     {
