@@ -41,7 +41,7 @@ def write_pfm(path, im):
 
 
 photo = lambda w, h: source('external.png', w, h, (200, 120, 520, 440))
-text = lambda w, h: source('readme.png', w, h, (40, 40, 40 + w, 40 + h))
+text = lambda w, h: source('profile-card.png', w, h, (40, 40, 40 + w, 40 + h))
 
 # lossless (Modular): the fast efforts (gradient, RLE), MA trees and the weighted predictor, palettes, alpha, 16 bits,
 # grey, floats

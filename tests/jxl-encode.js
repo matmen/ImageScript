@@ -15,14 +15,14 @@ const references = {
     16: {
         'external.png': '58a26107a26d63d1a4e38aae9143c23072d1ccb627035c6a306fcf38334d4b47',
         'circle.png': 'cef97c2ac1002fb7303dd133b77013bf38d9df094fb68cf5377f9820d165ff45',
-        'readme.png': 'bf6d939ac373e8c57d86429e9935ceeac55b5bf9619782fd1e2a1111eaa0b328',
+        'profile-card.png': 'bf6d939ac373e8c57d86429e9935ceeac55b5bf9619782fd1e2a1111eaa0b328',
         'potato.png': 'e5f9166c9468f4477c175238aa0b422db0c785fc23349441d0bb73e0327b7fc3',
         'external.png grey': '6d127dcd6055a4c753ef4b9c0d17680efc5009c0276c2482e46e4c3622e123f3'
     },
     8: {
         'external.png': '4bf1c60af3ec0166962d34e843bed45ad93dccadd8911167a10970d530c18270',
         'circle.png': '9e50886f2f1cca31d509fc305ffcf1fa90fe80e2c0c0e53ee61f800e319cfe05',
-        'readme.png': 'baa03b62a243e1c5cf8e54e8fb1a903b424893b0d3f992f8dc91017af821055f',
+        'profile-card.png': 'baa03b62a243e1c5cf8e54e8fb1a903b424893b0d3f992f8dc91017af821055f',
         'potato.png': 'd0a2806f68b4ee0cc933a1221d46855b15ca23af8a970a227a6c7a00978a8ba1',
         'external.png grey': 'e88fd972b6d54ba5a5cc9b42a1da9082ed15375e4a9076688820ee56d92d7f10'
     }
@@ -50,7 +50,7 @@ const codestream = jxl => {
 
 (async () => {
     const {encode} = await import('../dist/codecs/jxl/fast-lossless.js');
-    for (const [name, grey] of [['external.png'], ['circle.png'], ['readme.png'], ['potato.png'], ['external.png', true]]) {
+    for (const [name, grey] of [['external.png'], ['circle.png'], ['profile-card.png'], ['potato.png'], ['external.png', true]]) {
         const key = name + (grey ? ' grey' : '');
         const image = await Image.decode(await fs.readFile(`./tests/targets/${name}`));
         // (grey: the red channel)
@@ -103,7 +103,7 @@ const codestream = jxl => {
         for (let i = 3; i < image.bitmap.length; i += 4) if (back.bitmap[i] !== image.bitmap[i]) panic(`${w}x${h}: lossy alpha`);
     }
     // efforts: the varblock search (every transform at effort 2) for no worse files; a screenshot's large flat areas
-    const shot = (await Image.decode(await fs.readFile('./tests/targets/readme.png'))).crop(0, 0, 256, 128);
+    const shot = (await Image.decode(await fs.readFile('./tests/targets/profile-card.png'))).crop(0, 0, 256, 128);
     let effort0 = 0;
     for (const effort of [0, 1, 2]) {
         const jxl = await shot.encodeJXL({quality: 90, effort});
