@@ -11,8 +11,17 @@
   files are 2% larger to 13% smaller than before and 7-46% smaller than unoptimized ones, at 0.1 dB PSNR below
   unoptimized ones (before: 0.8-1 dB below); where nearly every pixel changes a little, they're 10x smaller.
 
+### Fixes
+
 - Lossless WebPs, and lossy ones with alpha (most optimized animations), could be undecodable since 3.7.0 (#82): a
   prefix group whose code had a single symbol of 256 or more (a length code) took a bit per symbol instead of none.
+
+### Performance
+
+- `composite()` with an opacity in `normal` mode is about 40% faster (a 1100x680 layer, two thirds at alpha 150: 7.6
+  ms instead of 12.6 ms): it takes the fast path with the source alpha scaled by the opacity, instead of the blend
+  modes' per channel path. The results are the same, except for exact halves at opacities like 0.5, which now round
+  like without an opacity (by 1 at most). Without an opacity it's 5-30% faster.
 
 ## 3.7.0
 
