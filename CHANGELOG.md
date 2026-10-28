@@ -19,6 +19,13 @@
   `markerHeight`, `viewBox`, clipped unless `overflow` is visible; placed and oriented like resvg's (ported from usvg).
   Arcs are split into as many curves as resvg splits them into (more for large radii), which places the mid markers
   alike. 61 of resvg's 64 marker tests pass (the others have text or images), up from 11.
+- `Image.renderSVG()` draws images (`<image>`) in data URIs: PNG, JPEG, GIF (the first frame), WebP and the other
+  formats `Image.decode()` reads, and SVGs (also gzipped, and with their own embedded images). They're fitted like
+  resvg's: `width`/`height` from the image where they're missing or `auto`, `preserveAspectRatio` (clipped with
+  `slice`), `image-rendering`, sampled bicubically (the nearest pixel at their size). External files and URLs aren't
+  loaded. Elements of embedded SVGs count towards the limit of 100000 elements rendered through references. Of
+  resvg's 56 image tests, 17 pass the test suite's threshold, 37 without the frame around them, whose antialiasing
+  differs (tiny-skia rounds edges to quarter pixels); most of the others load files.
 - Optimized lossy WebP animations are smaller: like libwebp's, they leave out pixels that changed by up to a tolerance
   from the quality (3 per channel at quality 85, 1 at 100), and make unchanged pixels transparent only in whole 8x8
   blocks. Making each unchanged pixel transparent gave speckled alpha masks where most pixels change a little

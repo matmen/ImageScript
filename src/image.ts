@@ -2,6 +2,7 @@ import * as png from './codecs/png.ts';
 import * as jpeg from './codecs/jpeg.ts';
 import * as tiff from './codecs/tiff.ts';
 import * as webp from './codecs/webp.ts';
+import * as gif from './codecs/gif.ts';
 import * as tga from './codecs/tga.ts';
 import * as bmp from './codecs/bmp.ts';
 import * as ico from './codecs/ico.ts';
@@ -2258,8 +2259,8 @@ export class Image {
 
     /**
      * Creates a new image from the given SVG
-     * Supports shapes, paths, transforms, use/symbol, CSS styles, gradients, strokes, clip paths, masks and opacity;
-     * text, images, filters and patterns are not rendered
+     * Supports shapes, paths, transforms, use/symbol, CSS styles, gradients, patterns, strokes, markers, clip paths,
+     * masks, opacity and images embedded as data URIs (PNG, JPEG, GIF, WebP, SVG); text and filters are not rendered
      * @param svg The SVG content
      * @param options See {@link SVGOptions}
      * @return The rendered SVG graphic
@@ -2283,7 +2284,26 @@ export class Image {
         if (mode !== Image.SVG_MODE_SCALE && size < 1)
             throw new RangeError('SVG size must be >= 1');
 
-        const {width, height, pixels} = svgRenderer.render(typeof svg === 'string' ? svg : view(svg), mode, size);
+        // the raster images it embeds are decoded first (decoding can be asynchronous), the SVG is rendered at once
+        const source = typeof svg === 'string' ? svg : view(svg);
+        const images = new Map<string, svgRenderer.RasterImage>();
+        for (const { href, data } of svgRenderer.embeddedImages(source)) {
+            if (images.has(href)) continue;
+            try {
+                if (ImageType.getType(data) === 'gif') {
+                    // (a GIF's first frame)
+                    const decoded = gif.decode(data, true);
+                    images.set(href, { width: decoded.width, height: decoded.height, pixels: gif.composite(decoded)[0].pixels });
+                } else {
+                    const image = await Image.decode(data);
+                    images.set(href, { width: image.width, height: image.height, pixels: image.bitmap });
+                }
+            } catch {
+                // (images that can't be decoded aren't drawn, like resvg's)
+            }
+        }
+
+        const {width, height, pixels} = svgRenderer.render(source, mode, size, images);
         const image = new Image(width, height);
         image.bitmap.set(pixels);
 

@@ -2,22 +2,26 @@
  * SVG renderer supporting a static subset of SVG 1.1/2:
  * shapes, paths, transforms, nested svg/use/symbol, presentation attributes, inline styles and simple
  * <style> sheets (type, class and id selectors), solid colors, linear and radial gradients, patterns, strokes
- * (joins, caps, dashes), markers, opacity, clip paths and luminance masks.
- * Not supported: text, images, filters, animation and scripting.
- * How patterns are rendered (a tile in device resolution, its filtering) and their reference cycles broken follows
- * resvg/usvg, the markers (their placement and orientation, crates/usvg/src/parser/marker.rs) are ported from usvg
- * (https://github.com/linebender/resvg; Copyright 2017 the Resvg Authors, MIT License, see THIRD_PARTY_NOTICES.md)
+ * (joins, caps, dashes), markers, opacity, clip paths, luminance masks and images in data URIs (rasters decoded by
+ * the caller, SVGs and SVGZs).
+ * Not supported: text, filters, external images, animation and scripting.
+ * How patterns are rendered (a tile in device resolution, its filtering) and their reference cycles broken, and how
+ * images are fitted and sampled follows resvg/usvg, the markers (their placement and orientation,
+ * crates/usvg/src/parser/marker.rs) are ported from usvg (https://github.com/linebender/resvg; Copyright 2017 the
+ * Resvg Authors, MIT License, see THIRD_PARTY_NOTICES.md)
  */
 
-import { decode as decodeUTF8 } from '../util/utf8.ts';
+import { decode as decodeUTF8, encode as encodeUTF8 } from '../util/utf8.ts';
 import { PathCommand } from './font.ts';
+import { base64 } from '../util/bytes.ts';
+import { gunzip } from '../codecs/zlib.ts';
 
-const UNSUPPORTED = new Set(['text', 'image', 'filter', 'pattern', 'marker', 'foreignObject', 'script', 'style', 'title', 'desc', 'metadata',
+const UNSUPPORTED = new Set(['text', 'filter', 'pattern', 'marker', 'foreignObject', 'script', 'style', 'title', 'desc', 'metadata',
     'defs', 'clipPath', 'mask', 'linearGradient', 'radialGradient', 'stop', 'symbol', 'font', 'font-face', 'animate', 'animateTransform', 'animateMotion', 'set']);
 
 const INHERITED = new Set(['fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-linecap', 'stroke-linejoin',
     'stroke-miterlimit', 'stroke-dasharray', 'stroke-dashoffset', 'color', 'visibility', 'clip-rule', 'font-size', 'marker-start', 'marker-mid',
-    'marker-end']);
+    'marker-end', 'image-rendering']);
 
 // elements a switch may choose from
 const SWITCHABLE = new Set(['svg', 'g', 'a', 'switch', 'use', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'image', 'foreignObject']);
@@ -101,7 +105,8 @@ const DEFAULTS: Record<string, string> = {
     'fill': 'black', 'fill-opacity': '1', 'fill-rule': 'nonzero', 'stroke': 'none', 'stroke-width': '1', 'stroke-opacity': '1',
     'stroke-linecap': 'butt', 'stroke-linejoin': 'miter', 'stroke-miterlimit': '4', 'stroke-dasharray': 'none', 'stroke-dashoffset': '0',
     'color': 'black', 'visibility': 'visible', 'clip-rule': 'nonzero', 'font-size': '16', 'opacity': '1', 'display': 'inline',
-    'stop-color': 'black', 'stop-opacity': '1', 'marker-start': 'none', 'marker-mid': 'none', 'marker-end': 'none'
+    'stop-color': 'black', 'stop-opacity': '1', 'marker-start': 'none', 'marker-mid': 'none', 'marker-end': 'none',
+    'image-rendering': 'auto'
 };
 
 const SAMPLES = 16; // sub-scanlines per pixel
@@ -112,23 +117,15 @@ const SAMPLES = 16; // sub-scanlines per pixel
  * @param {number} size
  * @return {{width: number, height: number, pixels: Uint8Array}}
  */
-export function render(source: string | Uint8Array, mode: number, size: number): { width: number, height: number, pixels: Uint8Array } {
+export function render(source: string | Uint8Array, mode: number, size: number, images: Map<string, RasterImage> = new Map()): { width: number, height: number, pixels: Uint8Array } {
     if (typeof source !== 'string') source = decodeUTF8(source);
 
     const root = parseXML(source).children.find(node => node.name === 'svg' && node.svg);
     if (!root) throw new Error('SVG: no <svg> element');
 
     const doc = new Document(root);
-    const viewBox = parseViewBox(root.attrs.viewBox);
-
-    const lengthOf = (value: string | undefined, fallback: number): number => {
-        if (value === undefined || value === 'auto') return fallback;
-        if (/%\s*$/.test(value)) return fallback * parseFloat(value) / 100;
-        return parseLength(value, null, 16);
-    };
-
-    const width = lengthOf(root.attrs.width, viewBox ? viewBox[2] : 100);
-    const height = lengthOf(root.attrs.height, viewBox ? viewBox[3] : 100);
+    doc.images = images;
+    const { width, height } = documentSize(root);
     if (!(width > 0) || !(height > 0)) throw new Error('SVG: invalid dimensions');
 
     let outWidth, outHeight;
@@ -147,17 +144,120 @@ export function render(source: string | Uint8Array, mode: number, size: number):
     outHeight = Math.max(1, outHeight);
 
     const canvas = new Layer(outWidth, outHeight);
-
-    let matrix0 = [outWidth / width, 0, 0, outHeight / height, 0, 0];
-    // transform on the root element (SVG 2) applies before the viewBox mapping
-    const rootStyle = doc.computeStyle(root, null);
-    if (rootStyle.transform) matrix0 = multiply(matrix0, parseTransform(rootStyle.transform));
-    if (viewBox) matrix0 = multiply(matrix0, viewBoxTransform(viewBox, width, height, root.attrs.preserveAspectRatio));
-
-    const viewport = viewBox ? { width: viewBox[2], height: viewBox[3] } : { width, height };
-    doc.renderNode(root, { matrix: matrix0, style: null, viewport, layer: canvas, depth: 0 }, true);
-
+    // (a transform on the root element (SVG 2) applies before the viewBox mapping)
+    doc.renderRoot([outWidth / width, 0, 0, outHeight / height, 0, 0], canvas, 0);
     return { width: outWidth, height: outHeight, pixels: canvas.toRGBA() };
+}
+
+/** a decoded image, RGBA */
+export interface RasterImage {
+    width: number;
+    height: number;
+    pixels: Uint8Array | Uint8ClampedArray;
+    /** its pixels premultiplied, as floats (made when it's first drawn) */
+    premultiplied?: Float32Array;
+}
+
+interface NestedSvg {
+    width: number;
+    height: number;
+    document: Document;
+}
+
+// an SVG's size: its width and height, else its viewBox's, else 100 x 100
+function documentSize(root: XNode): { width: number, height: number } {
+    const viewBox = parseViewBox(root.attrs.viewBox);
+    const lengthOf = (value: string | undefined, fallback: number): number => {
+        if (value === undefined || value === 'auto') return fallback;
+        if (/%\s*$/.test(value)) return fallback * parseFloat(value) / 100;
+        return parseLength(value, null, 16);
+    };
+    return { width: lengthOf(root.attrs.width, viewBox ? viewBox[2] : 100), height: lengthOf(root.attrs.height, viewBox ? viewBox[3] : 100) };
+}
+
+function premultiplied(image: RasterImage): Float32Array {
+    if (image.premultiplied) return image.premultiplied;
+    const { pixels } = image, d = new Float32Array(pixels.length);
+    for (let i = 0; i < pixels.length; i += 4) {
+        const a = pixels[i + 3] / 255;
+        d[i] = pixels[i] / 255 * a;
+        d[i + 1] = pixels[i + 1] / 255 * a;
+        d[i + 2] = pixels[i + 2] / 255 * a;
+        d[i + 3] = a;
+    }
+    return image.premultiplied = d;
+}
+
+const RASTER_TYPES = /^image\/(png|jpe?g|gif|webp)$/;
+
+// a data URI's media type and bytes (like the data: URL standard: text/plain if there's none)
+function dataURI(href: string): { type: string, data: Uint8Array } | null {
+    const m = /^\s*data:([^,]*),([\s\S]*)$/i.exec(href);
+    if (!m) return null;
+    const meta = m[1].split(';').map(part => part.trim());
+    const type = (meta[0] || 'text/plain').toLowerCase();
+    try {
+        if (meta.slice(1).some(part => part.toLowerCase() === 'base64')) return { type, data: base64(m[2].replace(/\s+/g, '').replace(/%([0-9a-f]{2})/gi, (_, h: string) => String.fromCharCode(parseInt(h, 16)))) };
+        return { type, data: encodeUTF8(decodeURIComponent(m[2])) };
+    } catch {
+        return null;
+    }
+}
+
+// an embedded SVG's text, decompressed if it's gzipped (svgz)
+function svgText(data: Uint8Array): string {
+    return decodeUTF8(data[0] === 0x1f && data[1] === 0x8b ? gunzip(data, 1 << 26) : data);
+}
+
+// whether bytes start like a PNG, JPEG, GIF or WebP (resvg sniffs text/plain data)
+function isRaster(data: Uint8Array): boolean {
+    return (data[0] === 0x89 && data[1] === 0x50) || (data[0] === 0xff && data[1] === 0xd8) || (data[0] === 0x47 && data[1] === 0x49 && data[2] === 0x46)
+        || (data[0] === 0x52 && data[1] === 0x49 && data[8] === 0x57 && data[9] === 0x45);
+}
+
+// the SVG of a data URI, parsed
+function nestedSvg(href: string): NestedSvg | null {
+    const uri = dataURI(href);
+    if (!uri || (uri.type !== 'image/svg+xml' && (uri.type !== 'text/plain' || isRaster(uri.data)))) return null;
+    try {
+        const root = parseXML(svgText(uri.data)).children.find(node => node.name === 'svg' && node.svg);
+        if (!root) return null;
+        const { width, height } = documentSize(root);
+        return width > 0 && height > 0 ? { width, height, document: new Document(root) } : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The raster images an SVG embeds as data URIs (also in the SVGs it embeds), for render()'s caller to decode: their
+ * hrefs and bytes
+ */
+export function embeddedImages(source: string | Uint8Array): Array<{ href: string, data: Uint8Array }> {
+    const found: Array<{ href: string, data: Uint8Array }> = [], seen = new Set<string>();
+    const visit = (text: () => string, depth: number): void => {
+        let root: XNode;
+        try {
+            root = parseXML(text());
+        } catch {
+            return;
+        }
+        const stack = [root];
+        while (stack.length) {
+            const node = stack.pop() as XNode;
+            stack.push(...node.children);
+            if (node.name !== 'image' || !node.svg) continue;
+            const href = (node.attrs.href || node.attrs['xlink:href'] || '').trim();
+            if (seen.has(href)) continue;
+            seen.add(href);
+            const uri = dataURI(href);
+            if (!uri) continue;
+            if (RASTER_TYPES.test(uri.type) || (uri.type === 'text/plain' && isRaster(uri.data))) found.push({ href, data: uri.data });
+            else if ((uri.type === 'image/svg+xml' || uri.type === 'text/plain') && depth < 8) visit(() => svgText(uri.data), depth + 1);
+        }
+    };
+    visit(() => typeof source === 'string' ? source : decodeUTF8(source), 0);
+    return found;
 }
 
 // ---------------------------------------------------------------------------
@@ -490,17 +590,20 @@ const MAX_DASHES = 1000000;
 const MAX_TILE = 4096 * 1024;
 
 class Document {
-    /** elements rendered through <use> references so far */
-    instances: number;
+    /** elements rendered through <use> references and embedded SVGs so far (shared with the embedded SVGs' documents) */
+    budget = { instances: 0 };
     ids: Map<string, XNode>;
     active: Set<XNode>;
     root: XNode;
     rules: Rule[];
+    /** decoded raster images by their href */
+    images: Map<string, RasterImage> = new Map();
+    /** the SVGs of data URIs, parsed */
+    nested: Map<string, NestedSvg | null> = new Map();
 
     constructor(root: XNode) {
         this.ids = new Map();
         this.active = new Set(); // clip paths and masks being rendered, to break reference cycles
-        this.instances = 0;
         const styles: string[] = [];
 
         // in document order, with a stack instead of recursion (documents can nest elements arbitrarily deep)
@@ -627,7 +730,7 @@ class Document {
     renderNode(node: XNode, context: Context, root = false): void {
         if (!node.svg || UNSUPPORTED.has(node.name) || context.depth > 32 || !this.passesConditions(node)) return;
         // <use> references can multiply each other ("billion laughs"): their elements are counted
-        if (context.instanced && ++this.instances > MAX_INSTANCES) throw new Error(`SVG: more than ${MAX_INSTANCES} elements rendered through <use> references`);
+        if (context.instanced && ++this.budget.instances > MAX_INSTANCES) throw new Error(`SVG: more than ${MAX_INSTANCES} elements rendered through <use> references or embedded SVGs`);
 
         const style = this.computeStyle(node, context.style);
         if (style.display === 'none') return;
@@ -657,6 +760,7 @@ class Document {
                     return;
                 }
                 case 'use': return this.renderUse(node, ctx);
+                case 'image': return this.renderImage(node, ctx);
                 default: {
                     const path = shapePath(node, ctx.viewport, parseNumber(style['font-size'], 16));
                     if (!path) return;
@@ -761,6 +865,75 @@ class Document {
         this.renderNode(target, { ...ctx, matrix, instanced: true });
         target.computed = computed;
         target.computedParent = computedParent;
+    }
+
+    // an image: decoded rasters (by their href, from render()'s caller) or SVGs in data URIs, fitted into its rectangle
+    // like resvg's (crates/usvg/src/parser/image.rs); other references (files, URLs) aren't loaded
+    renderImage(node: XNode, ctx: Context): void {
+        const style = ctx.style as Style;
+        const image = this.imageOf(node, ctx.viewport);
+        if (!image || style.visibility !== 'visible') return;
+        const { raster, nested, intrinsic, x, y, width, height } = image;
+
+        const aspect = node.attrs.preserveAspectRatio || 'xMidYMid meet';
+        const matrix = multiply(ctx.matrix, multiply([1, 0, 0, 1, x, y], viewBoxTransform([0, 0, intrinsic.width, intrinsic.height], width, height, aspect)));
+        const draw = (layer: Layer): void => {
+            if (nested) {
+                nested.document.images = this.images;
+                nested.document.budget = this.budget;
+                nested.document.renderRoot(matrix, layer, ctx.depth + 1, true);
+                return;
+            }
+            const pixels = raster as RasterImage;
+            const inverse = invert(matrix);
+            const coverage = inverse && rasterize([transformPoints([0, 0, pixels.width, 0, pixels.width, pixels.height, 0, pixels.height], matrix)], false, layer.width, layer.height);
+            if (!coverage) return;
+            const rendering = style['image-rendering'];
+            // (like tiny-skia, the nearest pixel where the image is only translated)
+            const translated = Math.abs(matrix[0] - 1) < 1e-6 && Math.abs(matrix[3] - 1) < 1e-6 && matrix[1] === 0 && matrix[2] === 0;
+            const filter = translated || /^(optimizeSpeed|crisp-edges|pixelated)$/i.test(rendering || '') ? 0 : rendering === 'smooth' ? 1 : 2;
+            layer.fill(coverage, sampler(premultiplied(pixels), pixels.width, pixels.height, inverse, false, filter, 1));
+        };
+
+        // (slice overflows the rectangle, it's clipped to it)
+        if (/\bslice\s*$/.test(aspect)) this.clipped(ctx, x, y, width, height, draw);
+        else draw(ctx.layer);
+    }
+
+    // an image element's content (a decoded raster or a nested SVG) and its rectangle
+    imageOf(node: XNode, viewport: Viewport): { raster?: RasterImage, nested: NestedSvg | null, intrinsic: { width: number, height: number }, x: number, y: number, width: number, height: number } | null {
+        const href = this.href(node)?.trim();
+        if (!href) return null;
+        const raster = this.images.get(href);
+        let nested = null;
+        if (!raster) {
+            if (!this.nested.has(href)) this.nested.set(href, nestedSvg(href));
+            nested = this.nested.get(href) as NestedSvg | null;
+        }
+        if (!raster && !nested) return null;
+        const intrinsic = raster || (nested as NestedSvg);
+
+        const given = (name: string): boolean => node.attrs[name] !== undefined && node.attrs[name].trim() !== 'auto';
+        const x = parseLength(node.attrs.x, viewport, 16, 'x'), y = parseLength(node.attrs.y, viewport, 16, 'y');
+        let width = given('width') ? parseLength(node.attrs.width, viewport, 16, 'x') : intrinsic.width;
+        let height = given('height') ? parseLength(node.attrs.height, viewport, 16, 'y') : intrinsic.height;
+        if (given('width') && !given('height')) height = intrinsic.height * width / intrinsic.width;
+        else if (given('height') && !given('width')) width = intrinsic.width * height / intrinsic.height;
+        if (!(width > 0) || !(height > 0)) return null;
+        return { raster, nested, intrinsic, x, y, width, height };
+    }
+
+    // renders the document's root with a matrix mapping its size (as an image) to device pixels
+    renderRoot(matrix: Matrix, layer: Layer, depth: number, instanced = false): void {
+        const { root } = this;
+        const viewBox = parseViewBox(root.attrs.viewBox);
+        const { width, height } = documentSize(root);
+        let matrix0 = matrix;
+        const rootStyle = this.computeStyle(root, null);
+        if (rootStyle.transform) matrix0 = multiply(matrix0, parseTransform(rootStyle.transform));
+        if (viewBox) matrix0 = multiply(matrix0, viewBoxTransform(viewBox, width, height, root.attrs.preserveAspectRatio));
+        const viewport = viewBox ? { width: viewBox[2], height: viewBox[3] } : { width, height };
+        this.renderNode(root, { matrix: matrix0, style: null, viewport, layer, depth, instanced }, true);
     }
 
     paintPath(path: PathCommand[], node: XNode, ctx: Context): void {
@@ -1078,58 +1251,10 @@ class Document {
         this.active.delete(node);
         if (tile.x1 <= tile.x0) return null;
 
-        // the repeated tile sampled like resvg's (tiny-skia's): the nearest pixel where the tile is only translated, else
-        // bicubic (Mitchell-Netravali, B = C = 1/3); premultiplied, the result straight
-        const d = tile.data;
-        const color: Color = [0, 0, 0, 0];
-        // (a rotation and its inverse still filter: tiny-skia's single precision doesn't cancel them exactly)
+        // the repeated tile sampled like resvg's: the nearest pixel where the tile is only translated, else bicubic (a
+        // rotation and its inverse still filter: tiny-skia's single precision doesn't cancel them exactly)
         const translated = !rotated && patternMatrix[0] > 0 && patternMatrix[3] > 0;
-        const wrap = (v: number, n: number): number => v - Math.floor(v / n) * n;
-        const wx = new Float64Array(4), wy = new Float64Array(4), xs = new Int32Array(4), ys = new Int32Array(4);
-        const weights = (t: number, w: Float64Array): void => {
-            const s = 1 - t;
-            w[0] = (7 / 18 * s - 6 / 18) * s * s;
-            w[1] = ((-21 / 18 * s + 27 / 18) * s + 9 / 18) * s + 1 / 18;
-            w[2] = ((-21 / 18 * t + 27 / 18) * t + 9 / 18) * t + 1 / 18;
-            w[3] = (7 / 18 * t - 6 / 18) * t * t;
-        };
-        return (px, py) => {
-            const u = (inverse[0] * px + inverse[2] * py + inverse[4] - tx) * sx - 0.5;
-            const v = (inverse[1] * px + inverse[3] * py + inverse[5] - ty) * sy - 0.5;
-            if (translated) {
-                const i = (Math.floor(wrap(v + 0.5, height)) * width + Math.floor(wrap(u + 0.5, width))) * 4;
-                const a = d[i + 3];
-                if (a <= 0) return TRANSPARENT;
-                color[0] = d[i] / a;
-                color[1] = d[i + 1] / a;
-                color[2] = d[i + 2] / a;
-                color[3] = a * opacity;
-                return color;
-            }
-            const x0 = Math.floor(u), y0 = Math.floor(v);
-            weights(u - x0, wx);
-            weights(v - y0, wy);
-            for (let k = 0; k < 4; k++) {
-                xs[k] = wrap(x0 - 1 + k, width);
-                ys[k] = wrap(y0 - 1 + k, height) * width;
-            }
-            let r = 0, g = 0, b = 0, a = 0;
-            for (let j = 0; j < 4; j++)
-                for (let k = 0; k < 4; k++) {
-                    const f = wy[j] * wx[k], i = (ys[j] + xs[k]) * 4;
-                    r += d[i] * f;
-                    g += d[i + 1] * f;
-                    b += d[i + 2] * f;
-                    a += d[i + 3] * f;
-                }
-            a = clamp01(a);
-            if (a <= 1e-6) return TRANSPARENT;
-            color[0] = clamp01(r / a);
-            color[1] = clamp01(g / a);
-            color[2] = clamp01(b / a);
-            color[3] = a * opacity;
-            return color;
-        };
+        return sampler(tile.data, width, height, multiply([sx, 0, 0, sy, -tx * sx, -ty * sy], inverse), true, translated ? 0 : 2, opacity);
     }
 
     // renders a clipPath into a coverage mask
@@ -1202,7 +1327,10 @@ class Document {
     groupBoundingBox(node: XNode, viewport: Viewport): BBox | null {
         let box: BBox | null = null;
         const visit = (n: XNode, matrix: Matrix): void => {
-            const path = shapePath(n, viewport, 16);
+            // (an image's bounding box is its rectangle)
+            const image = n.name === 'image' ? this.imageOf(n, viewport) : null;
+            const path = image ? [['M', image.x, image.y], ['L', image.x + image.width, image.y], ['L', image.x + image.width, image.y + image.height],
+                ['L', image.x, image.y + image.height], ['Z']] as PathCommand[] : shapePath(n, viewport, 16);
             if (path) {
                 const points = flatten(path, 0.1).map(p => transformPoints(p.points, matrix));
                 const b = boundingBox(points.map(p => ({ points: p })));
@@ -1429,6 +1557,67 @@ function parseAngle(value: string): number {
 }
 
 const TRANSPARENT: Color = [0, 0, 0, 0];
+
+/**
+ * A paint sampling premultiplied pixels (width x height) like tiny-skia's pattern shader: device pixels map to pixels
+ * of the image through a matrix, outside it repeats or pads (its edges continue); filter 0 takes the nearest pixel, 1
+ * interpolates bilinearly, 2 bicubically (Mitchell-Netravali, B = C = 1/3). The colors are straight
+ */
+function sampler(d: Float32Array, width: number, height: number, matrix: Matrix, repeat: boolean, filter: number, opacity: number): Paint {
+    const color: Color = [0, 0, 0, 0];
+    const wx = new Float64Array(4), wy = new Float64Array(4), xs = new Int32Array(4), ys = new Int32Array(4);
+    const wrap = (v: number, n: number): number => repeat ? v - Math.floor(v / n) * n : v < 0 ? 0 : v >= n ? n - 1 : v;
+    const weights = (t: number, w: Float64Array): void => {
+        if (filter === 1) {
+            w[0] = w[3] = 0;
+            w[1] = 1 - t;
+            w[2] = t;
+            return;
+        }
+        const s = 1 - t;
+        w[0] = (7 / 18 * s - 6 / 18) * s * s;
+        w[1] = ((-21 / 18 * s + 27 / 18) * s + 9 / 18) * s + 1 / 18;
+        w[2] = ((-21 / 18 * t + 27 / 18) * t + 9 / 18) * t + 1 / 18;
+        w[3] = (7 / 18 * t - 6 / 18) * t * t;
+    };
+    const [m0, m1, m2, m3, m4, m5] = matrix;
+    return (px, py) => {
+        const u = m0 * px + m2 * py + m4 - 0.5, v = m1 * px + m3 * py + m5 - 0.5;
+        let r = 0, g = 0, b = 0, a = 0;
+        if (filter === 0) {
+            const i = (Math.floor(wrap(v + 0.5, height)) * width + Math.floor(wrap(u + 0.5, width))) * 4;
+            r = d[i];
+            g = d[i + 1];
+            b = d[i + 2];
+            a = d[i + 3];
+        } else {
+            const x0 = Math.floor(u), y0 = Math.floor(v);
+            weights(u - x0, wx);
+            weights(v - y0, wy);
+            for (let k = 0; k < 4; k++) {
+                xs[k] = Math.floor(wrap(x0 - 1 + k, width));
+                ys[k] = Math.floor(wrap(y0 - 1 + k, height)) * width;
+            }
+            for (let j = 0; j < 4; j++)
+                for (let k = 0; k < 4; k++) {
+                    const f = wy[j] * wx[k];
+                    if (!f) continue;
+                    const i = (ys[j] + xs[k]) * 4;
+                    r += d[i] * f;
+                    g += d[i + 1] * f;
+                    b += d[i + 2] * f;
+                    a += d[i + 3] * f;
+                }
+            a = clamp01(a);
+        }
+        if (a <= 1e-6) return TRANSPARENT;
+        color[0] = clamp01(r / a);
+        color[1] = clamp01(g / a);
+        color[2] = clamp01(b / a);
+        color[3] = a * opacity;
+        return color;
+    };
+}
 
 function solidPaint(color: Color): Paint {
     const paint = () => color;

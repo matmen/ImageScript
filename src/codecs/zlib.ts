@@ -630,6 +630,23 @@ export function decompress(data: Uint8Array, limit: number): Uint8Array {
     return inflate(data.subarray(2), new u8(limit));
 }
 
+/**
+ * Decompresses a gzip stream (its first member) into at most limit bytes
+ */
+export function gunzip(data: Uint8Array, limit: number): Uint8Array {
+    if (data.length < 18 || data[0] !== 0x1f || data[1] !== 0x8b || data[2] !== 8) throw new Error('gzip: invalid header');
+    const flags = data[3];
+    let o = 10;
+    if (flags & 4) o += 2 + (data[o] | data[o + 1] << 8);
+    if (flags & 8) while (o < data.length && data[o++]);
+    if (flags & 16) while (o < data.length && data[o++]);
+    if (flags & 2) o += 2;
+    // (the size of the decompressed data, modulo 2^32, ends the stream)
+    const end = data.length - 4, size = (data[end] | data[end + 1] << 8 | data[end + 2] << 16 | data[end + 3] << 24) >>> 0;
+    if (o > end - 4 || size > limit) throw new Error('gzip: invalid or too large');
+    return inflate(data.subarray(o, end - 4), new u8(size));
+}
+
 // native zlib, accessed through feature detection with minimal local types instead of depending on DOM or Node type
 // definitions: node:zlib (Node, Bun and Deno expose it through process.getBuiltinModule, without an import) is the
 // fastest and honors compression levels; DecompressionStream is part of the web platform
