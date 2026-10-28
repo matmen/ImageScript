@@ -1,13 +1,16 @@
-import { decode as decodeUTF8 } from '../util/utf8.ts';
-import { PathCommand } from './font.ts';
-
-/**
+/*!
  * SVG renderer supporting a static subset of SVG 1.1/2:
  * shapes, paths, transforms, nested svg/use/symbol, presentation attributes, inline styles and simple
  * <style> sheets (type, class and id selectors), solid colors, linear and radial gradients, patterns, strokes
  * (joins, caps, dashes), opacity, clip paths and luminance masks.
  * Not supported: text, images, filters, markers, animation and scripting.
+ * How patterns are rendered (a tile in device resolution, its filtering) and their reference cycles broken follows
+ * resvg/usvg (https://github.com/linebender/resvg; Copyright 2017 the Resvg Authors, MIT License, see
+ * THIRD_PARTY_NOTICES.md)
  */
+
+import { decode as decodeUTF8 } from '../util/utf8.ts';
+import { PathCommand } from './font.ts';
 
 const UNSUPPORTED = new Set(['text', 'image', 'filter', 'pattern', 'marker', 'foreignObject', 'script', 'style', 'title', 'desc', 'metadata',
     'defs', 'clipPath', 'mask', 'linearGradient', 'radialGradient', 'stop', 'symbol', 'font', 'font-face', 'animate', 'animateTransform', 'animateMotion', 'set']);
