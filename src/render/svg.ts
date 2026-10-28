@@ -2,9 +2,9 @@
  * SVG renderer supporting a static subset of SVG 1.1/2:
  * shapes, paths, transforms, nested svg/use/symbol, presentation attributes, inline styles and simple
  * <style> sheets (type, class and id selectors), solid colors, linear and radial gradients, patterns, strokes
- * (joins, caps, dashes), markers, opacity, clip paths, luminance masks and images in data URIs (rasters decoded by
- * the caller, SVGs and SVGZs).
- * Not supported: text, filters, external images, animation and scripting.
+ * (joins, caps, dashes), markers, opacity, clip paths, luminance masks, images in data URIs (rasters decoded by
+ * the caller, SVGs and SVGZs) and filters (see filter.ts; not feImage, feTurbulence, feDisplacementMap and lighting).
+ * Not supported: text, external images, animation and scripting.
  * How patterns are rendered (a tile in device resolution, its filtering) and their reference cycles broken, and how
  * images are fitted and sampled follows resvg/usvg, the markers (their placement and orientation,
  * crates/usvg/src/parser/marker.rs) are ported from usvg (https://github.com/linebender/resvg; Copyright 2017 the
@@ -15,18 +15,20 @@ import { decode as decodeUTF8, encode as encodeUTF8 } from '../util/utf8.ts';
 import { PathCommand } from './font.ts';
 import { base64 } from '../util/bytes.ts';
 import { gunzip } from '../codecs/zlib.ts';
+import { applyFilter, Filter, Primitive, Kind, Input, Transfer, ColorMatrix, Pixmap } from './filter.ts';
 
 const UNSUPPORTED = new Set(['text', 'filter', 'pattern', 'marker', 'foreignObject', 'script', 'style', 'title', 'desc', 'metadata',
     'defs', 'clipPath', 'mask', 'linearGradient', 'radialGradient', 'stop', 'symbol', 'font', 'font-face', 'animate', 'animateTransform', 'animateMotion', 'set']);
 
 const INHERITED = new Set(['fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-linecap', 'stroke-linejoin',
     'stroke-miterlimit', 'stroke-dasharray', 'stroke-dashoffset', 'color', 'visibility', 'clip-rule', 'font-size', 'marker-start', 'marker-mid',
-    'marker-end', 'image-rendering']);
+    'marker-end', 'image-rendering', 'color-interpolation-filters']);
 
 // elements a switch may choose from
 const SWITCHABLE = new Set(['svg', 'g', 'a', 'switch', 'use', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'image', 'foreignObject']);
 
-const PROPERTIES = new Set([...INHERITED, 'opacity', 'display', 'clip-path', 'mask', 'stop-color', 'stop-opacity', 'transform']);
+const PROPERTIES = new Set([...INHERITED, 'opacity', 'display', 'clip-path', 'mask', 'stop-color', 'stop-opacity', 'transform', 'filter', 'flood-color',
+    'flood-opacity']);
 
 interface XNode {
     name: string;
@@ -106,7 +108,7 @@ const DEFAULTS: Record<string, string> = {
     'stroke-linecap': 'butt', 'stroke-linejoin': 'miter', 'stroke-miterlimit': '4', 'stroke-dasharray': 'none', 'stroke-dashoffset': '0',
     'color': 'black', 'visibility': 'visible', 'clip-rule': 'nonzero', 'font-size': '16', 'opacity': '1', 'display': 'inline',
     'stop-color': 'black', 'stop-opacity': '1', 'marker-start': 'none', 'marker-mid': 'none', 'marker-end': 'none',
-    'image-rendering': 'auto'
+    'image-rendering': 'auto', 'filter': 'none', 'flood-color': 'black', 'flood-opacity': '1', 'color-interpolation-filters': 'linearRGB'
 };
 
 const SAMPLES = 16; // sub-scanlines per pixel
@@ -570,9 +572,9 @@ function validProperty(name: string, value: string): boolean {
         case 'fill': case 'stroke':
             return value === 'none' || value === 'currentColor' || value === 'inherit' || /^context-(fill|stroke)$/.test(value)
                 || /^url\(/.test(value) || parseColor(value) !== null;
-        case 'color': case 'stop-color':
+        case 'color': case 'stop-color': case 'flood-color':
             return value === 'currentColor' || value === 'inherit' || parseColor(value) !== null;
-        case 'opacity': case 'fill-opacity': case 'stroke-opacity': case 'stop-opacity':
+        case 'opacity': case 'fill-opacity': case 'stroke-opacity': case 'stop-opacity': case 'flood-opacity':
             return value === 'inherit' || parseStrictNumber(value) !== null;
         default:
             return true;
@@ -748,8 +750,12 @@ class Document {
         const clipping = clip && !this.active.has(clip);
         const masking = mask && !this.active.has(mask);
 
-        const draw = (layer: Layer): void => {
-            const ctx = { ...context, matrix, style, layer, depth: context.depth + 1 };
+        // filters: invalid ones disable rendering, ones with primitives that aren't supported are left out
+        const filters = style.filter && style.filter !== 'none' ? this.filtersOf(node, style, context.viewport) : null;
+        if (filters === 'invalid') return;
+
+        const drawContent = (layer: Layer, contentMatrix = matrix): void => {
+            const ctx = { ...context, matrix: contentMatrix, style, layer, depth: context.depth + 1 };
 
             switch (node.name) {
                 case 'svg': return root ? this.renderChildren(node, ctx) : this.renderNestedSvg(node, ctx);
@@ -769,6 +775,7 @@ class Document {
                 }
             }
         };
+        const draw = filters && filters.length ? (layer: Layer): void => this.filtered(filters, matrix, layer, drawContent) : (layer: Layer): void => drawContent(layer);
 
         if (opacity >= 1 && !clipping && !masking) return draw(context.layer);
 
@@ -1257,6 +1264,344 @@ class Document {
         return sampler(tile.data, width, height, multiply([sx, 0, 0, sy, -tx * sx, -ty * sy], inverse), true, translated ? 0 : 2, opacity);
     }
 
+    // renders an element through its filters (like resvg's layers: in a layer covering the filter regions, scaled like
+    // the element but not rotated or skewed, which is applied when it's drawn)
+    filtered(filters: Filter[], matrix: Matrix, target: Layer, draw: (layer: Layer, matrix: Matrix) => void): void {
+        const sx = Math.hypot(matrix[0], matrix[1]), sy = Math.hypot(matrix[2], matrix[3]);
+        if (!(sx > 0) || !(sy > 0)) return;
+        const rest = [matrix[0] / sx, matrix[1] / sx, matrix[2] / sy, matrix[3] / sy, 0, 0];
+        const restInverse = invert(rest);
+        if (!restInverse) return;
+        const scaled = multiply(restInverse, matrix);
+
+        // the layer: the filter regions' bounds in whole pixels, within a margin of the canvas (the regions clip)
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const { rect } of filters) {
+            const p = transformPoints([rect.x, rect.y, rect.x + rect.width, rect.y, rect.x + rect.width, rect.y + rect.height, rect.x, rect.y + rect.height], scaled);
+            for (let i = 0; i < 8; i += 2) {
+                x0 = Math.min(x0, p[i]);
+                x1 = Math.max(x1, p[i]);
+                y0 = Math.min(y0, p[i + 1]);
+                y1 = Math.max(y1, p[i + 1]);
+            }
+        }
+        const canvas = transformPoints([0, 0, target.width, 0, target.width, target.height, 0, target.height], restInverse);
+        const cx0 = Math.min(canvas[0], canvas[2], canvas[4], canvas[6]) - 2 * target.width, cy0 = Math.min(canvas[1], canvas[3], canvas[5], canvas[7]) - 2 * target.height;
+        const cx1 = Math.max(canvas[0], canvas[2], canvas[4], canvas[6]) + 2 * target.width, cy1 = Math.max(canvas[1], canvas[3], canvas[5], canvas[7]) + 2 * target.height;
+        let lx = Math.floor(x0), ly = Math.floor(y0);
+        let lw = Math.max(1, Math.ceil(x1 - x0)), lh = Math.max(1, Math.ceil(y1 - y0));
+        const left = Math.max(lx, Math.floor(cx0)), top = Math.max(ly, Math.floor(cy0));
+        lw = Math.min(lx + lw, Math.ceil(cx1)) - left;
+        lh = Math.min(ly + lh, Math.ceil(cy1)) - top;
+        lx = left;
+        ly = top;
+        if (lw <= 0 || lh <= 0 || lw * lh > 1 << 26) return;
+
+        const shifted = multiply([1, 0, 0, 1, -lx, -ly], scaled);
+        const layer = new Layer(lw, lh);
+        draw(layer, shifted);
+        const pixmap = layer.toPixmap();
+        for (const filter of filters) applyFilter(filter, shifted, pixmap);
+        const result = Layer.fromPixmap(pixmap);
+        if (result.x1 <= result.x0) return;
+
+        if (rest[0] === 1 && rest[1] === 0 && rest[2] === 0 && rest[3] === 1) {
+            target.blit(result, lx, ly);
+            return;
+        }
+        // (rotated or skewed: drawn through the rest of the matrix, interpolated bilinearly)
+        const place = multiply(rest, [1, 0, 0, 1, lx, ly]);
+        const inverse = invert(place);
+        const coverage = inverse && rasterize([transformPoints([0, 0, lw, 0, lw, lh, 0, lh], place)], false, target.width, target.height);
+        if (coverage) target.fill(coverage, sampler(result.data, lw, lh, inverse, false, 1, 1));
+    }
+
+    // an element's filters (url references and filter functions), like usvg's: 'invalid' if it's not to be rendered
+    // (only invalid references), null if they can't be applied (primitives that aren't supported)
+    filtersOf(node: XNode, style: Style, viewport: Viewport): Filter[] | 'invalid' | null {
+        const value = (style.filter || '').trim();
+        const items = [...value.matchAll(/url\([^)]*\)|[a-z-]+\([^)]*\)/gi)];
+        // (a list that doesn't parse is ignored)
+        if (value.replace(/url\([^)]*\)|[a-z-]+\([^)]*\)/gi, '').trim()) return [];
+        const bbox = this.objectBoundingBox(node, viewport);
+        const filters: Filter[] = [];
+        let invalid = false;
+        for (const [item] of items) {
+            if (/^url\(/i.test(item)) {
+                const target = this.reference(item);
+                const filter = target && target.name === 'filter' ? this.filterOf(target, bbox, viewport) : 'invalid';
+                if (filter === 'invalid') invalid = true;
+                else if (filter === null) return null;
+                else filters.push(filter);
+                continue;
+            }
+            const filter = this.filterFunction(item, style, bbox, viewport);
+            if (filter === 'invalid') return [];
+            if (filter) filters.push(filter);
+        }
+        return !filters.length && invalid ? 'invalid' : filters;
+    }
+
+    // the bounding box of an element in its user space: its shape, image or descendants
+    objectBoundingBox(node: XNode, viewport: Viewport): BBox | null {
+        const path = shapePath(node, viewport, 16);
+        const box = path ? boundingBox(flatten(path, 0.1)) : this.groupBoundingBox(node, viewport);
+        return box && box.width > 0 && box.height > 0 ? box : null;
+    }
+
+    filterOf(node: XNode, bbox: BBox | null, viewport: Viewport): Filter | 'invalid' | null {
+        // (the filter's attributes can come from the filters it references)
+        const attribute = (name: string): string | undefined => {
+            for (let current: XNode | null = node, depth = 0; current && current.name === 'filter' && depth < 16; current = this.reference(this.href(current)), depth++)
+                if (current.attrs[name] !== undefined) return current.attrs[name];
+            return undefined;
+        };
+        const objectBox = attribute('filterUnits') !== 'userSpaceOnUse';
+        const primitiveBox = attribute('primitiveUnits') === 'objectBoundingBox';
+        const length = (n: XNode, name: string, axis: 'x' | 'y', box: boolean): number | null => {
+            const v = n === node ? attribute(name) : n.attrs[name];
+            if (v === undefined) return null;
+            if (box) return /%\s*$/.test(v) ? parseFloat(v) / 100 : parseNumber(v, NaN);
+            return parseLength(v, viewport, 16, axis);
+        };
+        let rect = {
+            x: length(node, 'x', 'x', objectBox) ?? (objectBox ? -0.1 : -0.1 * viewport.width),
+            y: length(node, 'y', 'y', objectBox) ?? (objectBox ? -0.1 : -0.1 * viewport.height),
+            width: length(node, 'width', 'x', objectBox) ?? (objectBox ? 1.2 : 1.2 * viewport.width),
+            height: length(node, 'height', 'y', objectBox) ?? (objectBox ? 1.2 : 1.2 * viewport.height)
+        };
+        if (!(rect.width > 0) || !(rect.height > 0)) return 'invalid';
+        if (objectBox) {
+            if (!bbox) return 'invalid';
+            rect = { x: bbox.x + rect.x * bbox.width, y: bbox.y + rect.y * bbox.height, width: rect.width * bbox.width, height: rect.height * bbox.height };
+        }
+
+        // the primitives: of the first filter along the href chain that has any
+        let holder: XNode | null = null;
+        for (let current: XNode | null = node, depth = 0; current && depth < 16; current = this.reference(this.href(current)), depth++) {
+            if (current.name !== 'filter') return 'invalid';
+            if (current.children.some(child => child.svg)) {
+                holder = current;
+                break;
+            }
+        }
+        if (!holder) return 'invalid';
+        if (primitiveBox && !bbox) return 'invalid';
+        const scale = primitiveBox && bbox ? [bbox.width, bbox.height] : [1, 1];
+
+        const primitives: Primitive[] = [];
+        const names = new Set<string>();
+        let index = 1;
+        for (const child of holder.children) {
+            if (!child.svg) continue;
+            // the subregion
+            const fx = length(child, 'x', 'x', primitiveBox), fy = length(child, 'y', 'y', primitiveBox);
+            const fw = length(child, 'width', 'x', primitiveBox), fh = length(child, 'height', 'y', primitiveBox);
+            let region: { x: number, y: number, width: number, height: number };
+            if (child.name === 'feFlood' && primitiveBox && bbox) {
+                region = { x: bbox.x + (fx ?? 0) * bbox.width, y: bbox.y + (fy ?? 0) * bbox.height, width: (fw ?? 1) * bbox.width, height: (fh ?? 1) * bbox.height };
+            } else if (primitiveBox) {
+                // (fractions of the filter region, like usvg)
+                region = { x: rect.x + (fx ?? 0) * rect.width, y: rect.y + (fy ?? 0) * rect.height, width: (fw ?? 1) * rect.width, height: (fh ?? 1) * rect.height };
+            } else region = { x: fx ?? rect.x, y: fy ?? rect.y, width: fw ?? rect.width, height: fh ?? rect.height };
+            if (!(region.width > 0) || !(region.height > 0)) break;
+
+            const kind = this.primitiveKind(child, scale, primitives);
+            if (kind === undefined) continue;
+            if (kind === null) return null;
+
+            let result = child.attrs.result;
+            if (result !== undefined) {
+                names.add(result);
+                index++;
+            } else {
+                do result = `result${index++}`; while (names.has(result));
+            }
+            const interpolation = this.styleOf(child)['color-interpolation-filters'];
+            primitives.push({ rect: region, linear: interpolation !== 'sRGB', result, kind });
+        }
+        return primitives.length ? { rect, primitives } : 'invalid';
+    }
+
+    // a filter primitive: undefined to skip it (unknown elements), null if it isn't supported
+    primitiveKind(node: XNode, scale: number[], primitives: Primitive[]): Kind | null | undefined {
+        const input = (name: string): Input => {
+            const value = node.attrs[name]?.trim();
+            const previous = primitives.length ? { result: primitives[primitives.length - 1].result } : 'SourceGraphic' as const;
+            if (value === undefined) return previous;
+            if (value === 'SourceGraphic' || value === 'SourceAlpha') return value;
+            if (/^(BackgroundImage|BackgroundAlpha|FillPaint|StrokePaint)$/.test(value)) return 'SourceGraphic';
+            return primitives.some(p => p.result === value) ? { result: value } : previous;
+        };
+        const number = (name: string, fallback: number): number => parsePlainNumber(node.attrs[name]) ?? fallback;
+        const deviation = (fallback: string): [number, number] => {
+            const list = parseNumberList(node.attrs.stdDeviation ?? fallback);
+            const [x, y] = list.length === 1 ? [list[0], list[0]] : list.length === 2 ? list : [0, 0];
+            return [Math.max(0, x * scale[0]) || 0, Math.max(0, y * scale[1]) || 0];
+        };
+        const flood = (): { color: number[], opacity: number } => {
+            const style = this.styleOf(node);
+            const c = parseColor(style['flood-color'] === 'currentColor' ? style.color : style['flood-color']) || [0, 0, 0, 1];
+            return { color: [Math.round(c[0] * 255), Math.round(c[1] * 255), Math.round(c[2] * 255)], opacity: c[3] * clamp01(parseNumber(style['flood-opacity'], 1)) };
+        };
+
+        switch (node.name) {
+            case 'feGaussianBlur': {
+                const [sx, sy] = deviation('0 0');
+                return { type: 'blur', input: input('in'), sx, sy };
+            }
+            case 'feOffset':
+                return { type: 'offset', input: input('in'), dx: number('dx', 0) * scale[0], dy: number('dy', 0) * scale[1] };
+            case 'feFlood':
+                return { type: 'flood', ...flood() };
+            case 'feComposite': {
+                const operator = /^(in|out|atop|xor|lighter|arithmetic)$/.test(node.attrs.operator?.trim() || '') ? node.attrs.operator.trim() : 'over';
+                return { type: 'composite', operator, k: ['k1', 'k2', 'k3', 'k4'].map(k => number(k, 0)), input: input('in'), input2: input('in2') };
+            }
+            case 'feMerge':
+                return { type: 'merge', inputs: node.children.filter(child => child.svg).map(child => this.mergeInput(child, primitives)) };
+            case 'feDropShadow': {
+                const [sx, sy] = deviation('2 2');
+                return { type: 'dropShadow', input: input('in'), dx: number('dx', 2) * scale[0], dy: number('dy', 2) * scale[1], sx, sy, ...flood() };
+            }
+            case 'feColorMatrix':
+                return { type: 'colorMatrix', input: input('in'), matrix: colorMatrixOf(node) };
+            case 'feComponentTransfer': {
+                const functions: Transfer[] = [null, null, null, null];
+                for (const child of node.children) {
+                    const k = ['feFuncR', 'feFuncG', 'feFuncB', 'feFuncA'].indexOf(child.name);
+                    if (k >= 0 && child.svg) functions[k] = transferOf(child, functions[k]);
+                }
+                return { type: 'componentTransfer', input: input('in'), functions };
+            }
+            case 'feTile':
+                return { type: 'tile', input: input('in') };
+            case 'feConvolveMatrix': {
+                // (invalid ones give a transparent image)
+                const convolution = convolutionOf(node);
+                return convolution ? { type: 'convolve', input: input('in'), ...convolution } : { type: 'flood', color: [0, 0, 0], opacity: 0 };
+            }
+            case 'feBlend': {
+                const mode = node.attrs.mode?.trim() || 'normal';
+                const modes = /^(normal|multiply|screen|overlay|darken|lighten|color-dodge|color-burn|hard-light|soft-light|difference|exclusion|hue|saturation|color|luminosity)$/;
+                return { type: 'blend', mode: modes.test(mode) ? mode : 'normal', input: input('in'), input2: input('in2') };
+            }
+            case 'feMorphology': {
+                let rx = scale[0], ry = scale[1];
+                const list = node.attrs.radius === undefined ? null : parseStrictNumberList(node.attrs.radius);
+                if (list) {
+                    let [x, y] = list.length === 2 ? list : list.length === 1 ? [list[0], list[0]] : [0, 0];
+                    if (x === 0 && y === 0) x = y = 1;
+                    // (one radius of 0 becomes 1, like in Chrome and Safari)
+                    if (x === 0) x = 1;
+                    if (y === 0) y = 1;
+                    if (x >= 0 && y >= 0) {
+                        rx = x * scale[0];
+                        ry = y * scale[1];
+                    }
+                }
+                return { type: 'morphology', dilate: node.attrs.operator?.trim() === 'dilate', rx, ry, input: input('in') };
+            }
+            case 'feImage': case 'feDisplacementMap': case 'feTurbulence': case 'feDiffuseLighting': case 'feSpecularLighting':
+                return null;
+            default:
+                return undefined;
+        }
+    }
+
+    mergeInput(node: XNode, primitives: Primitive[]): Input {
+        const value = node.attrs.in?.trim();
+        const previous = primitives.length ? { result: primitives[primitives.length - 1].result } : 'SourceGraphic' as const;
+        if (value === undefined) return previous;
+        if (value === 'SourceGraphic' || value === 'SourceAlpha') return value;
+        if (/^(BackgroundImage|BackgroundAlpha|FillPaint|StrokePaint)$/.test(value)) return 'SourceGraphic';
+        return primitives.some(p => p.result === value) ? { result: value } : previous;
+    }
+
+    // a filter function as a filter of one primitive, like usvg's ('invalid' drops the whole list, null skips it)
+    filterFunction(item: string, style: Style, bbox: BBox | null, viewport: Viewport): Filter | 'invalid' | null {
+        const m = /^([a-z-]+)\(([^)]*)\)$/i.exec(item);
+        if (!m) return 'invalid';
+        const name = m[1].toLowerCase(), args = m[2].trim();
+        const amount = (fallback: number): number | null => {
+            if (!args) return fallback;
+            const v = /%$/.test(args) ? parseStrictNumber(args.slice(0, -1)) : parseStrictNumber(args);
+            if (v === null || v < 0) return null;
+            return /%$/.test(args) ? v / 100 : v;
+        };
+        // (lengths, not percentages, relative to the element's font size)
+        const fontSize = parseNumber(style['font-size'], 16);
+        const length = (v: string): number => /%$/.test(v) ? NaN : parseLength(v, viewport, fontSize, 'x');
+        let kind: Kind;
+        if (name === 'blur') {
+            const d = args ? length(args) : 0;
+            if (!(d >= 0)) return 'invalid';
+            kind = { type: 'blur', input: 'SourceGraphic', sx: d, sy: d };
+        } else if (name === 'drop-shadow') {
+            if (args.includes(',') && !/\([^)]*,/.test(args)) return 'invalid';
+            const parts = args.match(/[a-z]+\([^)]*\)|#[0-9a-f]+|[^\s]+/gi) || [];
+            const lengths: number[] = [];
+            let color = null;
+            for (const part of parts) {
+                const c = part === 'currentColor' ? parseColor(style.color) : parseColor(part);
+                if (c && !/^[+-]?[\d.]/.test(part)) color = c;
+                else lengths.push(length(part));
+            }
+            if (lengths.length < 2 || lengths.length > 3 || lengths.some(l => !isFinite(l))) return 'invalid';
+            const c = color || parseColor(style.color) || [0, 0, 0, 1];
+            kind = { type: 'dropShadow', input: 'SourceGraphic', dx: lengths[0], dy: lengths[1], sx: Math.max(0, lengths[2] || 0), sy: Math.max(0, lengths[2] || 0),
+                color: [Math.round(c[0] * 255), Math.round(c[1] * 255), Math.round(c[2] * 255)], opacity: c[3] };
+        } else if (name === 'hue-rotate') {
+            const angle = args ? parseAngleStrict(args) : 0;
+            if (angle === null) return 'invalid';
+            kind = { type: 'colorMatrix', input: 'SourceGraphic', matrix: { type: 'hueRotate', angle } };
+        } else {
+            const a = amount(1);
+            if (a === null) return 'invalid';
+            const one = Math.min(a, 1), inv = 1 - one;
+            switch (name) {
+                case 'grayscale':
+                    kind = { type: 'colorMatrix', input: 'SourceGraphic', matrix: { type: 'matrix', values: [0.2126 + 0.7874 * inv, 0.7152 - 0.7152 * inv, 0.0722 - 0.0722 * inv, 0, 0,
+                        0.2126 - 0.2126 * inv, 0.7152 + 0.2848 * inv, 0.0722 - 0.0722 * inv, 0, 0, 0.2126 - 0.2126 * inv, 0.7152 - 0.7152 * inv, 0.0722 + 0.9278 * inv, 0, 0,
+                        0, 0, 0, 1, 0] } };
+                    break;
+                case 'sepia':
+                    kind = { type: 'colorMatrix', input: 'SourceGraphic', matrix: { type: 'matrix', values: [0.393 + 0.607 * inv, 0.769 - 0.769 * inv, 0.189 - 0.189 * inv, 0, 0,
+                        0.349 - 0.349 * inv, 0.686 + 0.314 * inv, 0.168 - 0.168 * inv, 0, 0, 0.272 - 0.272 * inv, 0.534 - 0.534 * inv, 0.131 + 0.869 * inv, 0, 0,
+                        0, 0, 0, 1, 0] } };
+                    break;
+                case 'saturate':
+                    kind = { type: 'colorMatrix', input: 'SourceGraphic', matrix: { type: 'saturate', value: a } };
+                    break;
+                case 'invert': {
+                    const table: Transfer = { type: 'table', values: [one, 1 - one] };
+                    kind = { type: 'componentTransfer', input: 'SourceGraphic', functions: [table, table, table, null] };
+                    break;
+                }
+                case 'opacity':
+                    kind = { type: 'componentTransfer', input: 'SourceGraphic', functions: [null, null, null, { type: 'table', values: [0, one] }] };
+                    break;
+                case 'brightness': {
+                    const linear: Transfer = { type: 'linear', slope: a, intercept: 0 };
+                    kind = { type: 'componentTransfer', input: 'SourceGraphic', functions: [linear, linear, linear, null] };
+                    break;
+                }
+                case 'contrast': {
+                    const linear: Transfer = { type: 'linear', slope: a, intercept: -0.5 * a + 0.5 };
+                    kind = { type: 'componentTransfer', input: 'SourceGraphic', functions: [linear, linear, linear, null] };
+                    break;
+                }
+                default:
+                    return 'invalid';
+            }
+        }
+        // (no filter region: a large one around the bounding box)
+        if (!bbox) return null;
+        const f = kind.type === 'dropShadow' || kind.type === 'blur' ? [-0.5, 2] : [-0.1, 1.2];
+        const rect = { x: bbox.x + f[0] * bbox.width, y: bbox.y + f[0] * bbox.height, width: f[1] * bbox.width, height: f[1] * bbox.height };
+        return { rect, primitives: [{ rect, linear: false, result: 'result', kind }] };
+    }
+
     // renders a clipPath into a coverage mask
     clipMask(clip: XNode, node: XNode, matrix: Matrix, context: Context): Float32Array {
         const { width, height } = context.layer;
@@ -1556,6 +1901,81 @@ function parseAngle(value: string): number {
     return unit === 'grad' ? n * 0.9 : unit === 'rad' ? n * 180 / Math.PI : unit === 'turn' ? n * 360 : n;
 }
 
+// ---------------------------------------------------------------------------
+// filter primitives' attributes (like usvg's)
+// ---------------------------------------------------------------------------
+
+function colorMatrixOf(node: XNode): ColorMatrix {
+    const type = node.attrs.type?.trim(), values = node.attrs.values;
+    const list = values === undefined ? null : parseStrictNumberList(values);
+    if (type === 'saturate' && list) return { type: 'saturate', value: list.length ? clamp01(list[0]) : 1 };
+    if (type === 'hueRotate' && list) return { type: 'hueRotate', angle: list.length ? list[0] : 0 };
+    if (type === 'luminanceToAlpha') return { type: 'luminanceToAlpha' };
+    if (type !== 'saturate' && type !== 'hueRotate' && list && list.length === 20) return { type: 'matrix', values: list };
+    return { type: 'matrix', values: [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0] };
+}
+
+function transferOf(node: XNode, current: Transfer): Transfer {
+    const number = (name: string, fallback: number): number => parsePlainNumber(node.attrs[name]) ?? fallback;
+    switch (node.attrs.type?.trim()) {
+        case 'identity': return null;
+        case 'table': case 'discrete':
+            return { type: node.attrs.type.trim() as 'table' | 'discrete', values: node.attrs.tableValues === undefined ? [] : parseStrictNumberList(node.attrs.tableValues) || [] };
+        case 'linear': return { type: 'linear', slope: number('slope', 1), intercept: number('intercept', 0) };
+        case 'gamma': return { type: 'gamma', amplitude: number('amplitude', 1), exponent: number('exponent', 1), offset: number('offset', 0) };
+        default: return current;
+    }
+}
+
+// an feConvolveMatrix's parameters, null if it's invalid (usvg makes those transparent)
+function convolutionOf(node: XNode): { columns: number, rows: number, targetX: number, targetY: number, kernel: number[], divisor: number, bias: number, edge: string,
+    preserveAlpha: boolean } | null {
+    let columns = 3, rows = 3;
+    if (node.attrs.order !== undefined) {
+        const list = parseNumberList(node.attrs.order);
+        const x = list.length ? Math.trunc(list[0]) : 3, y = list.length > 1 ? Math.trunc(list[1]) : x;
+        if (x > 0 && y > 0) {
+            columns = x;
+            rows = y;
+        }
+    }
+    const list = node.attrs.kernelMatrix === undefined ? null : parseStrictNumberList(node.attrs.kernelMatrix);
+    const kernel = list && list.length === columns * rows ? list : [];
+    let sum = Math.round(kernel.reduce((a, b) => a + b, 0) * 1e6) / 1e6;
+    if (Math.abs(sum) < 1e-6) sum = 1;
+    const divisor = parsePlainNumber(node.attrs.divisor) ?? sum;
+    if (Math.abs(divisor) < 1e-6) return null;
+    const target = (name: string, order: number): number | null => {
+        const v = parsePlainNumber(node.attrs[name]);
+        const t = Math.trunc(v === null ? Math.floor(order / 2) : v);
+        return t >= 0 && t < order ? t : null;
+    };
+    const targetX = target('targetX', columns), targetY = target('targetY', rows);
+    // (usvg's matrix needs as many values as the order)
+    if (targetX === null || targetY === null || kernel.length !== columns * rows) return null;
+    const edge = node.attrs.edgeMode?.trim();
+    return { columns, rows, targetX, targetY, kernel, divisor, bias: parsePlainNumber(node.attrs.bias) ?? 0, edge: edge === 'none' || edge === 'wrap' ? edge : 'duplicate',
+        preserveAlpha: node.attrs.preserveAlpha?.trim() === 'true' };
+}
+
+// an angle (deg, grad, rad, turn, or a plain number as degrees), null if invalid
+function parseAngleStrict(value: string): number | null {
+    // (a unit is needed but for 0)
+    const m = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)(deg|grad|rad|turn)?$/i.exec(value.trim());
+    return m && (m[2] || parseFloat(m[1]) === 0) ? parseAngle(value.trim()) : null;
+}
+
+// a number (not a percentage), null if it isn't one
+function parsePlainNumber(value: string | undefined): number | null {
+    return value !== undefined && /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim()) ? parseFloat(value) : null;
+}
+
+// a list of numbers, null if anything else is in it (like usvg's number lists)
+function parseStrictNumberList(value: string): number[] | null {
+    const items = value.trim().split(/\s*,\s*|\s+/).filter(Boolean), list = items.map(item => parsePlainNumber(item));
+    return list.some(v => v === null) ? null : list as number[];
+}
+
 const TRANSPARENT: Color = [0, 0, 0, 0];
 
 /**
@@ -1716,6 +2136,43 @@ class Layer {
                 d[i + 3] = a + d[i + 3] * inv;
             }
         }
+    }
+
+    // as premultiplied 8 bit pixels (for filters)
+    toPixmap(): Pixmap {
+        const d = this.data, out = new Uint8Array(d.length);
+        for (let i = 0; i < d.length; i++) out[i] = Math.round(clamp01(d[i]) * 255);
+        return { width: this.width, height: this.height, data: out };
+    }
+
+    static fromPixmap(p: Pixmap): Layer {
+        const layer = new Layer(p.width, p.height), d = layer.data;
+        let painted = false;
+        for (let i = 0; i < d.length; i++) {
+            d[i] = p.data[i] / 255;
+            if (p.data[i]) painted = true;
+        }
+        if (painted) layer.extend(0, 0, p.width, p.height);
+        return layer;
+    }
+
+    // draws a layer at an offset (source over)
+    blit(layer: Layer, ox: number, oy: number): void {
+        const s = layer.data, d = this.data;
+        const x0 = Math.max(0, ox), y0 = Math.max(0, oy), x1 = Math.min(this.width, ox + layer.width), y1 = Math.min(this.height, oy + layer.height);
+        if (x1 <= x0 || y1 <= y0) return;
+        this.extend(x0, y0, x1, y1);
+        for (let y = y0; y < y1; y++)
+            for (let x = x0; x < x1; x++) {
+                const i = (y * this.width + x) * 4, j = ((y - oy) * layer.width + x - ox) * 4;
+                const a = s[j + 3];
+                if (a <= 0) continue;
+                const inv = 1 - a;
+                d[i] = s[j] + d[i] * inv;
+                d[i + 1] = s[j + 1] + d[i + 1] * inv;
+                d[i + 2] = s[j + 2] + d[i + 2] * inv;
+                d[i + 3] = a + d[i + 3] * inv;
+            }
     }
 
     composite(layer: Layer, opacity: number, mask: Float32Array | null): void {

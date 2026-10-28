@@ -2260,7 +2260,8 @@ export class Image {
     /**
      * Creates a new image from the given SVG
      * Supports shapes, paths, transforms, use/symbol, CSS styles, gradients, patterns, strokes, markers, clip paths,
-     * masks, opacity and images embedded as data URIs (PNG, JPEG, GIF, WebP, SVG); text and filters are not rendered
+     * masks, opacity, filters (most primitives and the filter functions) and images embedded as data URIs (PNG, JPEG,
+     * GIF, WebP, SVG); text is not rendered
      * @param svg The SVG content
      * @param options See {@link SVGOptions}
      * @return The rendered SVG graphic
