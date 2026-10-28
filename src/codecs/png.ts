@@ -1,6 +1,7 @@
 import { crc32 } from './crc.ts';
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { concat } from '../util/mem.ts';
+import { littleEndian } from '../util/alpha.ts';
 import { encode as utf8, decode as utf8Decode } from '../util/utf8.ts';
 import { orientation as exifOrientation, xmpOrientation } from './exif.ts';
 import { compressAsync, decompressAsync } from './zlib.ts';
@@ -832,7 +833,8 @@ function unfilter(data: Uint8Array, offset: number, height: number, rowBytes: nu
             } else {
                 // and with no left neighbour the one above
                 for (let i = row; i < row + first; i++) out[i] = data[src + i] + out[i - rowBytes];
-                for (let i = row + bpp; i < row + rowBytes; i++) {
+                if (bpp === 3 || bpp === 4) paethRow(data, src, out, row, rowBytes, bpp);
+                else for (let i = row + bpp; i < row + rowBytes; i++) {
                     const a = out[i - bpp], b = out[i - rowBytes], c = out[i - rowBytes - bpp];
                     const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
                     // without branches (photos make them unpredictable): all ones when a loses to b or c, when c beats b
@@ -846,6 +848,53 @@ function unfilter(data: Uint8Array, offset: number, height: number, rowBytes: nu
     }
 
     return out;
+}
+
+// the paeth filter on a row of 3 or 4 byte pixels, the left and upper left neighbours in variables: as above, with each
+// channel's predictor not waiting for the byte just stored
+function paethRow(data: Uint8Array, src: number, out: Uint8Array, row: number, rowBytes: number, bpp: number): void {
+    const up = row - rowBytes, end = row + rowBytes;
+    let a0 = out[row], a1 = out[row + 1], a2 = out[row + 2], a3 = bpp === 4 ? out[row + 3] : 0;
+    let c0 = out[up], c1 = out[up + 1], c2 = out[up + 2], c3 = bpp === 4 ? out[up + 3] : 0;
+    for (let i = row + bpp; i < end; i += bpp) {
+        let b = out[i - rowBytes], pa = Math.abs(b - c0), pb = Math.abs(a0 - c0), pc = Math.abs(a0 + b - 2 * c0);
+        let notA = (pb - pa | pc - pa) >> 31, takeC = (pc - pb) >> 31;
+        a0 = data[src + i] + (a0 ^ (a0 ^ b ^ (b ^ c0) & takeC) & notA) & 255;
+        out[i] = a0;
+        c0 = b;
+
+        b = out[i + 1 - rowBytes];
+        pa = Math.abs(b - c1);
+        pb = Math.abs(a1 - c1);
+        pc = Math.abs(a1 + b - 2 * c1);
+        notA = (pb - pa | pc - pa) >> 31;
+        takeC = (pc - pb) >> 31;
+        a1 = data[src + i + 1] + (a1 ^ (a1 ^ b ^ (b ^ c1) & takeC) & notA) & 255;
+        out[i + 1] = a1;
+        c1 = b;
+
+        b = out[i + 2 - rowBytes];
+        pa = Math.abs(b - c2);
+        pb = Math.abs(a2 - c2);
+        pc = Math.abs(a2 + b - 2 * c2);
+        notA = (pb - pa | pc - pa) >> 31;
+        takeC = (pc - pb) >> 31;
+        a2 = data[src + i + 2] + (a2 ^ (a2 ^ b ^ (b ^ c2) & takeC) & notA) & 255;
+        out[i + 2] = a2;
+        c2 = b;
+
+        if (bpp === 4) {
+            b = out[i + 3 - rowBytes];
+            pa = Math.abs(b - c3);
+            pb = Math.abs(a3 - c3);
+            pc = Math.abs(a3 + b - 2 * c3);
+            notA = (pb - pa | pc - pa) >> 31;
+            takeC = (pc - pb) >> 31;
+            a3 = data[src + i + 3] + (a3 ^ (a3 ^ b ^ (b ^ c3) & takeC) & notA) & 255;
+            out[i + 3] = a3;
+            c3 = b;
+        }
+    }
 }
 
 function createConverter(colorType: number, depth: number, palette: Uint8Array | null, transparency: Uint8Array | null): Converter {
@@ -918,6 +967,14 @@ function createConverter(colorType: number, depth: number, palette: Uint8Array |
         if (depth === 8) {
             const [kr, kg, kb] = key || [-1, -1, -1];
             return (pixels, rowBytes, w, h, out, place) => {
+                // without a transparent color (whole rows: a pixel at a time as a 32-bit word, little endian)
+                if (!key && place.step === 4 && littleEndian && !(out.byteOffset & 3)) {
+                    const words = new Uint32Array(out.buffer, out.byteOffset, out.length >> 2);
+                    for (let y = 0; y < h; y++)
+                        for (let x = 0, s = y * rowBytes, o = place.row(y) >> 2; x < w; x++, s += 3, o++)
+                            words[o] = (pixels[s] | pixels[s + 1] << 8 | pixels[s + 2] << 16 | 0xff000000) >>> 0;
+                    return;
+                }
                 for (let y = 0; y < h; y++) {
                     for (let x = 0, s = y * rowBytes, o = place.row(y), step = place.step; x < w; x++, s += 3, o += step) {
                         const r = pixels[s], g = pixels[s + 1], b = pixels[s + 2];

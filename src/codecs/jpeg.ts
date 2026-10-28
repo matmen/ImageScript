@@ -9,6 +9,7 @@ import { ByteWriter } from '../util/bytes.ts';
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { orientation as exifOrientation } from './exif.ts';
 import { concat } from '../util/mem.ts';
+import { littleEndian } from '../util/alpha.ts';
 
 // natural order index of the n-th zigzag coefficient
 const ZIGZAG = Int32Array.of(
@@ -747,6 +748,11 @@ for (let i = 0; i < 256; i++) {
     cbG[i] = -22554 * x + 32768;
 }
 
+// clamping to 0-255 by a lookup: CLAMP[v + CLAMP_OFFSET] for v in -CLAMP_OFFSET..CLAMP_OFFSET + 255 (YCbCr to RGB
+// stays within 227 of the range)
+const CLAMP_OFFSET = 256, CLAMP = new Uint8Array(768);
+for (let i = 0; i < 768; i++) CLAMP[i] = clamp8(i - CLAMP_OFFSET);
+
 function output(frame: Frame, adobe: { transform: number } | null, jfif: boolean, override: DecodeOptions['transform']): Uint8Array {
     const { width, height, components } = frame;
     const planes = components.map(component => upsample(component, frame));
@@ -765,32 +771,42 @@ function output(frame: Frame, adobe: { transform: number } | null, jfif: boolean
 
     const [p0, p1, p2, p3] = planes;
 
+    // one loop per transform: deciding per pixel costs more than the conversion
+    if (transform === 'grey' || transform === 'rgb' || transform === 'ycc') {
+        const s0 = p0.samples, s1 = (p1 ?? p0).samples, s2 = (p2 ?? p0).samples;
+        const grey = transform === 'grey', ycc = transform === 'ycc';
+        // (YCbCr a pixel at a time as a 32-bit word, little endian)
+        const words = littleEndian ? new Uint32Array(pixels.buffer) : null;
+        for (let y = 0, o = 0; y < height; y++, o = y * width * 4) {
+            const r0 = y * p0.stride, r1 = p1 ? y * p1.stride : r0, r2 = p2 ? y * p2.stride : r0;
+            if (grey) for (let x = 0; x < width; x++, o += 4) {
+                pixels[o] = pixels[o + 1] = pixels[o + 2] = s0[r0 + x];
+                pixels[o + 3] = 0xff;
+            } else if (ycc && words) for (let x = 0, w = o >> 2; x < width; x++, w++) {
+                const a = s0[r0 + x] + CLAMP_OFFSET, b = s1[r1 + x], c = s2[r2 + x];
+                words[w] = (CLAMP[a + crR[c]] | CLAMP[a + (cbG[b] + crG[c] >> 16)] << 8 | CLAMP[a + cbB[b]] << 16 | 0xff000000) >>> 0;
+            } else if (ycc) for (let x = 0; x < width; x++, o += 4) {
+                const a = s0[r0 + x] + CLAMP_OFFSET, b = s1[r1 + x], c = s2[r2 + x];
+                pixels[o] = CLAMP[a + crR[c]];
+                pixels[o + 1] = CLAMP[a + (cbG[b] + crG[c] >> 16)];
+                pixels[o + 2] = CLAMP[a + cbB[b]];
+                pixels[o + 3] = 0xff;
+            } else for (let x = 0; x < width; x++, o += 4) {
+                pixels[o] = s0[r0 + x];
+                pixels[o + 1] = s1[r1 + x];
+                pixels[o + 2] = s2[r2 + x];
+                pixels[o + 3] = 0xff;
+            }
+        }
+        return pixels;
+    }
+
     for (let y = 0, o = 0; y < height; y++) {
-        const r0 = y * p0.stride, r1 = p1 ? y * p1.stride : 0, r2 = p2 ? y * p2.stride : 0, r3 = p3 ? y * p3.stride : 0;
+        const r0 = y * p0.stride, r1 = y * p1.stride, r2 = y * p2.stride, r3 = y * p3.stride;
 
         for (let x = 0; x < width; x++, o += 4) {
             pixels[o + 3] = 0xff;
-
-            if (transform === 'grey') {
-                pixels[o] = pixels[o + 1] = pixels[o + 2] = p0.samples[r0 + x];
-                continue;
-            }
-
             const a = p0.samples[r0 + x], b = p1.samples[r1 + x], c = p2.samples[r2 + x];
-
-            if (transform === 'rgb') {
-                pixels[o] = a;
-                pixels[o + 1] = b;
-                pixels[o + 2] = c;
-                continue;
-            }
-
-            if (transform === 'ycc') {
-                pixels[o] = clamp8(a + crR[c]);
-                pixels[o + 1] = clamp8(a + (cbG[b] + crG[c] >> 16));
-                pixels[o + 2] = clamp8(a + cbB[b]);
-                continue;
-            }
 
             let cyan = a, magenta = b, yellow = c, k = p3.samples[r3 + x];
             if (transform === 'ycck') {
@@ -922,11 +938,12 @@ export function encode(pixels: Uint8Array, width: number, height: number, qualit
         { plane: subsample ? downsample(Cr) : Cr, stride: chromaStride, h: 1, v: 1, table: 1 }
     ];
 
-    // quantized blocks in MCU order (Y blocks, then Cb, then Cr)
+    // quantized blocks in MCU order (Y blocks, then Cb, then Cr), their coefficients in zigzag order, with the index
+    // of each block's last nonzero coefficient
     const blocksPerMcu = hmax * hmax + 2;
     const count = mcusPerLine * mcusPerColumn * blocksPerMcu;
     const coefficients = new Int16Array(count * 64);
-    const owners = new Uint8Array(count);
+    const owners = new Uint8Array(count), ends = new Uint8Array(count);
     const block = new Float64Array(64);
     let n = 0;
 
@@ -948,12 +965,18 @@ export function encode(pixels: Uint8Array, width: number, height: number, qualit
                         fdct(block);
                         const o = n * 64;
                         // round half up like libjpeg, without Math.round
-                        for (let i = 0; i < 64; i++) coefficients[o + i] = (block[i] * d[i] + 16384.5 | 0) - 16384;
+                        let end = 0;
+                        for (let k = 0; k < 64; k++) {
+                            const i = ZIGZAG[k], value = (block[i] * d[i] + 16384.5 | 0) - 16384;
+                            coefficients[o + k] = value;
+                            if (value) end = k;
+                        }
                         owners[n] = c;
+                        ends[n] = end;
                     }
             }
 
-    const blocks = { coefficients, owners, count };
+    const blocks = { coefficients, owners, ends, count };
 
     // pass 1: gather symbol statistics, pass 2: write with optimal tables
     const frequencies = [new Int32Array(257), new Int32Array(257), new Int32Array(257), new Int32Array(257)];
@@ -1010,10 +1033,11 @@ export function encode(pixels: Uint8Array, width: number, height: number, qualit
 interface Blocks {
     coefficients: Int16Array;
     owners: Uint8Array;
+    ends: Uint8Array;
     count: number;
 }
 
-function encodeBlocks({ coefficients, owners, count }: Blocks, symbol: (table: number, symbol: number) => void, bits: (value: number, size: number) => void): void {
+function encodeBlocks({ coefficients, owners, ends, count }: Blocks, symbol: (table: number, symbol: number) => void, bits: (value: number, size: number) => void): void {
     const pred = [0, 0, 0];
 
     for (let n = 0; n < count; n++) {
@@ -1029,8 +1053,8 @@ function encodeBlocks({ coefficients, owners, count }: Blocks, symbol: (table: n
         if (size) bits(diff < 0 ? diff - 1 & (1 << size) - 1 : diff, size);
 
         let run = 0;
-        for (let k = 1; k < 64; k++) {
-            const value = coefficients[o + ZIGZAG[k]];
+        for (let k = 1, end = ends[n]; k <= end; k++) {
+            const value = coefficients[o + k];
 
             if (value === 0) {
                 run++;
@@ -1048,18 +1072,13 @@ function encodeBlocks({ coefficients, owners, count }: Blocks, symbol: (table: n
             run = 0;
         }
 
-        if (run) symbol(acTable, 0x00);
+        if (ends[n] < 63) symbol(acTable, 0x00);
     }
 }
 
+// the bits a value takes
 function magnitude(value: number): number {
-    value = Math.abs(value);
-    let size = 0;
-    while (value) {
-        size++;
-        value >>= 1;
-    }
-    return size;
+    return 32 - Math.clz32(Math.abs(value));
 }
 
 // libjpeg's jpeg_gen_optimal_table (ITU T.81 Annex K.2)

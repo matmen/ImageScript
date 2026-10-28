@@ -388,19 +388,14 @@ function lzwDecode(data: Uint8Array, minCodeSize: number, pixelCount: number): U
     const clear = 1 << minCodeSize;
     const eoi = clear + 1;
 
-    // each code is stored as (prefix code, suffix byte, first byte, length)
-    const prefix = new Uint16Array(4096);
-    const suffix = new Uint8Array(4096);
-    const first = new Uint8Array(4096);
-    const lengths = new Uint16Array(4096);
-    for (let i = 0; i < clear; i++) {
-        suffix[i] = first[i] = i;
-        lengths[i] = 1;
-    }
+    // the string of a code is in the output already (where it was written, then the next code's first byte): codes
+    // are stored as its position and length there, and decoded by copying (the codes below clear are single bytes)
+    const positions = new Int32Array(4096);
+    const lengths = new Uint16Array(4096).fill(1, 0, clear);
 
     let codeSize = minCodeSize + 1;
     let next = eoi + 1;
-    let previous = -1;
+    let previous = -1, previousOut = 0;
     let buffer = 0, bufferBits = 0, position = 0, out = 0;
 
     while (out < pixelCount) {
@@ -422,51 +417,34 @@ function lzwDecode(data: Uint8Array, minCodeSize: number, pixelCount: number): U
         }
 
         if (code === eoi) break;
-
-        let entry;
-        if (code < next) entry = code;
-        else if (code === next && previous !== -1) entry = previous;
-        else break; // invalid code
-
+        if (code > next || (code === next && previous === -1)) break; // invalid code
         if (previous === -1 && code >= clear) break;
 
-        // write the string for `entry`, backwards from its end
-        const length = lengths[entry];
-        const end = Math.min(out + length, pixelCount);
-        let c = entry;
-        if (end === out + length) {
-            for (let i = end - 1; i >= out; i--) {
-                output[i] = suffix[c];
-                c = prefix[c];
-            }
-        } else {
-            // the string runs past the image: only its start is written
-            for (let i = out + length - 1; i >= out; i--) {
-                if (i < end) output[i] = suffix[c];
-                c = prefix[c];
-            }
+        const start = out;
+        if (code < clear) output[out++] = code;
+        else {
+            // KwKwK: a code not in the table yet is the previous string and its first byte, which is the byte just
+            // after it, about to be written (copyWithin would read it before)
+            const kwk = code === next;
+            const from = kwk ? previousOut : positions[code];
+            const length = kwk ? lengths[previous] + 1 : lengths[code];
+            // (a string running past the image: only its start is written)
+            const count = Math.min(length, pixelCount - out) - (kwk ? 1 : 0);
+            if (count < 16) for (let i = 0; i < count; i++) output[out + i] = output[from + i];
+            else output.copyWithin(out, from, from + count);
+            if (kwk && out + count < pixelCount) output[out + count] = output[from];
+            out = Math.min(out + length, pixelCount);
         }
-
-        let written = end - out;
-        if (code === next) {
-            // KwKwK case: the new string is previous + first byte of previous
-            if (out + length < pixelCount) {
-                output[out + length] = first[previous];
-                written++;
-            }
-        }
-        out += written;
 
         if (previous !== -1 && next <= MAX_CODE) {
-            prefix[next] = previous;
-            suffix[next] = first[code === next ? previous : code];
-            first[next] = first[previous];
+            positions[next] = previousOut;
             lengths[next] = lengths[previous] + 1;
             next++;
             if (next === 1 << codeSize && codeSize < 12) codeSize++;
         }
 
         previous = code;
+        previousOut = start;
     }
 
     return output;

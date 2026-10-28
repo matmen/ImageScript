@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.8.1
+
+### Performance
+
+Decoding and encoding is faster, with identical results (images and files):
+
+- JPEG decoding is about 14% faster (a 1920x1080 photo: 47 ms instead of 55 ms): YCbCr becomes RGB in a loop of its
+  own, clamped by a lookup and stored a pixel at a time.
+- JPEG encoding is about 10% faster: coefficients are stored in zigzag order with the position of each block's last
+  nonzero one, so writing a block stops there instead of scanning all 64 (twice).
+- PNG decoding is about 14% faster (a 1920x1080 photo: 36 ms instead of 41 ms): the Paeth filter keeps the neighbours
+  of 3 and 4 byte pixels in variables, RGB rows become RGBA a pixel at a time.
+- GIF decoding is about 14% faster (101 frames of 300x300: 40 ms instead of 46 ms): LZW strings are copied from
+  where they were decoded before, instead of following a chain of codes back a byte at a time.
+- Lossy WebP decoding is about 8% faster: upsampled pixels are stored a pixel at a time.
+
 ## 3.8.0
 
 ### Features

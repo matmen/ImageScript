@@ -5,6 +5,7 @@
  */
 import { KF_BMODE_PROBS, COEFF_UPDATE_PROBS, DEFAULT_COEFF_PROBS, DC_QLOOKUP, AC_QLOOKUP, PCAT } from './vp8-tables.ts';
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
+import { littleEndian } from '../util/alpha.ts';
 
 /**
  * Boolean entropy decoder, RFC 6386 section 7
@@ -735,12 +736,11 @@ function loopFilter(h: Header, Y: Uint8Array, U: Uint8Array, V: Uint8Array, ys: 
 const multHi = (v: number, coeff: number): number => v * coeff >> 8;
 const clip8 = (v: number): number => (v & ~16383) === 0 ? v >> 6 : v < 0 ? 0 : 255;
 
-function yuvToRGBA(y: number, u: number, v: number, out: Uint8Array, o: number): void {
+// a pixel as a 32-bit word (little endian: red is the low byte)
+function yuvToWord(y: number, u: number, v: number): number {
     const yy = multHi(y, 19077);
-    out[o] = clip8(yy + multHi(v, 26149) - 14234);
-    out[o + 1] = clip8(yy - multHi(u, 6419) - multHi(v, 13320) + 8708);
-    out[o + 2] = clip8(yy + multHi(u, 33050) - 17685);
-    out[o + 3] = 255;
+    return (clip8(yy + multHi(v, 26149) - 14234) | clip8(yy - multHi(u, 6419) - multHi(v, 13320) + 8708) << 8
+        | clip8(yy + multHi(u, 33050) - 17685) << 16 | 0xff000000) >>> 0;
 }
 
 /**
@@ -748,7 +748,7 @@ function yuvToRGBA(y: number, u: number, v: number, out: Uint8Array, o: number):
  * (9-3-3-1 weights), working on pairs of output rows that lie between two chroma rows
  */
 function toRGBA(Y: Uint8Array, U: Uint8Array, V: Uint8Array, ys: number, cs: number, width: number, height: number): Uint8Array {
-    const out = new Uint8Array(width * height * 4);
+    const out = new Uint32Array(width * height);
     const yRow = (y: number): number => (y + 1) * ys + 1;
     const cRow = (y: number): number => (y + 1) * cs + 1;
     const lastChroma = (height + 1 >> 1) - 1;
@@ -758,19 +758,24 @@ function toRGBA(Y: Uint8Array, U: Uint8Array, V: Uint8Array, ys: number, cs: num
     // rows 2k - 1 and 2k lie between chroma rows k - 1 and k
     for (let y = 1; y + 1 < height; y += 2) {
         const k = y + 1 >> 1;
-        upsamplePair(Y, U, V, yRow(y), yRow(y + 1), cRow(k - 1), cRow(k), out, y * width * 4, (y + 1) * width * 4, width);
+        upsamplePair(Y, U, V, yRow(y), yRow(y + 1), cRow(k - 1), cRow(k), out, y * width, (y + 1) * width, width);
     }
     // the last row of an even height picture
-    if (!(height & 1)) upsamplePair(Y, U, V, yRow(height - 1), -1, cRow(lastChroma), cRow(lastChroma), out, (height - 1) * width * 4, -1, width);
+    if (!(height & 1)) upsamplePair(Y, U, V, yRow(height - 1), -1, cRow(lastChroma), cRow(lastChroma), out, (height - 1) * width, -1, width);
 
-    return out;
+    // the words were written little endian
+    if (!littleEndian) for (let i = 0; i < out.length; i++) {
+        const w = out[i];
+        out[i] = (w << 24 | (w & 0xff00) << 8 | w >>> 8 & 0xff00 | w >>> 24) >>> 0;
+    }
+    return new Uint8Array(out.buffer);
 }
 
 // one pair of rows: top is nearer to the chroma row "top", bottom nearer to "current" (no bottom row if -1)
-function upsamplePair(Y: Uint8Array, U: Uint8Array, V: Uint8Array, topY: number, bottomY: number, topC: number, curC: number, out: Uint8Array, topOut: number, bottomOut: number, width: number): void {
+function upsamplePair(Y: Uint8Array, U: Uint8Array, V: Uint8Array, topY: number, bottomY: number, topC: number, curC: number, out: Uint32Array, topOut: number, bottomOut: number, width: number): void {
     let tlu = U[topC], tlv = V[topC], lu = U[curC], lv = V[curC];
-    yuvToRGBA(Y[topY], 3 * tlu + lu + 2 >> 2, 3 * tlv + lv + 2 >> 2, out, topOut);
-    if (bottomY >= 0) yuvToRGBA(Y[bottomY], 3 * lu + tlu + 2 >> 2, 3 * lv + tlv + 2 >> 2, out, bottomOut);
+    out[topOut] = yuvToWord(Y[topY], 3 * tlu + lu + 2 >> 2, 3 * tlv + lv + 2 >> 2);
+    if (bottomY >= 0) out[bottomOut] = yuvToWord(Y[bottomY], 3 * lu + tlu + 2 >> 2, 3 * lv + tlv + 2 >> 2);
 
     const pairs = width - 1 >> 1;
     for (let x = 1; x <= pairs; x++) {
@@ -779,18 +784,18 @@ function upsamplePair(Y: Uint8Array, U: Uint8Array, V: Uint8Array, topY: number,
         const d12u = avgU + 2 * (tu + lu) >> 3, d03u = avgU + 2 * (tlu + u) >> 3;
         const d12v = avgV + 2 * (tv + lv) >> 3, d03v = avgV + 2 * (tlv + v) >> 3;
 
-        yuvToRGBA(Y[topY + 2 * x - 1], d12u + tlu >> 1, d12v + tlv >> 1, out, topOut + (2 * x - 1) * 4);
-        yuvToRGBA(Y[topY + 2 * x], d03u + tu >> 1, d03v + tv >> 1, out, topOut + 2 * x * 4);
+        out[topOut + 2 * x - 1] = yuvToWord(Y[topY + 2 * x - 1], d12u + tlu >> 1, d12v + tlv >> 1);
+        out[topOut + 2 * x] = yuvToWord(Y[topY + 2 * x], d03u + tu >> 1, d03v + tv >> 1);
         if (bottomY >= 0) {
-            yuvToRGBA(Y[bottomY + 2 * x - 1], d03u + lu >> 1, d03v + lv >> 1, out, bottomOut + (2 * x - 1) * 4);
-            yuvToRGBA(Y[bottomY + 2 * x], d12u + u >> 1, d12v + v >> 1, out, bottomOut + 2 * x * 4);
+            out[bottomOut + 2 * x - 1] = yuvToWord(Y[bottomY + 2 * x - 1], d03u + lu >> 1, d03v + lv >> 1);
+            out[bottomOut + 2 * x] = yuvToWord(Y[bottomY + 2 * x], d12u + u >> 1, d12v + v >> 1);
         }
         tlu = tu; tlv = tv; lu = u; lv = v;
     }
 
     if (!(width & 1)) {
         const x = width - 1;
-        yuvToRGBA(Y[topY + x], 3 * tlu + lu + 2 >> 2, 3 * tlv + lv + 2 >> 2, out, topOut + x * 4);
-        if (bottomY >= 0) yuvToRGBA(Y[bottomY + x], 3 * lu + tlu + 2 >> 2, 3 * lv + tlv + 2 >> 2, out, bottomOut + x * 4);
+        out[topOut + x] = yuvToWord(Y[topY + x], 3 * tlu + lu + 2 >> 2, 3 * tlv + lv + 2 >> 2);
+        if (bottomY >= 0) out[bottomOut + x] = yuvToWord(Y[bottomY + x], 3 * lu + tlu + 2 >> 2, 3 * lv + tlv + 2 >> 2);
     }
 }
