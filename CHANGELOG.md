@@ -14,6 +14,11 @@
   through `href`. Like resvg, a tile is rendered once in device resolution and repeated (bicubic, or the nearest
   pixel where it's only translated); patterns painting their own content paint nothing. 32 of resvg's 33 pattern
   tests pass (the other one has text), up from 4.
+- `Image.renderSVG()` draws markers (`marker-start`, `marker-mid`, `marker-end`, and the `marker` shorthand in CSS):
+  `orient` (angles in any unit, `auto`, `auto-start-reverse`), `markerUnits`, `refX`/`refY`, `markerWidth`/
+  `markerHeight`, `viewBox`, clipped unless `overflow` is visible; placed and oriented like resvg's (ported from usvg).
+  Arcs are split into as many curves as resvg splits them into (more for large radii), which places the mid markers
+  alike. 61 of resvg's 64 marker tests pass (the others have text or images), up from 11.
 - Optimized lossy WebP animations are smaller: like libwebp's, they leave out pixels that changed by up to a tolerance
   from the quality (3 per channel at quality 85, 1 at 100), and make unchanged pixels transparent only in whole 8x8
   blocks. Making each unchanged pixel transparent gave speckled alpha masks where most pixels change a little

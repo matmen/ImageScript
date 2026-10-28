@@ -2,11 +2,11 @@
  * SVG renderer supporting a static subset of SVG 1.1/2:
  * shapes, paths, transforms, nested svg/use/symbol, presentation attributes, inline styles and simple
  * <style> sheets (type, class and id selectors), solid colors, linear and radial gradients, patterns, strokes
- * (joins, caps, dashes), opacity, clip paths and luminance masks.
- * Not supported: text, images, filters, markers, animation and scripting.
+ * (joins, caps, dashes), markers, opacity, clip paths and luminance masks.
+ * Not supported: text, images, filters, animation and scripting.
  * How patterns are rendered (a tile in device resolution, its filtering) and their reference cycles broken follows
- * resvg/usvg (https://github.com/linebender/resvg; Copyright 2017 the Resvg Authors, MIT License, see
- * THIRD_PARTY_NOTICES.md)
+ * resvg/usvg, the markers (their placement and orientation, crates/usvg/src/parser/marker.rs) are ported from usvg
+ * (https://github.com/linebender/resvg; Copyright 2017 the Resvg Authors, MIT License, see THIRD_PARTY_NOTICES.md)
  */
 
 import { decode as decodeUTF8 } from '../util/utf8.ts';
@@ -16,7 +16,8 @@ const UNSUPPORTED = new Set(['text', 'image', 'filter', 'pattern', 'marker', 'fo
     'defs', 'clipPath', 'mask', 'linearGradient', 'radialGradient', 'stop', 'symbol', 'font', 'font-face', 'animate', 'animateTransform', 'animateMotion', 'set']);
 
 const INHERITED = new Set(['fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-linecap', 'stroke-linejoin',
-    'stroke-miterlimit', 'stroke-dasharray', 'stroke-dashoffset', 'color', 'visibility', 'clip-rule', 'font-size']);
+    'stroke-miterlimit', 'stroke-dasharray', 'stroke-dashoffset', 'color', 'visibility', 'clip-rule', 'font-size', 'marker-start', 'marker-mid',
+    'marker-end']);
 
 // elements a switch may choose from
 const SWITCHABLE = new Set(['svg', 'g', 'a', 'switch', 'use', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'image', 'foreignObject']);
@@ -100,7 +101,7 @@ const DEFAULTS: Record<string, string> = {
     'fill': 'black', 'fill-opacity': '1', 'fill-rule': 'nonzero', 'stroke': 'none', 'stroke-width': '1', 'stroke-opacity': '1',
     'stroke-linecap': 'butt', 'stroke-linejoin': 'miter', 'stroke-miterlimit': '4', 'stroke-dasharray': 'none', 'stroke-dashoffset': '0',
     'color': 'black', 'visibility': 'visible', 'clip-rule': 'nonzero', 'font-size': '16', 'opacity': '1', 'display': 'inline',
-    'stop-color': 'black', 'stop-opacity': '1'
+    'stop-color': 'black', 'stop-opacity': '1', 'marker-start': 'none', 'marker-mid': 'none', 'marker-end': 'none'
 };
 
 const SAMPLES = 16; // sub-scanlines per pixel
@@ -567,7 +568,11 @@ class Document {
 
         const own: Record<string, string> = {};
         const apply = (declarations: Record<string, string>): void => {
-            for (const name in declarations) if (validProperty(name, declarations[name])) own[name] = declarations[name];
+            for (const name in declarations) {
+                // (the marker shorthand only exists in CSS, not as an attribute)
+                if (name === 'marker') for (const kind of ['marker-start', 'marker-mid', 'marker-end']) own[kind] = declarations[name];
+                else if (validProperty(name, declarations[name])) own[name] = declarations[name];
+            }
         };
 
         const presentation: Record<string, string> = {};
@@ -654,7 +659,9 @@ class Document {
                 case 'use': return this.renderUse(node, ctx);
                 default: {
                     const path = shapePath(node, ctx.viewport, parseNumber(style['font-size'], 16));
-                    if (path) this.paintPath(path, node, ctx);
+                    if (!path) return;
+                    this.paintPath(path, node, ctx);
+                    if (style.visibility === 'visible') this.renderMarkers(path, node, ctx);
                 }
             }
         };
@@ -785,6 +792,74 @@ class Document {
                 Math.max(1, parseNumber(style['stroke-miterlimit'], 4)), tolerance).map(points => transformPoints(points, matrix));
             const coverage = rasterize(polygons, false, layer.width, layer.height);
             if (coverage) layer.fill(coverage, stroke);
+        }
+    }
+
+    // draws the markers of a shape (like usvg's markers, crates/usvg/src/parser/marker.rs)
+    renderMarkers(path: PathCommand[], node: XNode, ctx: Context): void {
+        const style = ctx.style as Style;
+        for (let p = node.parent; p; p = p.parent) if (p.name === 'clipPath') return;
+        const kinds = ['marker-start', 'marker-mid', 'marker-end'] as const;
+        if (kinds.every(kind => !style[kind] || style[kind] === 'none')) return;
+        const segments = markerSegments(path);
+        if (segments.length < 2) return;
+
+        for (let k = 0; k < 3; k++) {
+            const marker = this.reference(style[kinds[k]]);
+            if (!marker || marker.name !== 'marker' || this.active.has(marker)) continue;
+
+            const units = marker.attrs.markerUnits === 'userSpaceOnUse' ? 1 : parseLength(style['stroke-width'], ctx.viewport, 16, 'diagonal');
+            if (!(units > 0)) continue;
+            const length = (name: string, axis: 'x' | 'y', fallback: number): number =>
+                marker.attrs[name] === undefined ? fallback : parseLength(marker.attrs[name], ctx.viewport, 16, axis);
+            const refX = length('refX', 'x', 0), refY = length('refY', 'y', 0);
+            const width = length('markerWidth', 'x', 3), height = length('markerHeight', 'y', 3);
+            if (!(width > 0) || !(height > 0)) continue;
+
+            const viewBox = parseViewBox(marker.attrs.viewBox);
+            const viewBoxMatrix = viewBox ? viewBoxTransform(viewBox, width, height, marker.attrs.preserveAspectRatio) : [1, 0, 0, 1, 0, 0];
+            const sx = Math.hypot(viewBoxMatrix[0], viewBoxMatrix[1]), sy = Math.hypot(viewBoxMatrix[2], viewBoxMatrix[3]);
+            // the clip (unless overflow is visible): the marker's size in the viewBox's coordinates
+            const inverse = invert(viewBoxMatrix);
+            if (!inverse) continue;
+            const clip = /^(visible|auto)$/.test(marker.attrs.overflow?.trim() || '') ? null
+                : transformPoints([0, 0, width, height], inverse);
+
+            const orient = (marker.attrs.orient || '').trim();
+            const fixed = orient === 'auto' || orient === 'auto-start-reverse' ? null : parseAngle(orient);
+            const markerStyle = this.styleOf(marker);
+
+            const draw = (x: number, y: number, index: number): void => {
+                let angle = fixed ?? vertexAngle(segments, index);
+                if (orient === 'auto-start-reverse' && index === 0) angle = (angle + 180) % 360;
+                let matrix = multiply(ctx.matrix, [1, 0, 0, 1, x, y]);
+                if (angle) {
+                    const r = angle * Math.PI / 180, cos = Math.cos(r), sin = Math.sin(r);
+                    matrix = multiply(matrix, [cos, sin, -sin, cos, 0, 0]);
+                }
+                matrix = multiply(matrix, [sx * units, 0, 0, sy * units, -refX * sx * units, -refY * sy * units]);
+
+                const inner = { ...ctx, matrix, style: markerStyle, depth: ctx.depth + 1, viewport: viewBox ? { width: viewBox[2], height: viewBox[3] } : ctx.viewport };
+                this.active.add(marker);
+                if (!clip) this.renderChildren(marker, inner);
+                else this.clipped(inner, Math.min(clip[0], clip[2]), Math.min(clip[1], clip[3]), Math.abs(clip[2] - clip[0]), Math.abs(clip[3] - clip[1]),
+                    layer => this.renderChildren(marker, { ...inner, layer }));
+                this.active.delete(marker);
+            };
+
+            if (k === 0) {
+                if (segments[0].type === 'M') draw(segments[0].x, segments[0].y, 0);
+            } else if (k === 1) {
+                for (let i = 1; i < segments.length - 1; i++)
+                    if (segments[i].type !== 'Z') draw(segments[i].x, segments[i].y, i);
+            } else {
+                const i = segments.length - 1, last = segments[i];
+                if (last.type === 'L' || last.type === 'C') draw(last.x, last.y, i);
+                else if (last.type === 'Z') {
+                    const start = subpathStart(segments, i);
+                    draw(start.x, start.y, i);
+                }
+            }
         }
     }
 
@@ -1210,6 +1285,147 @@ class Document {
 
         return values;
     }
+}
+
+// ---------------------------------------------------------------------------
+// markers (like usvg's, crates/usvg/src/parser/marker.rs)
+// ---------------------------------------------------------------------------
+
+/** a path segment: its end point (x, y), a cubic's control points (x1, y1, x2, y2) */
+interface Segment {
+    type: string;
+    x: number;
+    y: number;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+}
+
+// the segments of a path like tiny-skia's path builder makes them: repeated moves and closes merged, a move after a
+// close that's followed by a line or curve, no move at the end
+function markerSegments(path: PathCommand[]): Segment[] {
+    const segments: Segment[] = [];
+    let mx = 0, my = 0;
+    const push = (type: string, x: number, y: number, x1 = 0, y1 = 0, x2 = 0, y2 = 0): void => {
+        segments.push({ type, x, y, x1, y1, x2, y2 });
+    };
+    for (const [command, ...v] of path) {
+        const last = segments[segments.length - 1];
+        if (command === 'M') {
+            if (last && last.type === 'M') segments.pop();
+            push('M', mx = v[0], my = v[1]);
+        } else if (command === 'Z') {
+            if (last && last.type !== 'Z' && last.type !== 'M') push('Z', mx, my);
+        } else {
+            if (!last || last.type === 'Z') push('M', mx, my);
+            if (command === 'L') push('L', v[0], v[1]);
+            else push('C', v[4], v[5], v[0], v[1], v[2], v[3]);
+        }
+    }
+    if (segments.length && segments[segments.length - 1].type === 'M') segments.pop();
+    return segments;
+}
+
+function subpathStart(segments: Segment[], index: number): Segment {
+    for (let i = index - 1; i >= 0; i--) if (segments[i].type === 'M') return segments[i];
+    return { type: 'M', x: 0, y: 0, x1: 0, y1: 0, x2: 0, y2: 0 };
+}
+
+function previousVertex(segments: Segment[], index: number): Segment {
+    const previous = segments[index - 1];
+    return previous.type === 'Z' ? subpathStart(segments, index) : previous;
+}
+
+// (usvg compares single precision floats within 4 ulps)
+function near(a: number, b: number): boolean {
+    return Math.abs(a - b) <= 4 * 1.1920929e-7 * Math.max(Math.abs(a), Math.abs(b));
+}
+
+function normalizeAngle(rad: number): number {
+    const v = rad % (Math.PI * 2);
+    return v < 0 ? v + Math.PI * 2 : v;
+}
+
+// the bisector of the incoming (1 to 2) and outgoing (3 to 4) directions, in degrees
+function bisector(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number): number {
+    const incoming = normalizeAngle(Math.atan2(y2 - y1, x2 - x1)), outgoing = normalizeAngle(Math.atan2(y4 - y3, x4 - x3));
+    const d = (outgoing - incoming) / 2;
+    let angle = incoming + d;
+    if (Math.abs(d) > Math.PI / 2) angle -= Math.PI;
+    return normalizeAngle(angle) * 180 / Math.PI;
+}
+
+function lineAngle(x1: number, y1: number, x2: number, y2: number): number {
+    return bisector(x1, y1, x2, y2, x1, y1, x2, y2);
+}
+
+function curvesAngle(px: number, py: number, cx1: number, cy1: number, x: number, y: number, cx2: number, cy2: number, nx: number, ny: number): number {
+    if (near(cx1, x) && near(cy1, y)) return bisector(px, py, x, y, x, y, cx2, cy2);
+    if (near(x, cx2) && near(y, cy2)) return bisector(cx1, cy1, x, y, x, y, nx, ny);
+    return bisector(cx1, cy1, x, y, x, y, cx2, cy2);
+}
+
+// a marker's orientation at a vertex (orient="auto")
+function vertexAngle(segments: Segment[], index: number): number {
+    if (index === 0) {
+        const [m, s] = segments;
+        if (m.type !== 'M') return 0;
+        if (s.type === 'L') return lineAngle(m.x, m.y, s.x, s.y);
+        if (s.type === 'C') return near(m.x, s.x1) && near(m.y, s.y1) ? lineAngle(m.x, m.y, s.x, s.y) : lineAngle(m.x, m.y, s.x1, s.y1);
+        return 0;
+    }
+
+    if (index === segments.length - 1) {
+        const a = segments[index - 1], b = segments[index];
+        if (b.type === 'L') {
+            const prev = previousVertex(segments, index);
+            return lineAngle(prev.x, prev.y, b.x, b.y);
+        }
+        if (b.type === 'C') return near(b.x2, b.x) && near(b.y2, b.y) ? lineAngle(b.x1, b.y1, b.x, b.y) : lineAngle(b.x2, b.y2, b.x, b.y);
+        if (b.type === 'Z') {
+            const next = subpathStart(segments, index);
+            if (a.type === 'L') return lineAngle(a.x, a.y, next.x, next.y);
+            if (a.type === 'C') {
+                const prev = previousVertex(segments, index);
+                return curvesAngle(prev.x, prev.y, a.x2, a.y2, a.x, a.y, next.x, next.y, next.x, next.y);
+            }
+        }
+        return 0;
+    }
+
+    const a = segments[index], b = segments[index + 1];
+    if (a.type === 'M') {
+        if (b.type === 'L') return lineAngle(a.x, a.y, b.x, b.y);
+        if (b.type === 'C') return lineAngle(a.x, a.y, b.x1, b.y1);
+        return 0;
+    }
+    if (a.type === 'Z') return 0;
+    const prev = previousVertex(segments, index);
+    if (b.type === 'L') {
+        if (a.type === 'L') return bisector(prev.x, prev.y, a.x, a.y, a.x, a.y, b.x, b.y);
+        return curvesAngle(prev.x, prev.y, a.x2, a.y2, a.x, a.y, b.x, b.y, b.x, b.y);
+    }
+    if (b.type === 'C') {
+        if (a.type === 'L') return curvesAngle(prev.x, prev.y, prev.x, prev.y, a.x, a.y, b.x1, b.y1, b.x, b.y);
+        return curvesAngle(prev.x, prev.y, a.x2, a.y2, a.x, a.y, b.x1, b.y1, b.x, b.y);
+    }
+    if (b.type === 'M') {
+        if (a.type === 'L') return lineAngle(prev.x, prev.y, a.x, a.y);
+        return near(a.x, a.x2) && near(a.y, a.y2) ? lineAngle(prev.x, prev.y, a.x, a.y) : lineAngle(a.x2, a.y2, a.x, a.y);
+    }
+    // (b is a close)
+    const next = subpathStart(segments, index);
+    if (a.type === 'L') return bisector(prev.x, prev.y, a.x, a.y, a.x, a.y, next.x, next.y);
+    return lineAngle(prev.x, prev.y, next.x, next.y);
+}
+
+// an angle in degrees (deg, grad, rad, turn or a plain number), 0 if invalid
+function parseAngle(value: string): number {
+    const m = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)(deg|grad|rad|turn)?$/i.exec(value);
+    if (!m) return 0;
+    const n = parseFloat(m[1]), unit = (m[2] || 'deg').toLowerCase();
+    return unit === 'grad' ? n * 0.9 : unit === 'rad' ? n * 180 / Math.PI : unit === 'turn' ? n * 360 : n;
 }
 
 const TRANSPARENT: Color = [0, 0, 0, 0];
@@ -1701,7 +1917,9 @@ function arcToCubics(path: PathCommand[], x1: number, y1: number, rx: number, ry
     if (!sweep && delta > 0) delta -= 2 * Math.PI;
     else if (sweep && delta < 0) delta += 2 * Math.PI;
 
-    const segments = Math.ceil(Math.abs(delta) / (Math.PI / 2) - 1e-9);
+    // as many cubics as kurbo makes for usvg (at a tolerance of 0.1), which places mid markers at their ends
+    const perTurn = Math.max(Math.pow(1.1163 * Math.max(rx, ry) / 0.1, 1 / 6), 3.999999);
+    const segments = Math.max(1, Math.ceil(perTurn * Math.abs(delta) / (2 * Math.PI)));
     const step = delta / segments;
     const k = 4 / 3 * Math.tan(step / 4);
 
