@@ -200,10 +200,10 @@ export class ShapeFont {
         return glyph < this.font.numGlyphs ? this.font.advance(glyph) : 0;
     }
 
-    plan(script: string, direction: Direction): Plan {
-        const key = `${script}:${direction}`;
+    plan(script: string, direction: Direction, features: Features = []): Plan {
+        const key = `${script}:${direction}:${features.map(([tag, value]) => `${tag}=${value}`).join(',')}`;
         let plan = this.plans.get(key);
-        if (!plan) this.plans.set(key, plan = new Planner(this, script, direction).compile());
+        if (!plan) this.plans.set(key, plan = new Planner(this, script, direction, features).compile());
         return plan;
     }
 }
@@ -242,11 +242,14 @@ const COMMON_FEATURES: Array<[string, number]> = [['abvm', FeatureFlags.GLOBAL],
 const HORIZONTAL_FEATURES: Array<[string, number]> = [['calt', FeatureFlags.GLOBAL], ['clig', FeatureFlags.GLOBAL], ['curs', FeatureFlags.GLOBAL],
     ['dist', FeatureFlags.GLOBAL], ['kern', FeatureFlags.GLOBAL_HAS_FALLBACK], ['liga', FeatureFlags.GLOBAL], ['rclt', FeatureFlags.GLOBAL]];
 
+/** OpenType features to apply to the whole text (or not, with 0), by their tags; values above 1 pick alternates */
+export type Features = ReadonlyArray<readonly [string, number]>;
+
 export class Planner {
     readonly map: MapBuilder;
     readonly shaper: Shaper;
 
-    constructor(readonly font: ShapeFont, readonly script: string, readonly direction: Direction) {
+    constructor(readonly font: ShapeFont, readonly script: string, readonly direction: Direction, readonly features: Features = []) {
         this.map = new MapBuilder([font.gsub, font.gpos], scriptTags(script));
         this.shaper = shaperFor.categorize(script, direction, this.map.chosenScript[0]);
     }
@@ -276,6 +279,9 @@ export class Planner {
         map.enableFeature('BUZZ');
         for (const [tag, flags] of COMMON_FEATURES) map.addFeature(tag, flags);
         for (const [tag, flags] of HORIZONTAL_FEATURES) map.addFeature(tag, flags);
+        // the user's features, after the default ones (so they can turn those off)
+        if (this.features.length) map.isSimple = false;
+        for (const [tag, value] of this.features) map.addFeature(tag, FeatureFlags.GLOBAL, value);
         if (shaper.overrideFeatures) shaper.overrideFeatures(this);
 
         const m = map.compile();
@@ -962,7 +968,7 @@ function position(plan: Plan, font: ShapeFont, buffer: Buffer): void {
  * is the text around the run (in logical order, the closest characters first), for joining scripts
  */
 export function shapeRun(font: ShapeFont, codepoints: ArrayLike<number>, script: string, direction: Direction, clusters?: ArrayLike<number>,
-    context: { before: number[], after: number[] } = { before: [], after: [] }): GlyphInfo[] {
+    context: { before: number[], after: number[] } = { before: [], after: [] }, features: Features = []): GlyphInfo[] {
     const buffer = new Buffer();
     buffer.direction = direction;
     buffer.script = script;
@@ -977,7 +983,7 @@ export function shapeRun(font: ShapeFont, codepoints: ArrayLike<number>, script:
     buffer.limit();
     if (!buffer.len) return [];
 
-    const plan = font.plan(script, direction);
+    const plan = font.plan(script, direction, features);
     const targetDirection = buffer.direction;
     let hasFractionSlash = false;
     for (const info of buffer.info) if (info.codepoint === 0x2044) hasFractionSlash = true;

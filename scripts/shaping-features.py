@@ -1,5 +1,6 @@
 # Adds every OpenType lookup type to tests/shaping: features.ttf (built here from a feature file: all GSUB and GPOS
-# lookup types and formats, lookup flags, extension lookups, feature variations) and latin-fallback.ttf (no GSUB and
+# lookup types and formats, lookup flags, extension lookups, feature variations, features the user turns on or off)
+# and latin-fallback.ttf (no GSUB and
 # GPOS: the fallback spaces, hyphen and mark positioning), with HarfBuzz's shaping of texts using them. Needs fontTools
 # and uharfbuzz; run after scripts/shaping-reference.py: python scripts/shaping-features.py
 import json, os
@@ -41,15 +42,17 @@ def build(file, glyphs, cmap, fea=None, axes=None):
 
 
 cases = []
-def shape(file, script, direction, texts):
+def shape(file, script, direction, texts, features=None):
     hbfont = hb.Font(hb.Face(hb.Blob.from_file_path(os.path.join(out_dir, file))))
     for text in texts:
         buf = hb.Buffer(); buf.add_str(text)
         buf.script = script; buf.direction = direction
         buf.flags = hb.BufferFlags.BOT | hb.BufferFlags.EOT
-        hb.shape(hbfont, buf, {})
-        cases.append({'font': file, 'script': script, 'direction': direction, 'text': text,
-                      'glyphs': [[i.codepoint, i.cluster, p.x_advance, p.x_offset, p.y_offset] for i, p in zip(buf.glyph_infos, buf.glyph_positions)]})
+        hb.shape(hbfont, buf, features or {})
+        case = {'font': file, 'script': script, 'direction': direction, 'text': text,
+                'glyphs': [[i.codepoint, i.cluster, p.x_advance, p.x_offset, p.y_offset] for i, p in zip(buf.glyph_infos, buf.glyph_positions)]}
+        if features: case['features'] = features
+        cases.append(case)
 
 
 # ---- every lookup type
@@ -58,7 +61,7 @@ glyphs = {'space': (300, None)}
 for i, c in enumerate(letters): glyphs[c] = (400 + i * 10, (40, 0, 360 + i * 10, 500 + i * 10))
 for name in ['acutecomb', 'gravecomb', 'dotbelowcomb', 'macroncomb']:
     glyphs[name] = (0, (-300, 600, -100, 750) if name != 'dotbelowcomb' else (-250, -150, -150, -50))
-for name in ['a.alt1', 'a.alt2', 'a.alt3', 'b.alt', 'c.sc', 'n.heavy', 'f_i', 'f_f_i', 'l_l', 'd.ctx1', 'd.ctx2', 'e.ctx3', 'g.ext']:
+for name in ['a.alt1', 'a.alt2', 'a.alt3', 'b.alt', 'c.sc', 'n.heavy', 'f_i', 'f_f_i', 'l_l', 'd.ctx1', 'd.ctx2', 'e.ctx3', 'g.ext', 'b.sc', 'd.ss01']:
     glyphs[name] = (600, (40, 0, 560, 600))
 cmap = {ord(c): c for c in letters}
 cmap.update({0x20: 'space', 0x301: 'acutecomb', 0x300: 'gravecomb', 0x323: 'dotbelowcomb', 0x304: 'macroncomb'})
@@ -116,6 +119,11 @@ feature dist { pos r s' lookup NUDGE t; pos [i j] s' lookup NUDGE; } dist;
 # a feature variation: with the default weight (in 300..500), rvrn swaps n
 conditionset middle { wght 300 500; } middle;
 variation rvrn middle { sub n by n.heavy; } rvrn;
+
+# features off by default, for the user to turn on: small caps, stylistic alternates (the value picks one), a stylistic set
+feature smcp { sub b by b.sc; sub c by c.sc; } smcp;
+feature salt { sub a from [a.alt1 a.alt2 a.alt3]; } salt;
+feature ss01 { sub d by d.ss01; } ss01;
 '''
 build('features.ttf', glyphs, cmap, fea, axes=[('wght', 100, 400, 900, 'Weight')])
 feature_texts = [
@@ -125,6 +133,13 @@ feature_texts = [
 ]
 shape('features.ttf', 'Latn', 'ltr', feature_texts)
 shape('features.ttf', 'Hebr', 'rtl', ['yzy zyz', 'kmk yz', 'áb'])
+# features the user turns on and off (also default ones), alternates by value, a feature the font doesn't have
+shape('features.ttf', 'Latn', 'ltr', ['abcd', 'cxc'], {'smcp': True})
+for value in [1, 2, 3, 4]: shape('features.ttf', 'Latn', 'ltr', ['aba'], {'salt': value})
+shape('features.ttf', 'Latn', 'ltr', ['dbc ffi'], {'ss01': True, 'smcp': True, 'liga': False})
+shape('features.ttf', 'Latn', 'ltr', ['tuw av va', 'oq pr'], {'kern': False})
+shape('features.ttf', 'Latn', 'ltr', ['qbr', 'a\u0301\u0300'], {'calt': False, 'mark': False})
+shape('features.ttf', 'Latn', 'ltr', ['ffi', 'aaaa'], {'zzzz': True, 'liga': True, 'rand': False})
 
 # ---- the fallbacks of fonts without layout tables
 fallback = {'space': (250, None), 'hyphen': (300, (30, 250, 270, 330)), 'period': (220, (60, 0, 160, 100)),

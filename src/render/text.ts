@@ -7,7 +7,7 @@ import { Font, PathCommand } from './font.ts';
 import { Hinter } from './hinting.ts';
 import { ColorLayer, BitmapGlyph, parseColorLayers, parseBitmaps } from './color.ts';
 import { Direction } from './buffer.ts';
-import { ShapeFont, shapeFont, shapeRun, isDefaultIgnorableCodepoint } from './shape.ts';
+import { ShapeFont, shapeFont, shapeRun, isDefaultIgnorableCodepoint, Features } from './shape.ts';
 import './shapers/index.ts';
 import { classOf, resolve, lineLevels, Paragraph as BidiParagraph } from './bidi.ts';
 import { lineBreaks, Break } from './linebreak.ts';
@@ -184,10 +184,10 @@ function glyphOf(f: SizedFont, index: number, size: number): Glyph {
  * @param foreground RGBA color (0xrrggbbaa) of color glyph layers drawn in the text color
  * @return the coverage of the outline glyphs, and the premultiplied RGBA pixels of color glyphs (null without any)
  */
-export async function render(fonts: Uint8Array[], size: number, text: string, layout: Layout, hinting = false, foreground = 0xffffffff): Promise<{ width: number, height: number, coverage: Uint8Array, color: Uint8ClampedArray | null }> {
+export async function render(fonts: Uint8Array[], size: number, text: string, layout: Layout, hinting = false, foreground = 0xffffffff, features: Features = []): Promise<{ width: number, height: number, coverage: Uint8Array, color: Uint8ClampedArray | null }> {
     // reading past the end of damaged or truncated font data throws a RangeError
     try {
-        return await layOut(fonts, size, text, layout, hinting, foreground);
+        return await layOut(fonts, size, text, layout, hinting, foreground, features);
     } catch (err) {
         if (err instanceof RangeError && !(err instanceof TooLarge)) throw new Error('Font: damaged or truncated font data', { cause: err });
         throw err;
@@ -198,7 +198,7 @@ export async function render(fonts: Uint8Array[], size: number, text: string, la
 const MAX_PIXELS = 1 << 28;
 class TooLarge extends RangeError {}
 
-async function layOut(fonts: Uint8Array[], size: number, text: string, layout: Layout, hinting: boolean, foreground: number): Promise<{ width: number, height: number, coverage: Uint8Array, color: Uint8ClampedArray | null }> {
+async function layOut(fonts: Uint8Array[], size: number, text: string, layout: Layout, hinting: boolean, foreground: number, features: Features): Promise<{ width: number, height: number, coverage: Uint8Array, color: Uint8ClampedArray | null }> {
     const sized: SizedFont[] = [];
     const font = (i: number): SizedFont => sized[i] ??= sizedFont(fonts[i], size, hinting);
     const primary = font(0);
@@ -209,7 +209,7 @@ async function layOut(fonts: Uint8Array[], size: number, text: string, layout: L
     // paragraphs end at hard line breaks (CR LF, CR, LF, NEL, LS, PS) unless they are ignored
     const paragraphs = layout.wrapHardBreaks ? text.split(/\r\n|[\r\n\u0085\u2028\u2029]/) : [text.replace(/\r\n|[\r\n\u0085\u2028\u2029]/g, '')];
     const lines: Line[] = [];
-    for (const paragraph of paragraphs) lines.push(...layOutParagraph(analyze(paragraph, fonts.length, font), layout, font, size));
+    for (const paragraph of paragraphs) lines.push(...layOutParagraph(analyze(paragraph, fonts.length, font), layout, font, size, features));
 
     // lines that fit into maxHeight, chosen by the vertical alignment
     let visible = lines;
@@ -336,7 +336,7 @@ const CONTEXT = 5;
  * Shapes the characters start to end of a paragraph with the given embedding levels: runs of one level, script and
  * font, in visual order. The glyphs are placed from x = 0; advances is the width by cluster (its first character)
  */
-function shapeRange(p: Paragraph, start: number, end: number, levels: ArrayLike<number>, font: (i: number) => SizedFont, size: number): { glyphs: PlacedGlyph[], width: number, advances: Map<number, number> } {
+function shapeRange(p: Paragraph, start: number, end: number, levels: ArrayLike<number>, font: (i: number) => SizedFont, size: number, features: Features): { glyphs: PlacedGlyph[], width: number, advances: Map<number, number> } {
     // runs: [start, end, level], characters removed by bidi rule X9 take the level before them
     const runs: Array<[number, number, number]> = [];
     let lastLevel = p.bidi.level;
@@ -376,7 +376,7 @@ function shapeRange(p: Paragraph, start: number, end: number, levels: ArrayLike<
         const f = font(p.fontOf[rs]);
         const before = p.codepoints.slice(Math.max(0, rs - CONTEXT), rs).reverse(), after = p.codepoints.slice(re, re + CONTEXT);
         const clusters = Array.from({ length: re - rs }, (_, k) => rs + k);
-        const shaped = shapeRun(f.shaping, p.codepoints.slice(rs, re), p.scripts[rs], level & 1 ? Direction.RTL : Direction.LTR, clusters, { before, after });
+        const shaped = shapeRun(f.shaping, p.codepoints.slice(rs, re), p.scripts[rs], level & 1 ? Direction.RTL : Direction.LTR, clusters, { before, after }, features);
         for (const info of shaped) {
             const g = glyphOf(f, info.codepoint, size);
             let advance: number;
@@ -401,13 +401,13 @@ function shapeRange(p: Paragraph, start: number, end: number, levels: ArrayLike<
 const isSpace = (codepoint: number): boolean => codepoint === 0x20 || codepoint === 0x09 || codepoint === 0x3000 || codepoint >= 0x2000 && codepoint <= 0x200a;
 
 /** breaks a paragraph into lines and shapes them (reordered by the bidirectional algorithm) */
-function layOutParagraph(p: Paragraph, layout: Layout, font: (i: number) => SizedFont, size: number): Line[] {
+function layOutParagraph(p: Paragraph, layout: Layout, font: (i: number) => SizedFont, size: number, features: Features): Line[] {
     const n = p.codepoints.length;
     if (!n) return [{ glyphs: [], extent: 0 }];
 
     // the width of each character's cluster in the paragraph shaped as one line (characters within a cluster have
     // none, and lines can't break inside clusters)
-    const whole = shapeRange(p, 0, n, p.bidi.levels, font, size);
+    const whole = shapeRange(p, 0, n, p.bidi.levels, font, size, features);
     const width = new Float64Array(n), starts = new Uint8Array(n + 1);
     starts[n] = 1;
     for (const [cluster, advance] of whole.advances) {
@@ -455,7 +455,7 @@ function layOutParagraph(p: Paragraph, layout: Layout, font: (i: number) => Size
         const levels = lineLevels(p.bidi, start, end);
         const shifted = new Int8Array(n);
         shifted.set(levels, start);
-        const { glyphs } = ranges.length === 1 ? whole : shapeRange(p, start, end, shifted, font, size);
+        const { glyphs } = ranges.length === 1 ? whole : shapeRange(p, start, end, shifted, font, size, features);
         let extent = 0;
         for (const { x, dx, glyph } of glyphs) if (glyph.ink) extent = Math.max(extent, x + dx + glyph.ink.right);
         return { glyphs, extent };

@@ -330,4 +330,21 @@ const panic = message => {
         if (!await samePixels(await arabic.encode(1, {creationTime: 0, software: ''}), await right.encode(1, {creationTime: 0, software: ''})))
             panic('the right to left paragraph should start on the right');
     }
+
+    {
+        // OpenType features: on (small caps, fractions), off (default ligatures); unknown ones and defaults change nothing
+        const font = await fs.readFile('./tests/fonts/sourcesans3 regular.otf');
+        const text = '1111 office 2/3';
+        const base = await Image.renderText(font, 32, text);
+        const same = (a, b) => a.width === b.width && a.height === b.height && a.bitmap.every((v, i) => v === b.bitmap[i]);
+        for (const features of [{smcp: true}, {liga: false}, {frac: true}])
+            if (same(base, await Image.renderText(font, 32, text, {features}))) panic(`features ${JSON.stringify(features)} should change the text`);
+        for (const features of [{zzzz: true}, {liga: true}, {kern: 1}])
+            if (!same(base, await Image.renderText(font, 32, text, {features}))) panic(`features ${JSON.stringify(features)} shouldn't change the text`);
+        for (const features of [{toolong: true}, {salt: 1.5}, {salt: -1}, {'ab': true}]) {
+            let error = null;
+            try { await Image.renderText(font, 32, text, {features}); } catch (err) { error = err; }
+            if (!(error instanceof RangeError)) panic(`features ${JSON.stringify(features)} should be rejected`);
+        }
+    }
 })();

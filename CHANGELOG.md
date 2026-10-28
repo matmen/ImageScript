@@ -6,6 +6,10 @@
 
 - `Image#region(x, y, width, height)` copies a region into a new image and leaves the image as it is (like `crop`
   on a clone, without copying the whole image). It's clipped like `crop`; on a frame it gives a plain image.
+- `Image.renderText()` takes OpenType features: `features: { tnum: true, smcp: true, liga: false, salt: 2 }` turns
+  features on for the whole text (tabular numbers, small caps, stylistic sets, ...), off (also the default ones like
+  ligatures or kerning) or picks an alternate by its number, like HarfBuzz's user features (shaped exactly like
+  `hb-shape --features`). Fonts without a feature ignore it.
 
 ### Improvements
 

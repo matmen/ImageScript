@@ -218,6 +218,12 @@ export interface TextStyle {
      * pixels. Fonts without instructions (and CFF/OpenType outlines) aren't affected. Default: `true`
      */
     hinting?: boolean;
+    /**
+     * OpenType features by their tags, for the whole text: `true` turns one on (like `tnum` for tabular numbers,
+     * `smcp` for small caps, `ss01` for a stylistic set), `false` off (also the ones on by default, like `liga` or
+     * `kern`), a number picks an alternate (`salt: 2`). Fonts without a feature ignore it. Default: `{}`
+     */
+    features?: Record<string, boolean | number>;
 }
 
 /** Options of {@link Image.cropCircle} */
@@ -273,6 +279,17 @@ export interface ColorToAlphaOptions {
  * @deprecated Use {@link Metadata}, which all encoders take
  */
 export type PNGMetadata = Metadata;
+
+// OpenType features as tags and values (tags are 4 printable ASCII characters)
+function featureList(features: Record<string, boolean | number>): Array<[string, number]> {
+    if (typeof features !== 'object' || features === null) throw new TypeError('Features must be an object');
+    return Object.entries(features).map(([tag, value]) => {
+        if (!/^[\x20-\x7e]{4}$/.test(tag)) throw new RangeError(`Invalid OpenType feature tag: ${JSON.stringify(tag)}`);
+        if (typeof value === 'boolean') return [tag, value ? 1 : 0];
+        if (!Number.isInteger(value) || value < 0 || value > 255) throw new RangeError(`Invalid value of the OpenType feature ${tag}: ${value}`);
+        return [tag, value];
+    });
+}
 
 /**
  * An RGBA image; provides the codecs and the manipulation functions. Methods that change the image modify it in place
@@ -2340,7 +2357,7 @@ export class Image {
     static renderText(font: BinaryData | BinaryData[], size: number, text: string, color?: Color, layout?: TextLayout, style?: TextStyle): Promise<Image>;
     static async renderText(font: BinaryData | BinaryData[], size: number, text: string, colorOrOptions: Color | TextOptions = 0xffffffff, layoutArgument?: TextLayout, styleArgument: TextStyle = {}): Promise<Image> {
         const options: TextOptions = isOptions(colorOrOptions) ? colorOrOptions : { ...styleArgument, color: colorOrOptions, layout: layoutArgument };
-        const { color = 0xffffffff, layout = new TextLayout(), strokeWidth = 0, strokeColor = 0x000000ff, hinting = true } = options;
+        const { color = 0xffffffff, layout = new TextLayout(), strokeWidth = 0, strokeColor = 0x000000ff, hinting = true, features = {} } = options;
         size = finite(size, 'font size');
         if (finite(strokeWidth, 'stroke width') < 0)
             throw new RangeError('Invalid stroke width');
@@ -2349,7 +2366,7 @@ export class Image {
 
         const [r, g, b, a] = Image.colorToRGBA(color);
         // color glyph layers in the text color take it without its alpha, which applies to the whole color glyph
-        const rendered = await textRenderer.render(fonts.map(view), size, text, layout, hinting, (r << 24 | g << 16 | b << 8 | 255) >>> 0);
+        const rendered = await textRenderer.render(fonts.map(view), size, text, layout, hinting, (r << 24 | g << 16 | b << 8 | 255) >>> 0, featureList(features));
 
         // the outline needs room around the glyphs
         const pad = Math.ceil(strokeWidth);
