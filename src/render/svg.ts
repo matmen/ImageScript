@@ -3,7 +3,7 @@
  * shapes, paths, transforms, nested svg/use/symbol, presentation attributes, inline styles and simple
  * <style> sheets (type, class and id selectors), solid colors, linear and radial gradients, patterns, strokes
  * (joins, caps, dashes), markers, opacity, clip paths, luminance masks, images in data URIs (rasters decoded by
- * the caller, SVGs and SVGZs) and filters (see filter.ts; not feImage, feTurbulence, feDisplacementMap and lighting).
+ * the caller, SVGs and SVGZs) and filters (all primitives, see filter.ts).
  * Not supported: text, external images, animation and scripting.
  * How patterns are rendered (a tile in device resolution, its filtering) and their reference cycles broken, and how
  * images are fitted and sampled follows resvg/usvg, the markers (their placement and orientation,
@@ -15,7 +15,7 @@ import { decode as decodeUTF8, encode as encodeUTF8 } from '../util/utf8.ts';
 import { PathCommand } from './font.ts';
 import { base64 } from '../util/bytes.ts';
 import { gunzip } from '../codecs/zlib.ts';
-import { applyFilter, Filter, Primitive, Kind, Input, Transfer, ColorMatrix, Pixmap } from './filter.ts';
+import { applyFilter, Filter, Primitive, Kind, Input, Transfer, ColorMatrix, Pixmap, Light } from './filter.ts';
 
 const UNSUPPORTED = new Set(['text', 'filter', 'pattern', 'marker', 'foreignObject', 'script', 'style', 'title', 'desc', 'metadata',
     'defs', 'clipPath', 'mask', 'linearGradient', 'radialGradient', 'stop', 'symbol', 'font', 'font-face', 'animate', 'animateTransform', 'animateMotion', 'set']);
@@ -28,7 +28,7 @@ const INHERITED = new Set(['fill', 'fill-opacity', 'fill-rule', 'stroke', 'strok
 const SWITCHABLE = new Set(['svg', 'g', 'a', 'switch', 'use', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'image', 'foreignObject']);
 
 const PROPERTIES = new Set([...INHERITED, 'opacity', 'display', 'clip-path', 'mask', 'stop-color', 'stop-opacity', 'transform', 'filter', 'flood-color',
-    'flood-opacity']);
+    'flood-opacity', 'lighting-color']);
 
 interface XNode {
     name: string;
@@ -108,7 +108,8 @@ const DEFAULTS: Record<string, string> = {
     'stroke-linecap': 'butt', 'stroke-linejoin': 'miter', 'stroke-miterlimit': '4', 'stroke-dasharray': 'none', 'stroke-dashoffset': '0',
     'color': 'black', 'visibility': 'visible', 'clip-rule': 'nonzero', 'font-size': '16', 'opacity': '1', 'display': 'inline',
     'stop-color': 'black', 'stop-opacity': '1', 'marker-start': 'none', 'marker-mid': 'none', 'marker-end': 'none',
-    'image-rendering': 'auto', 'filter': 'none', 'flood-color': 'black', 'flood-opacity': '1', 'color-interpolation-filters': 'linearRGB'
+    'image-rendering': 'auto', 'filter': 'none', 'flood-color': 'black', 'flood-opacity': '1', 'color-interpolation-filters': 'linearRGB',
+    'lighting-color': 'white'
 };
 
 const SAMPLES = 16; // sub-scanlines per pixel
@@ -248,7 +249,7 @@ export function embeddedImages(source: string | Uint8Array): Array<{ href: strin
         while (stack.length) {
             const node = stack.pop() as XNode;
             stack.push(...node.children);
-            if (node.name !== 'image' || !node.svg) continue;
+            if ((node.name !== 'image' && node.name !== 'feImage') || !node.svg) continue;
             const href = (node.attrs.href || node.attrs['xlink:href'] || '').trim();
             if (seen.has(href)) continue;
             seen.add(href);
@@ -623,6 +624,22 @@ class Document {
         this.root = root;
         this.rules = parseStyleSheet(styles.join('\n'));
         for (const name of ['fill', 'stroke']) this.breakPatternCycles(name);
+        this.breakImageCycles();
+    }
+
+    // like usvg: an element an feImage shows loses its filter if that's the feImage's filter
+    breakImageCycles(): void {
+        const stack = [this.root];
+        while (stack.length) {
+            const node = stack.pop() as XNode;
+            stack.push(...node.children);
+            if (node.name !== 'feImage' || !node.parent || !node.parent.attrs.id) continue;
+            const href = this.href(node)?.trim(), target = href?.startsWith('#') ? this.reference(href) : null;
+            if (!target) continue;
+            const inline = target.attrs.style ? parseDeclarations(target.attrs.style) : null;
+            const filter = inline?.important.filter ?? inline?.normal.filter ?? target.attrs.filter;
+            if (filter && [...filter.matchAll(/url\(\s*['"]?#([^'")\s]+)/g)].some(m => m[1] === node.parent?.attrs.id)) this.unpaint(target, 'filter');
+        }
     }
 
     // like resvg: in document order, a pattern's descendant painted with the pattern itself, or a descendant of the
@@ -1398,7 +1415,7 @@ class Document {
             const fx = length(child, 'x', 'x', primitiveBox), fy = length(child, 'y', 'y', primitiveBox);
             const fw = length(child, 'width', 'x', primitiveBox), fh = length(child, 'height', 'y', primitiveBox);
             let region: { x: number, y: number, width: number, height: number };
-            if (child.name === 'feFlood' && primitiveBox && bbox) {
+            if ((child.name === 'feFlood' || child.name === 'feImage') && primitiveBox && bbox) {
                 region = { x: bbox.x + (fx ?? 0) * bbox.width, y: bbox.y + (fy ?? 0) * bbox.height, width: (fw ?? 1) * bbox.width, height: (fh ?? 1) * bbox.height };
             } else if (primitiveBox) {
                 // (fractions of the filter region, like usvg)
@@ -1406,7 +1423,7 @@ class Document {
             } else region = { x: fx ?? rect.x, y: fy ?? rect.y, width: fw ?? rect.width, height: fh ?? rect.height };
             if (!(region.width > 0) || !(region.height > 0)) break;
 
-            const kind = this.primitiveKind(child, scale, primitives);
+            const kind = this.primitiveKind(child, scale, primitives, region, viewport);
             if (kind === undefined) continue;
             if (kind === null) return null;
 
@@ -1424,7 +1441,7 @@ class Document {
     }
 
     // a filter primitive: undefined to skip it (unknown elements), null if it isn't supported
-    primitiveKind(node: XNode, scale: number[], primitives: Primitive[]): Kind | null | undefined {
+    primitiveKind(node: XNode, scale: number[], primitives: Primitive[], region: BBox, viewport: Viewport): Kind | null | undefined {
         const input = (name: string): Input => {
             const value = node.attrs[name]?.trim();
             const previous = primitives.length ? { result: primitives[primitives.length - 1].result } : 'SourceGraphic' as const;
@@ -1502,11 +1519,76 @@ class Document {
                 }
                 return { type: 'morphology', dilate: node.attrs.operator?.trim() === 'dilate', rx, ry, input: input('in') };
             }
-            case 'feImage': case 'feDisplacementMap': case 'feTurbulence': case 'feDiffuseLighting': case 'feSpecularLighting':
-                return null;
+            case 'feTurbulence': {
+                const list = node.attrs.baseFrequency === undefined ? null : parseStrictNumberList(node.attrs.baseFrequency);
+                let [fx, fy] = list && list.length === 2 ? list : list && list.length === 1 ? [list[0], list[0]] : [0, 0];
+                if (!(fx >= 0 && fy >= 0)) fx = fy = 0;
+                const octaves = Math.max(0, number('numOctaves', 1));
+                return { type: 'turbulence', fx, fy, octaves: Math.round(octaves), seed: Math.trunc(number('seed', 0)), stitch: node.attrs.stitchTiles?.trim() === 'stitch',
+                    fractal: node.attrs.type?.trim() === 'fractalNoise' };
+            }
+            case 'feDiffuseLighting': case 'feSpecularLighting': {
+                // (without a light source, or a specular exponent out of range, they're transparent)
+                const transparent: Kind = { type: 'flood', color: [0, 0, 0], opacity: 0 };
+                const source = node.children.find(child => child.svg && /^fe(Distant|Point|Spot)Light$/.test(child.name));
+                const specular = node.name === 'feSpecularLighting', exponent = number('specularExponent', 1);
+                if (!source || (specular && !(exponent >= 1 && exponent <= 128))) return transparent;
+                const at = (name: string): number => parsePlainNumber(source.attrs[name]) ?? 0;
+                let light: Light;
+                if (source.name === 'feDistantLight') light = { type: 'distant', azimuth: at('azimuth'), elevation: at('elevation') };
+                else if (source.name === 'fePointLight') light = { type: 'point', x: at('x'), y: at('y'), z: at('z') };
+                else {
+                    const e = parsePlainNumber(source.attrs.specularExponent);
+                    light = { type: 'spot', x: at('x'), y: at('y'), z: at('z'), atX: at('pointsAtX'), atY: at('pointsAtY'), atZ: at('pointsAtZ'),
+                        exponent: e !== null && e > 0 ? e : 1, cone: parsePlainNumber(source.attrs.limitingConeAngle) };
+                }
+                const style = this.styleOf(node), value = style['lighting-color'];
+                const c = (value === 'currentColor' ? parseColor(style.color) : parseColor(value)) || [1, 1, 1, 1];
+                return { type: 'lighting', specular, input: input('in'), surfaceScale: number('surfaceScale', 1),
+                    constant: number(specular ? 'specularConstant' : 'diffuseConstant', 1), exponent, color: [Math.round(c[0] * 255), Math.round(c[1] * 255), Math.round(c[2] * 255)], light };
+            }
+            case 'feImage':
+                return this.feImage(node, region, viewport);
+            case 'feDisplacementMap': {
+                // (R, G or B, else A)
+                const channel = (name: string): number => {
+                    const index = ['R', 'G', 'B'].indexOf(node.attrs[name]?.trim() ?? '');
+                    return index < 0 ? 3 : index;
+                };
+                return { type: 'displacement', input: input('in'), input2: input('in2'), scale: number('scale', 0) * (scale[0] + scale[1]) / 2,
+                    xChannel: channel('xChannelSelector'), yChannel: channel('yChannelSelector') };
+            }
             default:
                 return undefined;
         }
+    }
+
+    // feImage: a referenced element or an image (fitted into the subregion), drawn by the renderer (transparent if it's
+    // missing or leads back to itself)
+    feImage(node: XNode, region: BBox, viewport: Viewport): Kind | null {
+        const href = this.href(node)?.trim();
+        const target = href && href.startsWith('#') ? this.reference(href) : null;
+        const transparent: Kind = { type: 'flood', color: [0, 0, 0], opacity: 0 };
+        if (!href) return transparent;
+        // (a cycle left: the filter isn't applied)
+        if (this.active.has(node)) return null;
+        if (href.startsWith('#') && (!target || !SWITCHABLE.has(target.name) && target.name !== 'g')) return transparent;
+        const image: XNode | null = target ? null : { name: 'image', svg: true, text: '', children: [], parent: node.parent,
+            attrs: { href, x: '0', y: '0', width: String(region.width), height: String(region.height), preserveAspectRatio: node.attrs.preserveAspectRatio || 'xMidYMid meet' } };
+        if (image && !this.imageOf(image, viewport)) return transparent;
+        return {
+            type: 'image',
+            draw: (matrix, width, height) => {
+                const layer = new Layer(width, height);
+                this.active.add(node);
+                const parentStyle = (target || node).parent && ((target || node).parent as XNode).name !== '#root' ? this.styleOf((target || node).parent as XNode) : null;
+                const ctx: Context = { matrix, style: parentStyle, viewport, layer, depth: 16 };
+                if (target) this.renderNode(target, ctx);
+                else this.renderImage(image as XNode, { ...ctx, style: this.computeStyle(image as XNode, this.styleOf(node)) });
+                this.active.delete(node);
+                return layer.toPixmap();
+            }
+        };
     }
 
     mergeInput(node: XNode, primitives: Primitive[]): Input {

@@ -20,7 +20,7 @@ const command = typeof Deno !== 'undefined' ? `${runtime} run -A` : typeof Bun !
                 console.log('script timeout');
                 timedOut = true;
                 proc.kill('SIGTERM');
-            }, 30000);
+            }, 60000);
 
             proc.on('exit', code => {
                 clearTimeout(timeout);

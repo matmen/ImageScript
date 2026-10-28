@@ -28,13 +28,14 @@
   differs (tiny-skia rounds edges to quarter pixels); most of the others load files.
 - `Image.renderSVG()` applies filters (`filter="url(#…)"` and the filter functions `blur()`, `drop-shadow()`,
   `brightness()`, `contrast()`, `grayscale()`, `hue-rotate()`, `invert()`, `opacity()`, `saturate()`, `sepia()`):
-  feGaussianBlur, feOffset, feFlood, feComposite (with `arithmetic`), feMerge, feDropShadow, feColorMatrix,
-  feComponentTransfer, feTile, feBlend (all 16 modes), feMorphology and feConvolveMatrix, with filter regions and
-  subregions in both units, `color-interpolation-filters` (linear RGB by default), inputs and results, attributes
-  through `href`. Like resvg (ported from it), filters run on 8 bit premultiplied pixels in the element's scale,
-  rotation and skew applied afterwards; invalid filters hide the element. Filters with feImage, feTurbulence,
-  feDisplacementMap or lighting aren't applied (the element is drawn without them). 300 of resvg's 408 filter tests
-  pass, up from 81 (most others use the primitives that aren't supported).
+  all 17 primitives (feGaussianBlur, feOffset, feFlood, feComposite with `arithmetic`, feMerge, feDropShadow,
+  feColorMatrix, feComponentTransfer, feTile, feBlend with all 16 modes, feMorphology, feConvolveMatrix,
+  feTurbulence, feDisplacementMap, feDiffuseLighting and feSpecularLighting with distant, point and spot lights,
+  feImage showing an element or an embedded image), with filter regions and subregions in both units,
+  `color-interpolation-filters` (linear RGB by default), inputs and results, attributes through `href`. Like resvg
+  (ported from it), filters run on 8 bit premultiplied pixels in the element's scale, rotation and skew applied
+  afterwards; invalid filters hide the element. 396 of resvg's 408 filter tests pass, up from 81 (the others have
+  text or load files, but for 3).
 - Optimized lossy WebP animations are smaller: like libwebp's, they leave out pixels that changed by up to a tolerance
   from the quality (3 per channel at quality 85, 1 at 100), and make unchanged pixels transparent only in whole 8x8
   blocks. Making each unchanged pixel transparent gave speckled alpha masks where most pixels change a little

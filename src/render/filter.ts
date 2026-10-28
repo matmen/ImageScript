@@ -1,7 +1,8 @@
 /*!
  * SVG filter effects on premultiplied RGBA pixels, ported from resvg (https://github.com/linebender/resvg,
  * crates/resvg/src/filter: mod.rs, box_blur.rs (itself based on https://github.com/fschutt/fastblur), iir_blur.rs,
- * color_matrix.rs, component_transfer.rs, composite.rs, morphology.rs, convolve_matrix.rs; Copyright 2017 the Resvg
+ * color_matrix.rs, component_transfer.rs, composite.rs, morphology.rs, convolve_matrix.rs, turbulence.rs (itself from
+ * the reference implementation in the SVG 1.1 specification), lighting.rs, displacement_map.rs; Copyright 2017 the Resvg
  * Authors, MIT License) and the blend modes of tiny-skia (https://github.com/linebender/tiny-skia,
  * src/pipeline/highp.rs; Copyright 2011 Google Inc., 2020 Yevhenii Reizner, BSD-3-Clause License,
  * itself from Skia). The IIR blur
@@ -47,7 +48,14 @@ export type Kind =
     | { type: 'blend', mode: string, input: Input, input2: Input }
     | { type: 'morphology', dilate: boolean, rx: number, ry: number, input: Input }
     | { type: 'convolve', input: Input, columns: number, rows: number, targetX: number, targetY: number, kernel: number[], divisor: number, bias: number,
-        edge: string, preserveAlpha: boolean };
+        edge: string, preserveAlpha: boolean }
+    | { type: 'turbulence', fx: number, fy: number, octaves: number, seed: number, stitch: boolean, fractal: boolean }
+    | { type: 'displacement', input: Input, input2: Input, scale: number, xChannel: number, yChannel: number }
+    | { type: 'image', draw: (matrix: Matrix, width: number, height: number) => Pixmap | null }
+    | { type: 'lighting', specular: boolean, input: Input, surfaceScale: number, constant: number, exponent: number, color: number[], light: Light };
+
+export type Light = { type: 'distant', azimuth: number, elevation: number } | { type: 'point', x: number, y: number, z: number }
+    | { type: 'spot', x: number, y: number, z: number, atX: number, atY: number, atZ: number, exponent: number, cone: number | null };
 
 export interface Primitive {
     /** the subregion, in user space */
@@ -126,6 +134,28 @@ function inColorSpace(result: Result, linear: boolean): Result {
 // source over at an integer offset (tiny-skia's draw_pixmap), or with another of its blend modes
 function draw(dst: Pixmap, src: Pixmap, dx: number, dy: number, mode = 'over'): void {
     const s = src.data, d = dst.data;
+    if (mode === 'over') {
+        for (let y = Math.max(0, dy); y < Math.min(dst.height, src.height + dy); y++) {
+            const x0 = Math.max(0, dx), x1 = Math.min(dst.width, src.width + dx);
+            for (let i = (y * dst.width + x0) * 4, j = ((y - dy) * src.width + x0 - dx) * 4, end = (y * dst.width + x1) * 4; i < end; i += 4, j += 4) {
+                const sa = s[j + 3];
+                if (sa === 0) continue;
+                if (sa === 255) {
+                    d[i] = s[j];
+                    d[i + 1] = s[j + 1];
+                    d[i + 2] = s[j + 2];
+                    d[i + 3] = 255;
+                    continue;
+                }
+                const fd = 255 - sa;
+                d[i] = Math.round((s[j] * 255 + d[i] * fd) / 255);
+                d[i + 1] = Math.round((s[j + 1] * 255 + d[i + 1] * fd) / 255);
+                d[i + 2] = Math.round((s[j + 2] * 255 + d[i + 2] * fd) / 255);
+                d[i + 3] = Math.round((sa * 255 + d[i + 3] * fd) / 255);
+            }
+        }
+        return;
+    }
     for (let y = Math.max(0, dy); y < Math.min(dst.height, src.height + dy); y++) {
         for (let x = Math.max(0, dx); x < Math.min(dst.width, src.width + dx); x++) {
             const i = (y * dst.width + x) * 4, j = ((y - dy) * src.width + x - dx) * 4;
@@ -147,9 +177,14 @@ function draw(dst: Pixmap, src: Pixmap, dx: number, dy: number, mode = 'over'): 
 
 // clears everything outside a rectangle
 function clearOutside(p: Pixmap, r: Rect): void {
-    for (let y = 0; y < p.height; y++)
-        for (let x = 0; x < p.width; x++)
-            if (x < r.x || y < r.y || x >= r.x + r.width || y >= r.y + r.height) p.data.fill(0, (y * p.width + x) * 4, (y * p.width + x) * 4 + 4);
+    const x0 = clamp(0, r.x, p.width), x1 = clamp(0, r.x + r.width, p.width), y0 = clamp(0, r.y, p.height), y1 = clamp(0, r.y + r.height, p.height);
+    const row = p.width * 4;
+    p.data.fill(0, 0, y0 * row);
+    p.data.fill(0, y1 * row);
+    for (let y = y0; y < y1; y++) {
+        p.data.fill(0, y * row, (y * p.width + x0) * 4);
+        p.data.fill(0, (y * p.width + x1) * 4, (y + 1) * row);
+    }
 }
 
 // the bounds of a rectangle transformed, as whole pixels like tiny-skia's to_int_rect (its width and height at least 1)
@@ -221,7 +256,7 @@ function filterResult(filter: Filter, ts: Matrix, full: Pixmap): { image: Result
                 }
         }
 
-        let result = apply(kind, primitive.linear, matrix, region, input);
+        let result = apply(kind, primitive.linear, matrix, region, subregion, input);
         if (!sameRect(region, subregion)) {
             const pixmap = clone(result.pixmap);
             // (offsets aren't clipped: their subregion is the one of their input)
@@ -235,7 +270,7 @@ function filterResult(filter: Filter, ts: Matrix, full: Pixmap): { image: Result
     return last ? { image: last.image, region: outputRegion } : null;
 }
 
-function apply(kind: Kind, linear: boolean, ts: Matrix, region: Rect, input: (value: Input) => Result): Result {
+function apply(kind: Kind, linear: boolean, ts: Matrix, region: Rect, subregion: Rect, input: (value: Input) => Result): Result {
     const [scaleX, scaleY] = scaleOf(ts);
     const own = (pixmap: Pixmap, space = linear): Result => ({ pixmap, region: { x: 0, y: 0, width: pixmap.width, height: pixmap.height }, linear: space });
 
@@ -360,6 +395,43 @@ function apply(kind: Kind, linear: boolean, ts: Matrix, region: Rect, input: (va
             const pixmap = clone(inColorSpace(input(kind.input), linear).pixmap);
             if (kind.preserveAlpha) demultiply(pixmap.data);
             convolve(pixmap, kind);
+            return own(pixmap);
+        }
+
+        case 'turbulence': {
+            const pixmap = create(region.width, region.height);
+            if (Math.abs(scaleX) < 1e-6 || Math.abs(scaleY) < 1e-6) return own(pixmap);
+            turbulence(pixmap, region.x - ts[4], region.y - ts[5], scaleX, scaleY, kind);
+            multiply(pixmap.data);
+            return own(pixmap);
+        }
+
+        case 'displacement': {
+            const src = inColorSpace(input(kind.input), linear).pixmap, map = inColorSpace(input(kind.input2), linear).pixmap;
+            const pixmap = create(region.width, region.height);
+            // (like resvg: the scale counts twice, the map isn't unpremultiplied)
+            const sx = kind.scale * scaleX, sy = kind.scale * scaleY, w = src.width, h = src.height;
+            const round = (v: number): number => Math.sign(v) * Math.round(Math.abs(v));
+            for (let y = 0; y < Math.min(h, map.height); y++)
+                for (let x = 0; x < Math.min(w, map.width); x++) {
+                    const m = (y * map.width + x) * 4;
+                    const ox = round(x + (map.data[m + kind.xChannel] / 255 - 0.5) * sx * kind.scale);
+                    const oy = round(y + (map.data[m + kind.yChannel] / 255 - 0.5) * sy * kind.scale);
+                    if (ox < 0 || ox >= w || oy < 0 || oy >= h) continue;
+                    pixmap.data.set(src.data.subarray((oy * w + ox) * 4, (oy * w + ox) * 4 + 4), (y * pixmap.width + x) * 4);
+                }
+            return own(pixmap);
+        }
+
+        case 'image': {
+            // (drawn at the subregion's corner in the filter's scale, like resvg)
+            const pixmap = kind.draw([scaleX, 0, 0, scaleY, subregion.x, subregion.y], region.width, region.height) || create(region.width, region.height);
+            return own(pixmap, false);
+        }
+
+        case 'lighting': {
+            const pixmap = create(region.width, region.height);
+            lighting(kind, transformLight(kind.light, region, ts), input(kind.input).pixmap, pixmap);
             return own(pixmap);
         }
 
@@ -712,4 +784,214 @@ function convolve(p: Pixmap, m: Extract<Kind, { type: 'convolve' }>): void {
             out[o + 3] = u8(bounded * 255 + 0.5);
         }
     data.set(out);
+}
+
+// Perlin turbulence like the SVG specification's reference code (through resvg's port)
+function turbulence(p: Pixmap, offsetX: number, offsetY: number, sx: number, sy: number, t: Extract<Kind, { type: 'turbulence' }>): void {
+    const M = 2147483647, A = 16807, Q = 127773, R = 2836, SIZE = 256, N = 4096;
+    const random = (seed: number): number => {
+        const result = A * (seed % Q) - R * Math.trunc(seed / Q);
+        return result <= 0 ? result + M : result;
+    };
+    // the lattice and the gradients of the 4 channels
+    let seed = t.seed;
+    if (seed <= 0) seed = -seed % (M - 1) + 1;
+    if (seed > M - 1) seed = M - 1;
+    const lattice = new Int32Array(SIZE + SIZE + 2), gradient = Array.from({ length: 4 }, () => new Float64Array((SIZE + SIZE + 2) * 2));
+    for (let k = 0; k < 4; k++)
+        for (let i = 0; i < SIZE; i++) {
+            lattice[i] = i;
+            for (let j = 0; j < 2; j++) {
+                seed = random(seed);
+                gradient[k][i * 2 + j] = ((seed % (SIZE + SIZE)) - SIZE) / SIZE;
+            }
+            const g = gradient[k], len = Math.sqrt(g[i * 2] * g[i * 2] + g[i * 2 + 1] * g[i * 2 + 1]);
+            g[i * 2] /= len;
+            g[i * 2 + 1] /= len;
+        }
+    for (let i = SIZE - 1; i > 0; i--) {
+        const k = lattice[i];
+        seed = random(seed);
+        const j = seed % SIZE;
+        lattice[i] = lattice[j];
+        lattice[j] = k;
+    }
+    for (let i = 0; i < SIZE + 2; i++) {
+        lattice[SIZE + i] = lattice[i];
+        for (const g of gradient) {
+            g[(SIZE + i) * 2] = g[i * 2];
+            g[(SIZE + i) * 2 + 1] = g[i * 2 + 1];
+        }
+    }
+
+    const curve = (v: number): number => v * v * (3 - 2 * v);
+    const lerp = (v: number, a: number, b: number): number => a + v * (b - a);
+    const noise = (channel: number, x: number, y: number, stitch: number[] | null): number => {
+        let v = x + N;
+        let bx0 = Math.trunc(v), bx1 = bx0 + 1;
+        const rx0 = v - Math.trunc(v), rx1 = rx0 - 1;
+        v = y + N;
+        let by0 = Math.trunc(v), by1 = by0 + 1;
+        const ry0 = v - Math.trunc(v), ry1 = ry0 - 1;
+        if (stitch) {
+            if (bx0 >= stitch[2]) bx0 -= stitch[0];
+            if (bx1 >= stitch[2]) bx1 -= stitch[0];
+            if (by0 >= stitch[3]) by0 -= stitch[1];
+            if (by1 >= stitch[3]) by1 -= stitch[1];
+        }
+        bx0 &= 255;
+        bx1 &= 255;
+        by0 &= 255;
+        by1 &= 255;
+        const i = lattice[bx0], j = lattice[bx1];
+        const b00 = lattice[i + by0], b10 = lattice[j + by0], b01 = lattice[i + by1], b11 = lattice[j + by1];
+        const g = gradient[channel], cx = curve(rx0), cy = curve(ry0);
+        const a = lerp(cx, rx0 * g[b00 * 2] + ry0 * g[b00 * 2 + 1], rx1 * g[b10 * 2] + ry0 * g[b10 * 2 + 1]);
+        const b = lerp(cx, rx0 * g[b01 * 2] + ry1 * g[b01 * 2 + 1], rx1 * g[b11 * 2] + ry1 * g[b11 * 2 + 1]);
+        return lerp(cy, a, b);
+    };
+    // (resvg passes the pixel's position and the image's size as the tile)
+    const sum = (channel: number, x: number, y: number, tileX: number, tileY: number, tileWidth: number, tileHeight: number): number => {
+        let fx = t.fx, fy = t.fy, stitch: number[] | null = null;
+        if (t.stitch) {
+            if (Math.abs(fx) > 1e-6) {
+                const lo = Math.floor(tileWidth * fx) / tileWidth, hi = Math.ceil(tileWidth * fx) / tileWidth;
+                fx = fx / lo < hi / fx ? lo : hi;
+            }
+            if (Math.abs(fy) > 1e-6) {
+                const lo = Math.floor(tileHeight * fy) / tileHeight, hi = Math.ceil(tileHeight * fy) / tileHeight;
+                fy = fy / lo < hi / fy ? lo : hi;
+            }
+            const w = Math.trunc(tileWidth * fx + 0.5), h = Math.trunc(tileHeight * fy + 0.5);
+            stitch = [w, h, Math.trunc(tileX * fx + N + w), Math.trunc(tileY * fy + N + h)];
+        }
+        let total = 0, ratio = 1;
+        x *= fx;
+        y *= fy;
+        for (let o = 0; o < t.octaves; o++) {
+            const n = noise(channel, x, y, stitch);
+            total += (t.fractal ? n : Math.abs(n)) / ratio;
+            x *= 2;
+            y *= 2;
+            ratio *= 2;
+            if (stitch) {
+                stitch[0] *= 2;
+                stitch[2] = 2 * stitch[2] - N;
+                stitch[1] *= 2;
+                stitch[3] = 2 * stitch[3] - N;
+            }
+        }
+        return total;
+    };
+    const { width, height, data } = p;
+    for (let y = 0; y < height; y++)
+        for (let x = 0; x < width; x++) {
+            const tx = (x + offsetX) / sx, ty = (y + offsetY) / sy, o = (y * width + x) * 4;
+            for (let c = 0; c < 4; c++) {
+                let n = sum(c, tx, ty, x, y, width, height);
+                n = t.fractal ? (n * 255 + 255) / 2 : n * 255;
+                data[o + c] = u8(clamp(0, Math.fround(n), 255) + 0.5);
+            }
+        }
+}
+
+// a light source in the pixels' coordinates (like resvg: z scaled by the diagonal of the scale)
+function transformLight(light: Light, region: Rect, ts: Matrix): Light {
+    if (light.type === 'distant') return light;
+    const map = (x: number, y: number): [number, number] => [ts[0] * x + ts[2] * y + ts[4] - region.x, ts[1] * x + ts[3] * y + ts[5] - region.y];
+    const sz = Math.sqrt(ts[0] * ts[0] + ts[3] * ts[3]) / Math.SQRT2;
+    const [x, y] = map(light.x, light.y);
+    if (light.type === 'point') return { type: 'point', x, y, z: light.z * sz };
+    const [atX, atY] = map(light.atX, light.atY);
+    return { ...light, x, y, z: light.z * sz, atX, atY, atZ: light.atZ * sz };
+}
+
+// feDiffuseLighting and feSpecularLighting: the input's alpha as a surface, lit (like resvg's lighting.rs)
+function lighting(fe: Extract<Kind, { type: 'lighting' }>, light: Light, src: Pixmap, dst: Pixmap): void {
+    const { width, height } = src;
+    if (width < 3 || height < 3) return;
+    const alpha = (x: number, y: number): number => src.data[(y * width + x) * 4 + 3];
+    const zero = (v: number): boolean => Math.abs(v) < 1e-6;
+    let lx = 1, ly = 1, lz = 1;
+    if (light.type === 'distant') {
+        const azimuth = light.azimuth * Math.PI / 180, elevation = light.elevation * Math.PI / 180;
+        lx = Math.cos(azimuth) * Math.cos(elevation);
+        ly = Math.sin(azimuth) * Math.cos(elevation);
+        lz = Math.sin(elevation);
+    }
+    let sdx = 0, sdy = 0, sdz = 0;
+    if (light.type === 'spot') {
+        sdx = light.atX - light.x;
+        sdy = light.atY - light.y;
+        sdz = light.atZ - light.z;
+        const len = Math.hypot(sdx, sdy, sdz);
+        if (!zero(len)) {
+            sdx /= len;
+            sdy /= len;
+            sdz /= len;
+        }
+    }
+    const factor = (fx: number, fy: number, nx: number, ny: number): number => {
+        // (the normal's x and y, scaled; a flat surface's normal is (0, 0, 1))
+        const flat = zero(nx) && zero(ny);
+        const x = -nx * fe.surfaceScale / 255 * fx, y = -ny * fe.surfaceScale / 255 * fy;
+        const length = Math.hypot(x, y, 1);
+        if (!fe.specular) return fe.constant * (flat ? lz : (x * lx + y * ly + lz) / length);
+        const hx = lx, hy = ly, hz = lz + 1, h = Math.hypot(hx, hy, hz);
+        if (zero(h)) return 0;
+        const nh = flat ? hz / h : (x * hx + y * hy + hz) / length / h;
+        return fe.constant * (Math.abs(fe.exponent - 1) < 1e-6 ? nh : nh ** fe.exponent);
+    };
+    const compute = (c: number, f: number): number => u8(clamp(0, c * f, 255) + 0.5);
+    const calc = (x: number, y: number, fx: number, fy: number, nx: number, ny: number): void => {
+        if (light.type !== 'distant') {
+            const nz = alpha(x, y) / 255 * fe.surfaceScale;
+            lx = light.x - x;
+            ly = light.y - y;
+            lz = light.z - nz;
+            const len = Math.hypot(lx, ly, lz);
+            if (!zero(len)) {
+                lx /= len;
+                ly /= len;
+                lz /= len;
+            }
+        }
+        let color = fe.color;
+        if (light.type === 'spot') {
+            const minus = -(lx * sdx + ly * sdy + lz * sdz);
+            if (minus <= 0 || (light.cone !== null && minus < Math.cos(light.cone * Math.PI / 180))) color = [0, 0, 0];
+            else {
+                const f = minus ** light.exponent;
+                color = color.map(c => compute(c, f));
+            }
+        }
+        const f = factor(fx, fy, nx, ny), o = (y * width + x) * 4;
+        const r = compute(color[0], f), g = compute(color[1], f), b = compute(color[2], f);
+        dst.data[o] = r;
+        dst.data[o + 1] = g;
+        dst.data[o + 2] = b;
+        dst.data[o + 3] = fe.specular ? Math.max(r, g, b) : 255;
+    };
+    const a = alpha, w = width - 1, h = height - 1;
+    // (the Sobel normals of the corners, edges and interior, as in the specification)
+    calc(0, 0, 2 / 3, 2 / 3, -2 * a(0, 0) + 2 * a(1, 0) - a(0, 1) + a(1, 1), -2 * a(0, 0) - a(1, 0) + 2 * a(0, 1) + a(1, 1));
+    calc(w, 0, 2 / 3, 2 / 3, -2 * a(w - 1, 0) + 2 * a(w, 0) - a(w - 1, 1) + a(w, 1), -a(w - 1, 0) - 2 * a(w, 0) + a(w - 1, 1) + 2 * a(w, 1));
+    calc(0, h, 2 / 3, 2 / 3, -a(0, h - 1) + a(1, h - 1) - 2 * a(0, h) + 2 * a(1, h), -2 * a(0, h - 1) - a(1, h - 1) + 2 * a(0, h) + a(1, h));
+    calc(w, h, 2 / 3, 2 / 3, -a(w - 1, h - 1) + a(w, h - 1) - 2 * a(w - 1, h) + 2 * a(w, h), -a(w - 1, h - 1) - 2 * a(w, h - 1) + a(w - 1, h) + 2 * a(w, h));
+    for (let x = 1; x < w; x++) {
+        calc(x, 0, 1 / 3, 1 / 2, -2 * a(x - 1, 0) + 2 * a(x + 1, 0) - a(x - 1, 1) + a(x + 1, 1),
+            -a(x - 1, 0) - 2 * a(x, 0) - a(x + 1, 0) + a(x - 1, 1) + 2 * a(x, 1) + a(x + 1, 1));
+        calc(x, h, 1 / 3, 1 / 2, -a(x - 1, h - 1) + a(x + 1, h - 1) - 2 * a(x - 1, h) + 2 * a(x + 1, h),
+            -a(x - 1, h - 1) - 2 * a(x, h - 1) - a(x + 1, h - 1) + a(x - 1, h) + 2 * a(x, h) + a(x + 1, h));
+    }
+    for (let y = 1; y < h; y++) {
+        calc(0, y, 1 / 2, 1 / 3, -a(0, y - 1) + a(1, y - 1) - 2 * a(0, y) + 2 * a(1, y) - a(0, y + 1) + a(1, y + 1),
+            -2 * a(0, y - 1) - a(1, y - 1) + 2 * a(0, y + 1) + a(1, y + 1));
+        calc(w, y, 1 / 2, 1 / 3, -a(w - 1, y - 1) + a(w, y - 1) - 2 * a(w - 1, y) + 2 * a(w, y) - a(w - 1, y + 1) + a(w, y + 1),
+            -a(w - 1, y - 1) - 2 * a(w, y - 1) + a(w - 1, y + 1) + 2 * a(w, y + 1));
+    }
+    for (let y = 1; y < h; y++)
+        for (let x = 1; x < w; x++)
+            calc(x, y, 1 / 4, 1 / 4, -a(x - 1, y - 1) + a(x + 1, y - 1) - 2 * a(x - 1, y) + 2 * a(x + 1, y) - a(x - 1, y + 1) + a(x + 1, y + 1),
+                -a(x - 1, y - 1) - 2 * a(x, y - 1) - a(x + 1, y - 1) + a(x - 1, y + 1) + 2 * a(x, y + 1) + a(x + 1, y + 1));
 }
