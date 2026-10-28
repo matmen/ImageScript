@@ -14,6 +14,8 @@ export type { FrameDisposalModeName, FrameDisposalModeId, FrameOptions } from '.
 export { GIF } from './gif.ts';
 export { Animation } from './animation.ts';
 export type { AnimationOptions, AnimationDecodeOptions, AnimationEncodeOptions, WebPAnimationEncodeOptions, GIFEncodeOptions, APNGEncodeOptions } from './animation.ts';
+export { AnimationEncoder } from './animation-encoder.ts';
+export type { AnimationEncoderOptions, WebPAnimationEncoderOptions, GIFAnimationEncoderOptions, APNGAnimationEncoderOptions } from './animation-encoder.ts';
 export { TextLayout } from './text-layout.ts';
 export type { TextLayoutOptions, WrapStyle, HorizontalAlign, VerticalAlign } from './text-layout.ts';
 export { ImageType } from './image-type.ts';

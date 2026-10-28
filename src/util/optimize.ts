@@ -71,31 +71,79 @@ export interface OptimizeOptions {
 const ALPHA_COST = 4 / 3;
 
 /**
- * Composites the frames and stores each as the area that changed
- * @param width The canvas width
- * @param height The canvas height
+ * Composites frames one at a time and stores each as the area that changed. Each frame can still change (its duration,
+ * for GIFs its area and disposal) until the next one is pushed: the frames before it are final ({@link Optimizer.take})
  */
-export function optimize(frames: InputFrame[], width: number, height: number, { replace, even, alpha, palette, cover, tolerance }: OptimizeOptions): OptimizedFrame[] {
-    const size = width * height * 4;
+export class Optimizer {
     // the input animation's canvas, and what the optimized animation shows after its last frame (and its disposal)
-    const canvas = new Uint8Array(size), canvas32 = new Int32Array(canvas.buffer);
-    const shown = new Uint8Array(size), shown32 = new Int32Array(shown.buffer);
-    const output: OptimizedFrame[] = [];
-
-    const state: State = { canvas32, shown32, width, replace, tolerance };
+    readonly canvas: Uint8Array;
+    readonly shown: Uint8Array;
+    private readonly state: State;
+    private readonly final: OptimizedFrame[] = [];
+    private last: OptimizedFrame | null = null;
+    private count = 0;
+    // the area of the canvas that is all transparent (frames are copied onto it): decoded animations clear each full
+    // frame before the next
+    private cleared: Rect | null;
 
     // for a shared pixel format: whether the animation is opaque when all frames are stored dense, and the changes
     // from pixel to pixel all dense and as chosen
-    let opaque = true, denseTotal = 0, chosenTotal = 0;
+    opaque = true;
+    denseTotal = 0;
+    chosenTotal = 0;
+
+    constructor(readonly width: number, readonly height: number, readonly options: OptimizeOptions) {
+        const size = width * height * 4;
+        this.canvas = new Uint8Array(size);
+        this.shown = new Uint8Array(size);
+        this.state = { canvas32: new Int32Array(this.canvas.buffer), shown32: new Int32Array(this.shown.buffer), width, replace: options.replace, tolerance: options.tolerance };
+        this.cleared = { x: 0, y: 0, width, height };
+    }
+
+    /** composites a frame and stores what the canvas then shows */
+    push(f: InputFrame): void {
+        const { canvas, width, height } = this;
+        const saved = f.dispose === 2 ? canvas.slice() : null;
+        const area = clip(f, width, height);
+        if (this.cleared && contains(this.cleared, area)) copy(canvas, width, f, area);
+        else draw(canvas, width, height, f);
+        this.cleared = null;
+        this.add(f.duration);
+        if (f.dispose === 1) {
+            clear(canvas, width, area);
+            this.cleared = area;
+        } else if (saved) canvas.set(saved);
+    }
+
+    /** the frames that can't change anymore (all but the last), each once */
+    take(): OptimizedFrame[] {
+        return this.final.splice(0);
+    }
+
+    /** the last frame (once all are pushed) */
+    end(): OptimizedFrame[] {
+        const rest = this.take();
+        if (this.last) rest.push(this.last);
+        this.last = null;
+        return rest;
+    }
+
+    private output(frame: OptimizedFrame): void {
+        if (this.last) this.final.push(this.last);
+        this.last = frame;
+        this.count++;
+    }
 
     // stores what the canvas shows now as the next frame
-    const add = (duration: number): void => {
+    private add(duration: number): void {
+        const { width, height, canvas, shown, state } = this;
+        const { replace, even, alpha, palette, tolerance } = this.options;
         let changed = bounds(state, { x: 0, y: 0, width, height });
         if (!changed) {
-            if (output.length) output[output.length - 1].duration += duration;
+            if (this.last) this.last.duration += duration;
             else {
-                output.push(empty(duration));
-                opaque = false;
+                this.output(empty(duration));
+                this.opaque = false;
             }
             return;
         }
@@ -103,16 +151,16 @@ export function optimize(frames: InputFrame[], width: number, height: number, { 
         let area = tolerance === undefined ? sparse(state, changed) : sparseBlocks(state, changed);
         let blend = true;
         if (area.unblendable && replace) blend = false;
-        else if (area.unblendable) {
+        else if (area.unblendable && this.last) {
             // GIF: the frame before clears an area covering these pixels (it grows by transparent, unchanged pixels
             // if needed), then the frame is blended onto the cleared area
-            const last = output[output.length - 1];
+            const last = this.last;
             grow(last, union(last, area.unblendable));
             last.dispose = true;
             clear(shown, width, last);
             changed = bounds(state, { x: 0, y: 0, width, height });
             // the pixels only became transparent: clearing them is all the frame shows, it only takes its time
-            if (!changed) return void output.push(empty(duration));
+            if (!changed) return void this.output(empty(duration));
             if (even) changed = evenArea(changed);
             area = sparse(state, changed);
         }
@@ -124,14 +172,14 @@ export function optimize(frames: InputFrame[], width: number, height: number, { 
         // replace the area with it. Lossy frames are sparse whenever a block is unchanged (like libwebp's)
         const { x, y, width: w, height: h } = changed;
         const pixels = area.pixels;
-        if (!output.length && (w !== width || h !== height)) opaque = false;
-        if (!area.denseOpaque) opaque = false;
+        if (!this.count && (w !== width || h !== height)) this.opaque = false;
+        if (!area.denseOpaque) this.opaque = false;
         const sparseCost = alpha === 'frame' && area.denseOpaque ? area.sparseChanges * ALPHA_COST : area.sparseChanges;
         const dense = !blend || (tolerance !== undefined ? !area.unchangedBlocks : area.denseChanges < sparseCost
             || (palette !== undefined && colors(new Int32Array(pixels.buffer), w, { x: 0, y: 0, width: w, height: h }, palette + 1) > palette
-                && colors(canvas32, width, changed, palette + 1) <= palette));
-        denseTotal += area.denseChanges;
-        chosenTotal += dense ? area.denseChanges : area.sparseChanges;
+                && colors(state.canvas32, width, changed, palette + 1) <= palette));
+        this.denseTotal += area.denseChanges;
+        this.chosenTotal += dense ? area.denseChanges : area.sparseChanges;
         if (dense) {
             for (let row = 0; row < h; row++) pixels.set(canvas.subarray(((y + row) * width + x) * 4, ((y + row) * width + x + w) * 4), row * w * 4);
             if (replace) blend = false;
@@ -140,52 +188,83 @@ export function optimize(frames: InputFrame[], width: number, height: number, { 
         if (!dense && tolerance !== undefined) {
             const pixels32 = new Int32Array(pixels.buffer);
             for (let row = 0, k = 0; row < h; row++)
-                for (let p = (y + row) * width + x, end = p + w; p < end; p++, k++) if (pixels32[k] & ALPHA) shown32[p] = pixels32[k];
+                for (let p = (y + row) * width + x, end = p + w; p < end; p++, k++) if (pixels32[k] & ALPHA) state.shown32[p] = pixels32[k];
         } else
             for (let row = 0; row < h; row++) {
                 const start = ((y + row) * width + x) * 4;
                 shown.set(canvas.subarray(start, start + w * 4), start);
             }
-        output.push({ x, y, width: w, height: h, duration, dispose: false, blend, pixels });
-    };
-
-    // the area of the canvas that is all transparent (frames are copied onto it): decoded animations clear each full
-    // frame before the next
-    let cleared: Rect | null = { x: 0, y: 0, width, height };
-    for (const f of frames) {
-        const saved = f.dispose === 2 ? canvas.slice() : null;
-        const area = clip(f, width, height);
-        if (cleared && contains(cleared, area)) copy(canvas, width, f, area);
-        else draw(canvas, width, height, f);
-        cleared = null;
-        add(f.duration);
-        if (f.dispose === 1) {
-            clear(canvas, width, area);
-            cleared = area;
-        } else if (saved) canvas.set(saved);
+        this.output({ x, y, width: w, height: h, duration, dispose: false, blend, pixels });
     }
+}
+
+/** Composites frames one at a time (like APNG decoders): the canvas each shows */
+export class Compositor {
+    readonly canvas: Uint8Array;
+
+    constructor(readonly width: number, readonly height: number) {
+        this.canvas = new Uint8Array(width * height * 4);
+    }
+
+    /** the canvas the frame shows (a copy), then its disposal */
+    push(f: InputFrame): Uint8Array {
+        const { canvas, width, height } = this;
+        const saved = f.dispose === 2 ? canvas.slice() : null;
+        draw(canvas, width, height, f);
+        const shown = canvas.slice();
+        if (f.dispose === 1) clear(canvas, width, clip(f, width, height));
+        else if (saved) canvas.set(saved);
+        return shown;
+    }
+}
+
+/**
+ * Composites the frames and stores each as the area that changed
+ * @param width The canvas width
+ * @param height The canvas height
+ */
+export function optimize(frames: InputFrame[], width: number, height: number, options: OptimizeOptions): OptimizedFrame[] {
+    const optimizer = new Optimizer(width, height, options);
+    const output: OptimizedFrame[] = [];
+    for (const f of frames) {
+        optimizer.push(f);
+        output.push(...optimizer.take());
+    }
+    output.push(...optimizer.end());
 
     // an opaque animation with sparse frames needs transparency in its pixel format, for every frame: when that costs
     // more than storing them dense, the unchanged pixels are filled in again
-    if (typeof alpha === 'function' && opaque && output.some(f => f.blend) && denseTotal < chosenTotal * alpha(output)) {
-        shown.fill(0);
-        for (const f of output) {
-            const pixels32 = new Int32Array(f.pixels.buffer, f.pixels.byteOffset, f.width * f.height);
-            for (let row = 0, k = 0; row < f.height; row++, k += f.width) {
-                const start = (f.y + row) * width + f.x;
-                if (!f.blend) shown32.set(pixels32.subarray(k, k + f.width), start);
-                else
-                    for (let i = k, p = start, end = k + f.width; i < end; i++, p++) {
-                        if ((pixels32[i] & ALPHA) === 0) pixels32[i] = shown32[p];
-                        else shown32[p] = pixels32[i];
-                    }
-            }
-            f.blend = false;
-        }
+    const { alpha, cover } = options;
+    if (typeof alpha === 'function' && optimizer.opaque && output.some(f => f.blend) && optimizer.denseTotal < optimizer.chosenTotal * alpha(output)) {
+        const shown32 = new Int32Array(width * height);
+        for (const f of output) fillUnchanged(f, shown32, width);
     }
 
-    if (cover && output.length) grow(output[0], { x: 0, y: 0, width, height });
+    if (cover && output.length) coverCanvas(output[0], width, height);
     return output;
+}
+
+/**
+ * For opaque animations stored without transparency: fills a blended frame's unchanged (transparent) pixels in with
+ * what's shown (the frames before it filled in like this, in order), it then replaces its area
+ */
+export function fillUnchanged(f: { x: number, y: number, width: number, height: number, pixels: Uint8Array, blend?: boolean }, shown32: Int32Array, width: number): void {
+    const pixels32 = new Int32Array(f.pixels.buffer, f.pixels.byteOffset, f.width * f.height);
+    for (let row = 0, k = 0; row < f.height; row++, k += f.width) {
+        const start = (f.y + row) * width + f.x;
+        if (!f.blend) shown32.set(pixels32.subarray(k, k + f.width), start);
+        else
+            for (let i = k, p = start, end = k + f.width; i < end; i++, p++) {
+                if ((pixels32[i] & ALPHA) === 0) pixels32[i] = shown32[p];
+                else shown32[p] = pixels32[i];
+            }
+    }
+    f.blend = false;
+}
+
+/** grows the first frame to cover the canvas (GIF), with transparent pixels */
+export function coverCanvas(frame: OptimizedFrame, width: number, height: number): void {
+    grow(frame, { x: 0, y: 0, width, height });
 }
 
 // how many colors an area of an image has, counted up to a limit

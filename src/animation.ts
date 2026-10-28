@@ -10,6 +10,7 @@ import { optimize, OptimizeOptions, OptimizedFrame } from './util/optimize.ts';
 import { Metadata, resolveMetadata, pngText, exifData, gifComments } from './metadata.ts';
 import { isOptions, finite } from './util/options.ts';
 import { MAX_PIXELS, decoding } from './util/limits.ts';
+import { AnimationEncoder, WebPAnimationEncoderOptions, GIFAnimationEncoderOptions, APNGAnimationEncoderOptions } from './animation-encoder.ts';
 
 // loop counts: ImageScript (like GIF) counts repetitions (-1 forever, 0 play once), APNG and WebP count plays (0 forever)
 const toPlays = (loopCount: number): number => loopCount < 0 ? 0 : loopCount + 1;
@@ -355,6 +356,41 @@ export class Animation extends Array<Frame> {
             blend: 1,
             pixels: new Uint8Array(frame.bitmap.buffer, frame.bitmap.byteOffset, frame.bitmap.byteLength)
         }));
+    }
+
+    /**
+     * An encoder that makes an animated WebP a frame at a time, like {@link Animation.encodeWebP} (the same file),
+     * without keeping the frames in memory: `await encoder.add(frame)` for each frame (a {@link Frame}, or an image
+     * with `{ duration }`), then `await encoder.finish()` for the file
+     * @param width The canvas width
+     * @param height The canvas height
+     * @param options See {@link WebPAnimationEncoderOptions}
+     */
+    static webpEncoder(width: number, height: number, options: WebPAnimationEncoderOptions = {}): AnimationEncoder {
+        return AnimationEncoder.__webp__(width, height, options);
+    }
+
+    /**
+     * An encoder that makes an animated GIF a frame at a time, like {@link Animation.encodeGIF} (the same file),
+     * without keeping the frames in memory: `await encoder.add(frame)` for each frame, then `await encoder.finish()`
+     * @param width The canvas width
+     * @param height The canvas height
+     * @param options See {@link GIFAnimationEncoderOptions}
+     */
+    static gifEncoder(width: number, height: number, options: GIFAnimationEncoderOptions = {}): AnimationEncoder {
+        return AnimationEncoder.__gif__(width, height, options);
+    }
+
+    /**
+     * An encoder that makes an APNG a frame at a time, like {@link Animation.encodeAPNG} (the same file), keeping the
+     * frames only compressed (the pixel format depends on all of them): `await encoder.add(frame)` for each frame,
+     * then `await encoder.finish()`
+     * @param width The canvas width
+     * @param height The canvas height
+     * @param options See {@link APNGAnimationEncoderOptions}
+     */
+    static apngEncoder(width: number, height: number, options: APNGAnimationEncoderOptions = {}): AnimationEncoder {
+        return AnimationEncoder.__apng__(width, height, options);
     }
 
     /**

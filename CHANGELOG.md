@@ -6,6 +6,14 @@
 
 - `Image#region(x, y, width, height)` copies a region into a new image and leaves the image as it is (like `crop`
   on a clone, without copying the whole image). It's clipped like `crop`; on a frame it gives a plain image.
+- `Animation.webpEncoder()`, `Animation.gifEncoder()` and `Animation.apngEncoder()` (width, height, options) encode
+  animations a frame at a time: `await encoder.add(frame)` for each frame (a `Frame`, or any image, with options like
+  `{ duration: 40 }` that override a frame's), then `await encoder.finish()` for the file, the same one `encodeWebP()`,
+  `encodeGIF()` and `encodeAPNG()` make of the frames. Only the canvas and the frame before stay in memory (APNGs keep
+  their frames compressed until the end: their pixel format depends on all of them): 120 frames of 1000x1000 take
+  159 MB instead of 1066 MB as an `Animation`. Unoptimized WebPs with frames WebP can't store as they are (disposed to
+  the previous frame, or disposed at odd offsets) store the canvas from the first of them on (`encodeWebP()` from the
+  start), which looks the same.
 - `Image.renderText()` takes OpenType features: `features: { tnum: true, smcp: true, liga: false, salt: 2 }` turns
   features on for the whole text (tabular numbers, small caps, stylistic sets, ...), off (also the default ones like
   ligatures or kerning) or picks an alternate by its number, like HarfBuzz's user features (shaped exactly like

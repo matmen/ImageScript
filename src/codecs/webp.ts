@@ -401,12 +401,39 @@ export function encodeAnimation(frames: WebPEncodeFrame[], width: number, height
     if (!frames.length) throw new Error('WebP: an animation needs at least one frame');
     if (width > 1 << 24 || height > 1 << 24) throw new RangeError('WebP: canvas too large');
 
-    // transparency also comes from the canvas: where the first frame doesn't cover it, and where frames are disposed
-    // (decoders like libwebp take the canvas as opaque without the flag)
-    const first = frames[0];
-    const alpha = first.x > 0 || first.y > 0 || first.width < width || first.height < height
-        || frames.some(f => f.dispose || hasAlpha(f.pixels));
+    let alpha = false;
+    for (const [i, f] of frames.entries()) alpha ||= needsAlpha(f, i === 0, width, height);
+    return animationFile(frames.map(f => frameChunk(f, quality, method)), width, height, plays, alpha, exif);
+}
 
+/**
+ * Whether a frame makes the animation need the alpha flag: transparency also comes from the canvas, where the first
+ * frame doesn't cover it, and where frames are disposed (decoders like libwebp take the canvas as opaque without it)
+ */
+export function needsAlpha(f: WebPEncodeFrame, first: boolean, width: number, height: number): boolean {
+    return (first && (f.x > 0 || f.y > 0 || f.width < width || f.height < height)) || f.dispose || hasAlpha(f.pixels);
+}
+
+/** A frame of an animation as its ANMF chunk */
+export function frameChunk(f: WebPEncodeFrame, quality?: number, method = 4): Uint8Array {
+    if (f.x & 1 || f.y & 1) throw new RangeError('WebP: frame offsets have to be even');
+    const bitstream = quality === undefined ? riffChunk('VP8L', vp8l.encode(toARGB(f.pixels, f.width * f.height), f.width, f.height))
+        : concat(lossyChunks(f.pixels, f.width, f.height, quality, method).chunks);
+    const header = new Uint8Array(16);
+    set24(header, 0, f.x >> 1);
+    set24(header, 3, f.y >> 1);
+    set24(header, 6, f.width - 1);
+    set24(header, 9, f.height - 1);
+    set24(header, 12, Math.min(0xffffff, Math.max(0, Math.round(f.duration))));
+    header[15] = (f.blend === false ? 2 : 0) | (f.dispose ? 1 : 0); // no blending, disposal
+    const body = new Uint8Array(16 + bitstream.length);
+    body.set(header);
+    body.set(bitstream, 16);
+    return riffChunk('ANMF', body);
+}
+
+/** An animation's file from its frames' ANMF chunks */
+export function animationFile(frames: Uint8Array[], width: number, height: number, plays: number, alpha: boolean, exif?: Uint8Array): Uint8Array {
     const vp8x = new Uint8Array(10);
     vp8x[0] = 2 | (alpha ? 16 : 0) | (exif ? 8 : 0); // animation, alpha, exif
     set24(vp8x, 4, width - 1);
@@ -416,24 +443,7 @@ export function encodeAnimation(frames: WebPEncodeFrame[], width: number, height
     anim[4] = plays & 255;
     anim[5] = plays >> 8 & 255;
 
-    const chunks = [riffChunk('VP8X', vp8x), riffChunk('ANIM', anim)];
-    for (const f of frames) {
-        if (f.x & 1 || f.y & 1) throw new RangeError('WebP: frame offsets have to be even');
-        const bitstream = quality === undefined ? riffChunk('VP8L', vp8l.encode(toARGB(f.pixels, f.width * f.height), f.width, f.height))
-            : concat(lossyChunks(f.pixels, f.width, f.height, quality, method).chunks);
-        const header = new Uint8Array(16);
-        set24(header, 0, f.x >> 1);
-        set24(header, 3, f.y >> 1);
-        set24(header, 6, f.width - 1);
-        set24(header, 9, f.height - 1);
-        set24(header, 12, Math.min(0xffffff, Math.max(0, Math.round(f.duration))));
-        header[15] = (f.blend === false ? 2 : 0) | (f.dispose ? 1 : 0); // no blending, disposal
-        const body = new Uint8Array(16 + bitstream.length);
-        body.set(header);
-        body.set(bitstream, 16);
-        chunks.push(riffChunk('ANMF', body));
-    }
-
+    const chunks = [riffChunk('VP8X', vp8x), riffChunk('ANIM', anim), ...frames];
     if (exif) chunks.push(riffChunk('EXIF', exif));
     return riff(chunks);
 }

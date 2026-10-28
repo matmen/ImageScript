@@ -63,7 +63,7 @@ export class Frame extends Image {
      * @internal
      * @ignore
      */
-    private static __convert_disposal_mode__(mode: FrameDisposalModeName | FrameDisposalModeId): FrameDisposalModeId {
+    static __convert_disposal_mode__(mode: FrameDisposalModeName | FrameDisposalModeId): FrameDisposalModeId {
         const id = typeof mode === 'string' ? DISPOSAL_MODES.indexOf(mode) : mode;
         if (!(id >= 0 && id <= 3))
             throw new RangeError('Invalid disposal mode');

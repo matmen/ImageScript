@@ -70,6 +70,24 @@ interface GraphicControl {
  * @param comments written as comment extensions
  */
 export function encode({ width, height, loopCount = -1, frames }: Omit<GIFData, 'loopCount'> & { loopCount?: number }, quality = 95, comments: Uint8Array[] = []): Uint8Array {
+    // frames that restore the background have a transparent index: decoders like Pillow and ffmpeg restore to it
+    // (browsers to transparent), otherwise to the background color. So does the first frame then: Pillow decides by it
+    // whether the animation has transparency at all
+    const restores = frames.some(frame => frame.dispose === 3);
+    const parts = [header(width, height, loopCount, comments)];
+    for (const [i, frame] of frames.entries()) parts.push(encodeFrame(frame, quality, frame.dispose === 3 || (i === 0 && restores)));
+    parts.push(new Uint8Array([0x3b]));
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let offset = 0;
+    for (const p of parts) {
+        out.set(p, offset);
+        offset += p.length;
+    }
+    return out;
+}
+
+/** A GIF's header: the screen descriptor, the loop count, comments */
+export function header(width: number, height: number, loopCount: number, comments: Uint8Array[]): Uint8Array {
     const out = new GIFWriter();
 
     out.bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61); // GIF89a
@@ -89,41 +107,37 @@ export function encode({ width, height, loopCount = -1, frames }: Omit<GIFData, 
         out.bytes(0x21, 0xfe);
         writeSubBlocks(out, comment);
     }
+    return out.finish();
+}
 
-    // frames that restore the background have a transparent index: decoders like Pillow and ffmpeg restore to it
-    // (browsers to transparent), otherwise to the background color. So does the first frame then: Pillow decides by it
-    // whether the animation has transparency at all
-    const restores = frames.some(frame => frame.dispose === 3);
-    for (const [i, frame] of frames.entries()) {
-        const transparent = frame.dispose === 3 || (i === 0 && restores);
-        const { palette, indices, transparentIndex } = quantize(frame.pixels, frame.width, { quality, transparent });
-        const entries = palette.length / 3;
-        const bits = Math.max(1, Math.ceil(Math.log2(entries)));
+/** A frame (its graphic control extension, image descriptor, color table and pixels), with a transparent index if asked */
+export function encodeFrame(frame: GIFFrame, quality: number, transparent: boolean): Uint8Array {
+    const out = new GIFWriter();
+    const { palette, indices, transparentIndex } = quantize(frame.pixels, frame.width, { quality, transparent });
+    const entries = palette.length / 3;
+    const bits = Math.max(1, Math.ceil(Math.log2(entries)));
 
-        // graphic control extension
-        out.bytes(0x21, 0xf9, 0x04);
-        out.bytes(DISPOSAL_TO_GIF[frame.dispose] << 2 | (transparentIndex === -1 ? 0 : 1));
-        out.u16(Math.min(0xffff, Math.max(0, Math.round(frame.delay))));
-        out.bytes(transparentIndex === -1 ? 0 : transparentIndex, 0x00);
+    // graphic control extension
+    out.bytes(0x21, 0xf9, 0x04);
+    out.bytes(DISPOSAL_TO_GIF[frame.dispose] << 2 | (transparentIndex === -1 ? 0 : 1));
+    out.u16(Math.min(0xffff, Math.max(0, Math.round(frame.delay))));
+    out.bytes(transparentIndex === -1 ? 0 : transparentIndex, 0x00);
 
-        // image descriptor with local color table
-        out.bytes(0x2c);
-        out.u16(frame.x);
-        out.u16(frame.y);
-        out.u16(frame.width);
-        out.u16(frame.height);
-        out.bytes(0x80 | bits - 1);
+    // image descriptor with local color table
+    out.bytes(0x2c);
+    out.u16(frame.x);
+    out.u16(frame.y);
+    out.u16(frame.width);
+    out.u16(frame.height);
+    out.bytes(0x80 | bits - 1);
 
-        const table = new Uint8Array(3 << bits);
-        table.set(palette);
-        out.array(table);
+    const table = new Uint8Array(3 << bits);
+    table.set(palette);
+    out.array(table);
 
-        const minCodeSize = Math.max(2, bits);
-        out.bytes(minCodeSize);
-        writeSubBlocks(out, lzwEncode(indices, minCodeSize));
-    }
-
-    out.bytes(0x3b);
+    const minCodeSize = Math.max(2, bits);
+    out.bytes(minCodeSize);
+    writeSubBlocks(out, lzwEncode(indices, minCodeSize));
     return out.finish();
 }
 
