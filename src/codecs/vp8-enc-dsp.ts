@@ -5,6 +5,7 @@
  * License (see THIRD_PARTY_NOTICES.md)
  */
 import { littleEndian } from '../util/alpha.ts';
+import { sharpYUV } from './sharpyuv.ts';
 
 /** the stride of the work buffers */
 export const BPS = 32;
@@ -84,9 +85,10 @@ function weighted(rgba: Uint8Array, o: number, step: number, next: number, total
 /**
  * RGBA as YUV 4:2:0: chroma averaged over 2x2 pixels in a gamma compressed space, weighted by alpha where it's
  * partly transparent; fully transparent 8x8 areas are flattened (and the luma of transparent pixels smoothed) for
- * better compression, like libwebp does unless asked for exact colors
+ * better compression, like libwebp does unless asked for exact colors. Sharp: luma and chroma by libwebp's iterative
+ * sharp conversion instead (for at least 4x4 pixels, like libwebp)
  */
-export function rgbaToYUV(rgba: Uint8Array, width: number, height: number): YUVPicture {
+export function rgbaToYUV(rgba: Uint8Array, width: number, height: number, sharp = false): YUVPicture {
     const uvWidth = (width + 1) >> 1, uvHeight = (height + 1) >> 1;
     const y = new Uint8Array(width * height), u = new Uint8Array(uvWidth * uvHeight), v = new Uint8Array(uvWidth * uvHeight);
     let hasAlpha = false;
@@ -96,6 +98,12 @@ export function rgbaToYUV(rgba: Uint8Array, width: number, height: number): YUVP
 
     // (functions per row: optimized after a few rows rather than running a whole image's loop unoptimized)
     if (a) for (let j = 0; j < height; j++) alphaRow(rgba, j * stride, a, j * width, width);
+    if (sharp && width >= 4 && height >= 4) {
+        sharpYUV(rgba, width, height, y, u, v);
+        const picture = { width, height, y, u, v, a, uvStride: uvWidth };
+        if (a) cleanupTransparentArea(picture);
+        return picture;
+    }
     // (opaque rows as 32-bit words: one load per pixel)
     const words = littleEndian && rgba.byteOffset % 4 === 0 ? new Uint32Array(rgba.buffer, rgba.byteOffset, width * height) : null;
     for (let j = 0; j < uvHeight; j++) {

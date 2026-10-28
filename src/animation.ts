@@ -66,6 +66,8 @@ export interface WebPAnimationEncodeOptions extends AnimationEncodeOptions {
     quality?: number;
     /** How much effort lossy frames take (0-6), see {@link WebPEncodeOptions.effort}. Default: `2` */
     effort?: number;
+    /** Lossy frames: libwebp's sharp YUV conversion, see {@link WebPEncodeOptions.sharpYuv}. Default: `false` */
+    sharpYuv?: boolean;
 }
 
 /** Options of {@link Animation.encodeGIF} */
@@ -289,7 +291,7 @@ export class Animation extends Array<Frame> {
      * shows the same animation, but doesn't necessarily decode to the same frames
      * @param options See {@link WebPAnimationEncodeOptions}
      */
-    async encodeWebP({ metadata = {}, optimize = true, quality, effort = 2 }: WebPAnimationEncodeOptions = {}): Promise<Uint8Array> {
+    async encodeWebP({ metadata = {}, optimize = true, quality, effort = 2, sharpYuv = false }: WebPAnimationEncodeOptions = {}): Promise<Uint8Array> {
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
         if (quality !== undefined) {
@@ -300,7 +302,7 @@ export class Animation extends Array<Frame> {
 
         const tolerance = quality === undefined ? undefined : webp.lossyTolerance(quality);
         const frames = optimize ? this.__optimized__({ replace: true, even: true, alpha: 'frame', tolerance }) : this.__webpFrames__();
-        return webp.encodeAnimation(frames, this.width, this.height, toPlays(this.loopCount), exifData(resolveMetadata(metadata)), quality, effort);
+        return webp.encodeAnimation(frames, this.width, this.height, toPlays(this.loopCount), exifData(resolveMetadata(metadata)), quality, effort, sharpYuv);
     }
 
     /**

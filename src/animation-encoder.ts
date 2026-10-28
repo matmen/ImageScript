@@ -30,6 +30,8 @@ export interface WebPAnimationEncoderOptions extends AnimationEncoderOptions {
     quality?: number;
     /** How much effort lossy frames take (0-6), see {@link WebPEncodeOptions.effort}. Default: `2` */
     effort?: number;
+    /** Lossy frames: libwebp's sharp YUV conversion, see {@link WebPEncodeOptions.sharpYuv}. Default: `false` */
+    sharpYuv?: boolean;
 }
 
 /** Options of {@link Animation.gifEncoder} */
@@ -118,7 +120,7 @@ export class AnimationEncoder {
     }
 
     /** @internal */
-    static __webp__(width: number, height: number, { loopCount = -1, metadata = {}, optimize = true, quality, effort = 2 }: WebPAnimationEncoderOptions): AnimationEncoder {
+    static __webp__(width: number, height: number, { loopCount = -1, metadata = {}, optimize = true, quality, effort = 2, sharpYuv = false }: WebPAnimationEncoderOptions): AnimationEncoder {
         canvas(width, height, loopCount);
         if (width > 1 << 24 || height > 1 << 24) throw new RangeError('WebP: canvas too large');
         if (quality !== undefined) {
@@ -134,7 +136,7 @@ export class AnimationEncoder {
         let full = false;
         const add = (f: webp.WebPEncodeFrame): void => {
             alpha ||= webp.needsAlpha(f, !chunks.length, width, height);
-            chunks.push(webp.frameChunk(f, quality, effort));
+            chunks.push(webp.frameChunk(f, quality, effort, sharpYuv));
         };
         return new AnimationEncoder(width, height, {
             optimize: { replace: true, even: true, alpha: 'frame', tolerance: quality === undefined ? undefined : webp.lossyTolerance(quality) },

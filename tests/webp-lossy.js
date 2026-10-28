@@ -20,8 +20,8 @@ const chunks = data => {
     return out;
 };
 
-// the VP8 chunks cwebp writes with its default settings, or another method (the effort, after the quality;
-// scripts/webp-lossy-references.py): the lossy encoder writes the same
+// the VP8 chunks cwebp writes with its default settings, or another method (the effort, after the quality), or with
+// -sharp_yuv (scripts/webp-lossy-references.py): the lossy encoder writes the same
 const references = {
     'external.png 10': 'f9fd519b84f414de2399f7c3dc1c6bbb7bafd2838a35e629a8958288e868fc88',
     'external.png 75': '5ae6287861d2ce309cf9b2e207ceaed2ee90a0fd9a65c82d8a931343b753620d',
@@ -56,13 +56,19 @@ const references = {
     'font-4.png 75 3': 'f110502a0358402527354dc866891c389cd421a5cc1bd4dd31f16b1c91f72a0a',
     'font-4.png 75 5': 'f110502a0358402527354dc866891c389cd421a5cc1bd4dd31f16b1c91f72a0a',
     'font-4.png 75 6': 'f110502a0358402527354dc866891c389cd421a5cc1bd4dd31f16b1c91f72a0a',
+    'external.png 75 4 sharp': '0c9f537ad2177daa75e40cc278614bbcecdcd8ed6dea6afde136092e3d114169',
+    'external.png 75 2 sharp': 'b246bf92b292473b50bc6d30032ddac0fb182072328d37f7e2e1c5e372dfb821',
+    'potato.png 75 4 sharp': '3d7f5b78a1cada1a81928cc8481916cd91406bcce037fc7d1328e8ffa4bdae8f',
+    'potato.png 75 2 sharp': '4093a615d675cbdabc82b8fd2778c585779a8a9dd0e29bb34e31020890509e66',
+    'font-4.png 75 4 sharp': 'f110502a0358402527354dc866891c389cd421a5cc1bd4dd31f16b1c91f72a0a',
+    'font-4.png 75 2 sharp': 'b0634fd71fe2a1e9358954363a9c923374314823bf4c46d4ec07d8b02f7d2136',
 };
 
 (async () => {
     for (const [key, reference] of Object.entries(references)) {
-        const [name, quality, effort = '4'] = key.split(' ');
+        const [name, quality, effort = '4', sharp] = key.split(' ');
         const image = await Image.decode(await fs.readFile(`./tests/targets/${name}`));
-        const webp = await image.encodeWebP({quality: Number(quality), effort: Number(effort)});
+        const webp = await image.encodeWebP({quality: Number(quality), effort: Number(effort), sharpYuv: sharp === 'sharp'});
         const c = chunks(webp);
         if (!c['VP8 '] || sha256(c['VP8 ']) !== reference) panic(`${key}: the VP8 chunk differs from cwebp's`);
 

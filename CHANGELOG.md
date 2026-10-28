@@ -14,6 +14,10 @@
   159 MB instead of 1066 MB as an `Animation`. Unoptimized WebPs with frames WebP can't store as they are (disposed to
   the previous frame, or disposed at odd offsets) store the canvas from the first of them on (`encodeWebP()` from the
   start), which looks the same.
+- `encodeWebP({ quality, sharpYuv: true })` (images, animations and `Animation.webpEncoder`) converts to YUV like
+  libwebp's sharp conversion (`cwebp -sharp_yuv`, ported: the same files), which keeps colored edges sharp. It takes
+  about twice the time at the default effort; photos get about as large (+0.3% on a 1920x1080 photo), images with
+  many hard color edges a lot larger.
 - `Image.renderText()` takes OpenType features: `features: { tnum: true, smcp: true, liga: false, salt: 2 }` turns
   features on for the whole text (tabular numbers, small caps, stylistic sets, ...), off (also the default ones like
   ligatures or kerning) or picks an alternate by its number, like HarfBuzz's user features (shaped exactly like

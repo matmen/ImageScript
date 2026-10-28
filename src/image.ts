@@ -116,6 +116,13 @@ export interface WebPEncodeOptions {
      * quantized values. Default: `2`: about a quarter of the time of 4 (cwebp's default) for files about 5% larger
      */
     effort?: number;
+    /**
+     * For lossy compression: convert to YUV like libwebp's sharp conversion (cwebp's `-sharp_yuv`, the same file),
+     * which picks the color planes so that colored edges (red text on blue, thin colored lines) stay sharp instead of
+     * bleeding. It takes about twice the time at the default effort; photos get about as large, images with many
+     * hard color edges a lot larger (1200x800 red and blue squares: 2.7 times). Default: `false`
+     */
+    sharpYuv?: boolean;
     /** Metadata to include, see {@link Metadata} */
     metadata?: Metadata;
 }
@@ -2101,13 +2108,13 @@ export class Image {
      * quality
      * @param options See {@link WebPEncodeOptions}
      */
-    async encodeWebP({ quality, effort = 2, metadata = {} }: WebPEncodeOptions = {}): Promise<Uint8Array> {
+    async encodeWebP({ quality, effort = 2, sharpYuv = false, metadata = {} }: WebPEncodeOptions = {}): Promise<Uint8Array> {
         const exif = exifData(resolveMetadata(metadata));
         if (quality === undefined) return webp.encode(this.__bytes__(), this.width, this.height, exif);
         const q = finite(quality, 'quality');
         if (q < 0 || q > 100) throw new RangeError(`quality must be 0-100, not ${q}`);
         if (!Number.isInteger(effort) || effort < 0 || effort > 6) throw new RangeError(`effort must be an integer 0-6, not ${effort}`);
-        return webp.encodeLossy(this.__bytes__(), this.width, this.height, q, exif, effort);
+        return webp.encodeLossy(this.__bytes__(), this.width, this.height, q, exif, effort, sharpYuv);
     }
 
     /**

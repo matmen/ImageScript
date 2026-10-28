@@ -340,8 +340,8 @@ export function encode(rgba: Uint8Array, width: number, height: number, exif?: U
  * @param exif Exif data (a TIFF header and IFDs), needs the extended format (VP8X)
  * @param method libwebp's method (0-6: faster to smaller)
  */
-export function encodeLossy(rgba: Uint8Array, width: number, height: number, quality: number, exif?: Uint8Array, method = 4): Uint8Array {
-    const { alpha, chunks } = lossyChunks(rgba, width, height, quality, method);
+export function encodeLossy(rgba: Uint8Array, width: number, height: number, quality: number, exif?: Uint8Array, method = 4, sharp = false): Uint8Array {
+    const { alpha, chunks } = lossyChunks(rgba, width, height, quality, method, sharp);
     if (!alpha && !exif) return riff(chunks);
 
     const vp8x = new Uint8Array(10);
@@ -352,9 +352,9 @@ export function encodeLossy(rgba: Uint8Array, width: number, height: number, qua
 }
 
 // the ALPH (if not opaque) and VP8 chunks of a lossy image
-function lossyChunks(rgba: Uint8Array, width: number, height: number, quality: number, method: number): { alpha: boolean, chunks: Uint8Array[] } {
+function lossyChunks(rgba: Uint8Array, width: number, height: number, quality: number, method: number, sharp = false): { alpha: boolean, chunks: Uint8Array[] } {
     if (width > 16383 || height > 16383) throw new RangeError('WebP: lossy images can be at most 16383 pixels wide and high');
-    const picture = rgbaToYUV(rgba, width, height);
+    const picture = rgbaToYUV(rgba, width, height, sharp);
     const frame = encodeVP8(picture, quality, method);
     // (libwebp counts the padding byte in the chunk's size)
     const padded = new Uint8Array(frame.length + (frame.length & 1));
@@ -397,13 +397,13 @@ export function lossyTolerance(quality: number): number {
  * @param quality 0-100 for lossy frames
  * @param method libwebp's method for lossy frames (0-6: faster to smaller)
  */
-export function encodeAnimation(frames: WebPEncodeFrame[], width: number, height: number, plays: number, exif?: Uint8Array, quality?: number, method = 4): Uint8Array {
+export function encodeAnimation(frames: WebPEncodeFrame[], width: number, height: number, plays: number, exif?: Uint8Array, quality?: number, method = 4, sharp = false): Uint8Array {
     if (!frames.length) throw new Error('WebP: an animation needs at least one frame');
     if (width > 1 << 24 || height > 1 << 24) throw new RangeError('WebP: canvas too large');
 
     let alpha = false;
     for (const [i, f] of frames.entries()) alpha ||= needsAlpha(f, i === 0, width, height);
-    return animationFile(frames.map(f => frameChunk(f, quality, method)), width, height, plays, alpha, exif);
+    return animationFile(frames.map(f => frameChunk(f, quality, method, sharp)), width, height, plays, alpha, exif);
 }
 
 /**
@@ -415,10 +415,10 @@ export function needsAlpha(f: WebPEncodeFrame, first: boolean, width: number, he
 }
 
 /** A frame of an animation as its ANMF chunk */
-export function frameChunk(f: WebPEncodeFrame, quality?: number, method = 4): Uint8Array {
+export function frameChunk(f: WebPEncodeFrame, quality?: number, method = 4, sharp = false): Uint8Array {
     if (f.x & 1 || f.y & 1) throw new RangeError('WebP: frame offsets have to be even');
     const bitstream = quality === undefined ? riffChunk('VP8L', vp8l.encode(toARGB(f.pixels, f.width * f.height), f.width, f.height))
-        : concat(lossyChunks(f.pixels, f.width, f.height, quality, method).chunks);
+        : concat(lossyChunks(f.pixels, f.width, f.height, quality, method, sharp).chunks);
     const header = new Uint8Array(16);
     set24(header, 0, f.x >> 1);
     set24(header, 3, f.y >> 1);
