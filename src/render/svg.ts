@@ -4,9 +4,9 @@ import { PathCommand } from './font.ts';
 /**
  * SVG renderer supporting a static subset of SVG 1.1/2:
  * shapes, paths, transforms, nested svg/use/symbol, presentation attributes, inline styles and simple
- * <style> sheets (type, class and id selectors), solid colors, linear and radial gradients, strokes
+ * <style> sheets (type, class and id selectors), solid colors, linear and radial gradients, patterns, strokes
  * (joins, caps, dashes), opacity, clip paths and luminance masks.
- * Not supported: text, images, filters, patterns, markers, animation and scripting.
+ * Not supported: text, images, filters, markers, animation and scripting.
  */
 
 const UNSUPPORTED = new Set(['text', 'image', 'filter', 'pattern', 'marker', 'foreignObject', 'script', 'style', 'title', 'desc', 'metadata',
@@ -482,6 +482,8 @@ function validProperty(name: string, value: string): boolean {
 // the most elements to render through <use> references (like librsvg's limit), and dashes of a path
 const MAX_INSTANCES = 100000;
 const MAX_DASHES = 1000000;
+// the most pixels of a pattern's tile
+const MAX_TILE = 4096 * 1024;
 
 class Document {
     /** elements rendered through <use> references so far */
@@ -511,6 +513,39 @@ class Document {
 
         this.root = root;
         this.rules = parseStyleSheet(styles.join('\n'));
+        for (const name of ['fill', 'stroke']) this.breakPatternCycles(name);
+    }
+
+    // like resvg: in document order, a pattern's descendant painted with the pattern itself, or a descendant of the
+    // pattern it's painted with painted with the first pattern, paints nothing (instead of recursing)
+    breakPatternCycles(name: string): void {
+        const paintOf = (node: XNode): string | undefined => {
+            const inline = node.attrs.style ? parseDeclarations(node.attrs.style) : null;
+            return inline?.important[name] ?? inline?.normal[name] ?? node.attrs[name];
+        };
+        const descendants = (node: XNode): XNode[] => {
+            const list: XNode[] = [], stack = [...node.children];
+            while (stack.length) {
+                const n = stack.shift() as XNode;
+                list.push(n);
+                stack.unshift(...n.children);
+            }
+            return list;
+        };
+        const patterns = descendants(this.root).filter(node => node.name === 'pattern');
+        for (const pattern of patterns) {
+            for (const node of descendants(pattern)) {
+                const linked = this.reference(paintOf(node));
+                if (!linked) continue;
+                if (linked === pattern) this.unpaint(node, name);
+                else for (const inner of descendants(linked)) if (this.reference(paintOf(inner)) === pattern) this.unpaint(inner, name);
+            }
+        }
+    }
+
+    unpaint(node: XNode, name: string): void {
+        node.attrs[name] = 'none';
+        if (node.attrs.style) node.attrs.style += `;${name}:none !important`;
     }
 
     reference(value: string | undefined): XNode | null {
@@ -763,6 +798,10 @@ class Document {
                 const gradient = this.gradient(server, bbox, matrix, opacity, ctx);
                 if (gradient !== undefined || !fallback) return gradient || null;
             }
+            if (server && server.name === 'pattern') {
+                const pattern = this.pattern(server, bbox, matrix, opacity, ctx);
+                if (pattern !== undefined || !fallback) return pattern || null;
+            }
 
             // missing, invalid or unsupported paint servers use the fallback color, if any
             color = fallback;
@@ -896,6 +935,123 @@ class Document {
     lastStopPaint(stops: Stop[], opacity: number): Paint {
         const c = stops[stops.length - 1].color;
         return solidPaint([c[0], c[1], c[2], c[3] * opacity]);
+    }
+
+    // collects pattern attributes along href chains, and the first pattern with children
+    patternAttributes(node: XNode): { attrs: Record<string, string>, content: XNode | null } {
+        const attrs: Record<string, string> = {};
+        let content: XNode | null = null;
+        const names = ['x', 'y', 'width', 'height', 'patternUnits', 'patternContentUnits', 'patternTransform', 'viewBox', 'preserveAspectRatio'];
+        for (let current: XNode | null = node, depth = 0; current && depth < 16 && current.name === 'pattern'; current = this.reference(this.href(current)), depth++) {
+            for (const name of names)
+                if (attrs[name] === undefined && current.attrs[name] !== undefined) attrs[name] = current.attrs[name];
+            if (!content && current.children.some(child => child.svg)) content = current;
+        }
+        return { attrs, content };
+    }
+
+    // renders one tile of a pattern in device resolution, painted repeating: undefined for an invalid pattern
+    pattern(node: XNode, bbox: BBox | null, matrix: Matrix, opacity: number, ctx: Context): Paint | null | undefined {
+        if (this.active.has(node)) return null;
+        const { attrs, content } = this.patternAttributes(node);
+        const objectBox = attrs.patternUnits !== 'userSpaceOnUse';
+        const contentBox = attrs.patternContentUnits === 'objectBoundingBox';
+        const viewBox = parseViewBox(attrs.viewBox);
+        if ((objectBox || (contentBox && !viewBox)) && (!bbox || bbox.width <= 0 || bbox.height <= 0)) return null;
+        const box = bbox || { x: 0, y: 0, width: 0, height: 0 };
+
+        const coordinate = (name: string, axis: 'x' | 'y'): number => {
+            const value = attrs[name];
+            if (!objectBox) return value === undefined ? 0 : parseLength(value, ctx.viewport, 16, axis);
+            const fraction = value === undefined ? 0 : /%\s*$/.test(value) ? parseFloat(value) / 100 : parseNumber(value, 0);
+            return axis === 'x' ? box.x + fraction * box.width : box.y + fraction * box.height;
+        };
+        const tx = coordinate('x', 'x'), ty = coordinate('y', 'y');
+        const tw = coordinate('width', 'x') - (objectBox ? box.x : 0), th = coordinate('height', 'y') - (objectBox ? box.y : 0);
+        if (!(tw > 0) || !(th > 0) || !content) return null;
+
+        // (a patternTransform that can't be inverted is ignored, like resvg does)
+        let patternMatrix = matrix, rotated = matrix[1] !== 0 || matrix[2] !== 0;
+        if (attrs.patternTransform) {
+            const transform = parseTransform(attrs.patternTransform), transformed = multiply(patternMatrix, transform);
+            if (invert(transformed)) {
+                patternMatrix = transformed;
+                rotated ||= transform[1] !== 0 || transform[2] !== 0;
+            }
+        }
+        const inverse = invert(patternMatrix);
+        if (!inverse) return null;
+
+        // the tile in device resolution, its size rounded like resvg's (lower for tiles of more than 4096 x 1024 pixels)
+        let sx = Math.hypot(patternMatrix[0], patternMatrix[1]), sy = Math.hypot(patternMatrix[2], patternMatrix[3]);
+        const reduce = Math.min(1, Math.sqrt(MAX_TILE / (tw * sx * th * sy)));
+        sx *= reduce;
+        sy *= reduce;
+        const width = Math.max(1, Math.round(tw * sx)), height = Math.max(1, Math.round(th * sy));
+
+        let contentMatrix = [sx, 0, 0, sy, 0, 0];
+        if (viewBox) contentMatrix = multiply(contentMatrix, viewBoxTransform(viewBox, tw, th, attrs.preserveAspectRatio));
+        else if (contentBox) contentMatrix = multiply(contentMatrix, [box.width, 0, 0, box.height, 0, 0]);
+
+        const tile = new Layer(width, height);
+        this.active.add(node);
+        this.renderChildren(content, { ...ctx, matrix: contentMatrix, style: this.styleOf(content), layer: tile, depth: ctx.depth + 1,
+            viewport: viewBox ? { width: viewBox[2], height: viewBox[3] } : ctx.viewport });
+        this.active.delete(node);
+        if (tile.x1 <= tile.x0) return null;
+
+        // the repeated tile sampled like resvg's (tiny-skia's): the nearest pixel where the tile is only translated, else
+        // bicubic (Mitchell-Netravali, B = C = 1/3); premultiplied, the result straight
+        const d = tile.data;
+        const color: Color = [0, 0, 0, 0];
+        // (a rotation and its inverse still filter: tiny-skia's single precision doesn't cancel them exactly)
+        const translated = !rotated && patternMatrix[0] > 0 && patternMatrix[3] > 0;
+        const wrap = (v: number, n: number): number => v - Math.floor(v / n) * n;
+        const wx = new Float64Array(4), wy = new Float64Array(4), xs = new Int32Array(4), ys = new Int32Array(4);
+        const weights = (t: number, w: Float64Array): void => {
+            const s = 1 - t;
+            w[0] = (7 / 18 * s - 6 / 18) * s * s;
+            w[1] = ((-21 / 18 * s + 27 / 18) * s + 9 / 18) * s + 1 / 18;
+            w[2] = ((-21 / 18 * t + 27 / 18) * t + 9 / 18) * t + 1 / 18;
+            w[3] = (7 / 18 * t - 6 / 18) * t * t;
+        };
+        return (px, py) => {
+            const u = (inverse[0] * px + inverse[2] * py + inverse[4] - tx) * sx - 0.5;
+            const v = (inverse[1] * px + inverse[3] * py + inverse[5] - ty) * sy - 0.5;
+            if (translated) {
+                const i = (Math.floor(wrap(v + 0.5, height)) * width + Math.floor(wrap(u + 0.5, width))) * 4;
+                const a = d[i + 3];
+                if (a <= 0) return TRANSPARENT;
+                color[0] = d[i] / a;
+                color[1] = d[i + 1] / a;
+                color[2] = d[i + 2] / a;
+                color[3] = a * opacity;
+                return color;
+            }
+            const x0 = Math.floor(u), y0 = Math.floor(v);
+            weights(u - x0, wx);
+            weights(v - y0, wy);
+            for (let k = 0; k < 4; k++) {
+                xs[k] = wrap(x0 - 1 + k, width);
+                ys[k] = wrap(y0 - 1 + k, height) * width;
+            }
+            let r = 0, g = 0, b = 0, a = 0;
+            for (let j = 0; j < 4; j++)
+                for (let k = 0; k < 4; k++) {
+                    const f = wy[j] * wx[k], i = (ys[j] + xs[k]) * 4;
+                    r += d[i] * f;
+                    g += d[i + 1] * f;
+                    b += d[i + 2] * f;
+                    a += d[i + 3] * f;
+                }
+            a = clamp01(a);
+            if (a <= 1e-6) return TRANSPARENT;
+            color[0] = clamp01(r / a);
+            color[1] = clamp01(g / a);
+            color[2] = clamp01(b / a);
+            color[3] = a * opacity;
+            return color;
+        };
     }
 
     // renders a clipPath into a coverage mask
