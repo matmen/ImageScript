@@ -24,6 +24,8 @@
   instead of 640 ms lossy and 328 ms instead of 671 ms lossless, a 5120x2880 one in 568 ms instead of 1121 ms and
   487 ms instead of 1122 ms. Lossy frames no longer keep the coefficients of the whole frame (about 100 MB at 4K): each
   group is rendered once its passes are read.
+- `encodeJXL({ quality, effort: 2 })` searches patches about 30% faster (the connected components with a typed stack of
+  pixel indices instead of an array of coordinates, in the same order): the same files.
 - AVIF decoding uses worker threads (`DecodeOptions.threads`) from 4 megapixels on: the conversion to RGB runs in
   bands of rows (started at the beginning, the threads load while the AV1 image is decoded) and the tiles of grids are
   decoded in parallel, with the same pixels. A 3840x2160 4:2:0 image decodes in 355 ms instead of 466 ms, a 6400x2880

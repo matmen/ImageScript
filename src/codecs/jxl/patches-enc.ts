@@ -122,16 +122,18 @@ function candidates(planes: Float32Array[], stride: number, width: number, heigh
     }
 
     // small connected components outside the background, bordered by one background color
+    // (a stack of pixel indices, grown as needed: a pixel is pushed by each neighbor reaching it before it's visited)
     const visited = new Uint8Array(width * height), found: Candidate[] = [];
+    let stack = new Int32Array(1024);
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
             if (isBackground[y * width + x] || visited[y * width + x]) continue;
-            const stack = [x, y];
-            let minX = x, maxX = x, minY = y, maxY = y, reference = -1, allSimilar = true;
-            while (stack.length) {
-                const cy = stack.pop() as number, cx = stack.pop() as number;
-                if (visited[cy * width + cx]) continue;
-                visited[cy * width + cx] = 1;
+            stack[0] = y * width + x;
+            let top = 1, minX = x, maxX = x, minY = y, maxY = y, reference = -1, allSimilar = true;
+            while (top) {
+                const pixel = stack[--top], cy = pixel / width | 0, cx = pixel - cy * width;
+                if (visited[pixel]) continue;
+                visited[pixel] = 1;
                 minX = Math.min(minX, cx); maxX = Math.max(maxX, cx); minY = Math.min(minY, cy); maxY = Math.max(maxY, cy);
                 for (let dx = -1; dx <= 1; dx++) {
                     for (let dy = -1; dy <= 1; dy++) {
@@ -140,7 +142,13 @@ function candidates(planes: Float32Array[], stride: number, width: number, heigh
                         if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
                         const i = ny * width + nx;
                         if (!isBackground[i]) {
-                            if (!visited[i]) stack.push(nx, ny);
+                            if (visited[i]) continue;
+                            if (top === stack.length) {
+                                const grown = new Int32Array(2 * top);
+                                grown.set(stack);
+                                stack = grown;
+                            }
+                            stack[top++] = i;
                         }
                         else if (reference < 0) reference = i;
                         else if (!similar(background, i, background, reference, VERY_SIMILAR)) allSimilar = false;
