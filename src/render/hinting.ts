@@ -33,9 +33,68 @@ const mulDiv = (a: number, b: number, c: number): number => {
     const d = Math.floor((Math.abs(a * b) + Math.abs(c) / 2) / Math.abs(c));
     return a * b * c < 0 ? -d : d;
 };
-const divFix = (a: number, b: number): number => b === 0 ? 0 : roundHalfAway(a * 65536 / b);
+// a / b in 16.16 like FreeType's FT_DivFix: (|a| * 2^16 + |b| / 2) / |b| in integers, the sign applied afterwards
+// (0x7fffffff for b = 0)
+const divFix = (a: number, b: number): number => {
+    if (b === 0) return a < 0 ? -0x7fffffff : 0x7fffffff;
+    const n = Math.abs(a) * 65536 + Math.floor(Math.abs(b) / 2), d = Math.abs(b);
+    let q = Math.floor(n / d);
+    if (q * d > n) q--;
+    else if ((q + 1) * d <= n) q++;
+    return (a < 0) !== (b < 0) ? -q : q;
+};
+// FreeType's TT_MulFix14 and TT_DotFix14: a product (and the sum of two) with 2.14 values divided by 2^14, rounded like
+// its 64-bit arithmetic (half up, half down below zero); the products stay below 2^53, exact as doubles
+const mulFix14 = (a: number, b: number): number => {
+    const ab = a * b;
+    return Math.floor((ab + 0x2000 + (ab < 0 ? -1 : 0)) / 0x4000);
+};
+const dotFix14 = (ax: number, ay: number, bx: number, by: number): number => {
+    const c = ax * bx + ay * by;
+    return Math.floor((c + 0x2000 + (c < 0 ? -1 : 0)) / 0x4000);
+};
 
+/** unit vectors in 2.14 fixed point (0x4000 is 1), like FreeType's */
 interface Vector { x: number, y: number }
+
+const X_AXIS: Vector = { x: 0x4000, y: 0 }, Y_AXIS: Vector = { x: 0, y: 0x4000 };
+
+/**
+ * A vector (26.6) scaled to unit length in 2.14 fixed point like FreeType's Normalize (its FT_Vector_NormLen: a
+ * prenormalizing shift and Newton's iterations in 32-bit integers, then a quarter of the 16.16 result), null for (0, 0)
+ */
+function normalize(vx: number, vy: number): Vector | null {
+    if (vx === 0 && vy === 0) return null;
+    const sx = vx < 0 ? -1 : 1, sy = vy < 0 ? -1 : 1;
+    let x = Math.abs(vx) >>> 0, y = Math.abs(vy) >>> 0;
+    if (x === 0) return { x: 0, y: sy * 0x4000 };
+    if (y === 0) return { x: sx * 0x4000, y: 0 };
+
+    let l = (x > y ? x + (y >>> 1) : y + (x >>> 1)) >>> 0;
+    let shift = 31 - (31 - Math.clz32(l));
+    shift -= 15 + (l >= 0xaaaaaaaa >>> shift ? 1 : 0);
+    if (shift > 0) {
+        x = x << shift >>> 0;
+        y = y << shift >>> 0;
+        l = (x > y ? x + (y >>> 1) : y + (x >>> 1)) >>> 0;
+    } else {
+        x >>>= -shift;
+        y >>>= -shift;
+        l >>>= -shift;
+    }
+
+    let b = 0x10000 - l | 0, u: number, v: number, z: number;
+    const x_ = x | 0, y_ = y | 0;
+    do {
+        u = x_ + (Math.imul(x_, b) >> 16) >>> 0;
+        v = y_ + (Math.imul(y_, b) >> 16) >>> 0;
+        z = Math.trunc(-(Math.imul(u, u) + Math.imul(v, v) | 0) / 0x200);
+        z = Math.trunc(Math.imul(z, 0x10000 + b >> 8) / 0x10000);
+        b = b + z | 0;
+    } while (z > 0);
+
+    return { x: Math.trunc(sx * u / 4), y: Math.trunc(sy * v / 4) };
+}
 
 interface GraphicsState {
     pv: Vector;
@@ -63,7 +122,7 @@ interface GraphicsState {
 const ROUND_GRID = { period: 64, phase: 0, threshold: 32 };
 
 const defaultState = (): GraphicsState => ({
-    pv: { x: 1, y: 0 }, fv: { x: 1, y: 0 }, dv: { x: 1, y: 0 },
+    pv: X_AXIS, fv: X_AXIS, dv: X_AXIS,
     rp0: 0, rp1: 0, rp2: 0, zp0: 1, zp1: 1, zp2: 1, loop: 1,
     minimumDistance: 64, cvtCutIn: 68, singleWidthCutIn: 0, singleWidth: 0,
     deltaBase: 9, deltaShift: 3, autoFlip: true, round: ROUND_GRID, instructControl: 0
@@ -253,7 +312,7 @@ export class Hinter {
         this.points += data.xs.length;
         if (this.points > MAX_POINTS) throw new HintError('too many points');
 
-        const scale = size.scale, scaleFixed = this.scaleFixed = size.scaleFixed;
+        const scaleFixed = this.scaleFixed = size.scaleFixed;
         const lsb = font.leftSideBearing(glyph), advance = font.advance(glyph);
         let count: number, zone: Zone;
 
@@ -298,17 +357,19 @@ export class Hinter {
             count = total;
             zone = makeZone(count + 4);
             zone.ends = ends;
-            // the components are hinted already: their positions are the composite's original ones too
+            // the components are hinted already: their positions are the composite's original ones too, also the
+            // "unscaled" ones its instructions measure (at a scale of 1, like FreeType)
             zone.curX.set(xsAll);
             zone.curY.set(ysAll);
             zone.orgX.set(xsAll);
             zone.orgY.set(ysAll);
-            for (let i = 0; i < count; i++) { zone.orusX[i] = xsAll[i] / scale; zone.orusY[i] = ysAll[i] / scale; }
+            zone.orusX.set(xsAll);
+            zone.orusY.set(ysAll);
             zone.on.set(on);
-            this.phantoms(zone, count, data.xMin - lsb, advance, useMetrics);
+            this.phantoms(zone, count, data.xMin - lsb, advance, useMetrics, data.instructions.length > 0);
 
             if (data.instructions.length && !(size.state.instructControl & 1)) {
-                new Execution(this, size, size.twilight, zone).run(data.instructions, true);
+                new Execution(this, size, size.twilight, zone, true).run(data.instructions, true);
             }
             return { zone, count };
         }
@@ -336,7 +397,9 @@ export class Hinter {
     // phantom points: origin, advance, top and bottom. Their current positions start on the pixel grid while the
     // original ones don't, so programs can shift outline points by how much the grid fitting moved them
     // (origin and advance in font units)
-    private phantoms(zone: Zone, count: number, origin: number, advance: number, metrics: { zone: Zone, count: number } | null): void {
+    // the phantom points: scaled, and rounded unless they belong to a composite without instructions (FreeType rounds
+    // them when it hints a glyph, and doesn't hint those)
+    private phantoms(zone: Zone, count: number, origin: number, advance: number, metrics: { zone: Zone, count: number } | null, round = true): void {
         const font = this.font;
         const units = [origin, origin + advance, font.ascender, font.descender];
         const org = units.map(v => mulFix(v, this.scaleFixed));
@@ -344,7 +407,7 @@ export class Hinter {
         zone.orusX[count + 1] = units[1];
         zone.orusY[count + 2] = units[2];
         zone.orusY[count + 3] = units[3];
-        const grid = (v: number): number => Math.round(v / 64) * 64;
+        const grid = (v: number): number => round ? Math.round(v / 64) * 64 : v;
         zone.orgX[count] = org[0];
         zone.orgX[count + 1] = org[1];
         zone.curX[count] = grid(org[0]);
@@ -377,13 +440,16 @@ class Execution {
     callDepth = 0;
     steps = 0;
     isGlyph = false;
+    /** the 16.16 scale of original distances measured on the unscaled outline: 1 for composites (like FreeType) */
+    unitsScale: number;
 
-    constructor(hinter: Hinter, size: SizeState, twilight: Zone, glyph: Zone) {
+    constructor(hinter: Hinter, size: SizeState, twilight: Zone, glyph: Zone, composite = false) {
         this.hinter = hinter;
         this.size = size;
         const s = size.state;
         this.gs = { ...s, pv: { ...s.pv }, fv: { ...s.fv }, dv: { ...s.dv } };
         this.zones = [twilight, glyph];
+        this.unitsScale = composite ? 0x10000 : size.scaleFixed;
     }
 
     run(code: Uint8Array, glyph = false): void {
@@ -391,7 +457,7 @@ class Execution {
         if (glyph) {
             // these are reset for every glyph program (the rest keeps what the control value program set)
             const gs = this.gs;
-            gs.pv = { x: 1, y: 0 }; gs.fv = { x: 1, y: 0 }; gs.dv = { x: 1, y: 0 };
+            gs.pv = gs.fv = gs.dv = X_AXIS;
             gs.rp0 = gs.rp1 = gs.rp2 = 0;
             gs.zp0 = gs.zp1 = gs.zp2 = 1;
             gs.loop = 1;
@@ -426,39 +492,44 @@ class Execution {
 
     // projections onto the projection vector (current positions) and the dual vector (original positions)
     private project(dx: number, dy: number): number {
-        return dx * this.gs.pv.x + dy * this.gs.pv.y;
+        return dotFix14(dx, dy, this.gs.pv.x, this.gs.pv.y);
     }
 
     private dualProject(dx: number, dy: number): number {
-        return dx * this.gs.dv.x + dy * this.gs.dv.y;
+        return dotFix14(dx, dy, this.gs.dv.x, this.gs.dv.y);
     }
 
     /**
-     * How far a point moves (along the freedom vector) per unit of projected distance: fv / (fv . pv).
-     * Nearly perpendicular vectors would make points fly off, so like current FreeType they don't move points at all
-     * (|fv . pv| < 1/3, "avoids bad rendering in Palatino without negative consequences")
+     * How far a point moves (along the freedom vector) per unit of projected distance, 16.16: fv / (fv . pv), like
+     * FreeType's Compute_Funcs. Nearly perpendicular vectors would make points fly off, so like current FreeType they
+     * don't move points at all (|fv . pv| < 1/3, "avoids bad rendering in Palatino without negative consequences")
      */
     private moveVector(): Vector {
         const { fv, pv } = this.gs;
-        const dot = fv.x * pv.x + fv.y * pv.y;
-        if (dot >= 0x3ffe / 0x4000) return fv;
-        if (Math.abs(dot) < 0x1555 / 0x4000) return { x: 0, y: 0 };
-        return { x: fv.x / dot, y: fv.y / dot };
+        const dot = Math.floor((pv.x * fv.x + pv.y * fv.y + 0x2000) / 0x4000);
+        if (dot >= 0x3ffe) return { x: fv.x * 4, y: fv.y * 4 };
+        if (dot > -0x1555 && dot < 0x1555) return { x: 0, y: 0 };
+        return { x: Math.trunc(fv.x * 0x10000 / dot), y: Math.trunc(fv.y * 0x10000 / dot) };
     }
 
-    /** moves a point along the freedom vector so its projection changes by distance, and touches it */
-    private move(zone: Zone, p: number, distance: number, touch = true): void {
-        const { fv } = this.gs;
+    /** moves a point along the freedom vector so its projection changes by distance, and touches it where it moves */
+    private move(zone: Zone, p: number, distance: number): void {
         const mv = this.moveVector();
-        // points are touched along the freedom vector's axes even if they can't move
-        if (fv.x !== 0) {
-            zone.curX[p] += distance * mv.x;
-            if (touch) zone.touchX[p] = 1;
+        if (mv.x !== 0) {
+            zone.curX[p] += mulFix(distance, mv.x);
+            zone.touchX[p] = 1;
         }
-        if (fv.y !== 0) {
-            zone.curY[p] += distance * mv.y;
-            if (touch) zone.touchY[p] = 1;
+        if (mv.y !== 0) {
+            zone.curY[p] += mulFix(distance, mv.y);
+            zone.touchY[p] = 1;
         }
+    }
+
+    /** moves a point's original position along the freedom vector (MSIRP in the twilight zone) */
+    private moveOriginal(zone: Zone, p: number, distance: number): void {
+        const mv = this.moveVector();
+        if (mv.x !== 0) zone.orgX[p] += mulFix(distance, mv.x);
+        if (mv.y !== 0) zone.orgY[p] += mulFix(distance, mv.y);
     }
 
     private round(d: number): number {
@@ -472,23 +543,17 @@ class Execution {
         return v > 0 ? -r.phase : v;
     }
 
-    private setVector(target: 'pv' | 'fv' | 'dv', x: number, y: number): void {
-        const length = Math.hypot(x, y);
-        if (length === 0) return;
-        this.gs[target] = { x: x / length, y: y / length };
-    }
-
-    // vector from p2 (zp2) to p1 (zp1), rotated counter-clockwise when perpendicular (for SPVTL, SFVTL, SDPVTL)
-    private lineVector(p1: number, p2: number, perpendicular: boolean, original: boolean): Vector {
+    // vector from p2 (zp2) to p1 (zp1), rotated counter-clockwise when perpendicular (for SPVTL, SFVTL, SDPVTL),
+    // normalized like FreeType's (coinciding points give the x axis)
+    private lineVector(p1: number, p2: number, perpendicular: boolean, original: boolean, current: Vector): Vector {
         const z1 = this.zone(this.gs.zp1), z2 = this.zone(this.gs.zp2);
         this.point(z1, p1);
         this.point(z2, p2);
         let x = (original ? z1.orgX[p1] - z2.orgX[p2] : z1.curX[p1] - z2.curX[p2]);
         let y = (original ? z1.orgY[p1] - z2.orgY[p2] : z1.curY[p1] - z2.curY[p2]);
-        if (x === 0 && y === 0) { x = 1; y = 0; perpendicular = false; }
+        if (x === 0 && y === 0) { x = 0x4000; y = 0; perpendicular = false; }
         if (perpendicular) [x, y] = [-y, x];
-        const length = Math.hypot(x, y);
-        return { x: x / length, y: y / length };
+        return normalize(x, y) ?? current;
     }
 
     /**
@@ -499,7 +564,7 @@ class Execution {
         const A = this.zones[za], B = this.zones[zb];
         if (twilight) return this.dualProject(A.orgX[a] - B.orgX[b], A.orgY[a] - B.orgY[b]);
         const d = this.dualProject(A.orusX[a] - B.orusX[b], A.orusY[a] - B.orusY[b]);
-        return round ? mulFix(d, this.size.scaleFixed) : d * this.size.scale;
+        return round ? mulFix(d, this.unitsScale) : d;
     }
 
     private loopCount(): number {
@@ -547,48 +612,45 @@ class Execution {
                 switch (op) {
                     // ---- vectors
                     case 0x00: case 0x01: { // SVTCA
-                        const v = op & 1 ? { x: 1, y: 0 } : { x: 0, y: 1 };
-                        gs.pv = v; gs.fv = { ...v }; gs.dv = { ...v };
+                        gs.pv = gs.fv = gs.dv = op & 1 ? X_AXIS : Y_AXIS;
                         break;
                     }
                     case 0x02: case 0x03: // SPVTCA
-                        gs.pv = op & 1 ? { x: 1, y: 0 } : { x: 0, y: 1 };
-                        gs.dv = { ...gs.pv };
+                        gs.pv = gs.dv = op & 1 ? X_AXIS : Y_AXIS;
                         break;
                     case 0x04: case 0x05: // SFVTCA
-                        gs.fv = op & 1 ? { x: 1, y: 0 } : { x: 0, y: 1 };
+                        gs.fv = op & 1 ? X_AXIS : Y_AXIS;
                         break;
                     case 0x06: case 0x07: { // SPVTL
                         const p2 = this.pop(), p1 = this.pop();
-                        gs.pv = this.lineVector(p1, p2, (op & 1) === 1, false);
-                        gs.dv = { ...gs.pv };
+                        gs.pv = gs.dv = this.lineVector(p1, p2, (op & 1) === 1, false, gs.pv);
                         break;
                     }
                     case 0x08: case 0x09: { // SFVTL
                         const p2 = this.pop(), p1 = this.pop();
-                        gs.fv = this.lineVector(p1, p2, (op & 1) === 1, false);
+                        gs.fv = this.lineVector(p1, p2, (op & 1) === 1, false, gs.fv);
                         break;
                     }
                     case 0x86: case 0x87: { // SDPVTL
                         const p2 = this.pop(), p1 = this.pop();
-                        gs.pv = this.lineVector(p1, p2, (op & 1) === 1, false);
-                        gs.dv = this.lineVector(p1, p2, (op & 1) === 1, true);
+                        gs.dv = this.lineVector(p1, p2, (op & 1) === 1, true, gs.dv);
+                        gs.pv = this.lineVector(p1, p2, (op & 1) === 1, false, gs.pv);
                         break;
                     }
                     case 0x0a: case 0x0b: { // SPVFS, SFVFS
                         const y = this.pop() << 16 >> 16, x = this.pop() << 16 >> 16;
-                        if (op === 0x0a) { this.setVector('pv', x, y); gs.dv = { ...gs.pv }; }
-                        else this.setVector('fv', x, y);
+                        if (op === 0x0a) gs.pv = gs.dv = normalize(x, y) ?? gs.pv;
+                        else gs.fv = normalize(x, y) ?? gs.fv;
                         break;
                     }
                     case 0x0c: case 0x0d: { // GPV, GFV
                         const v = op === 0x0c ? gs.pv : gs.fv;
-                        this.push(Math.round(v.x * 16384));
-                        this.push(Math.round(v.y * 16384));
+                        this.push(v.x);
+                        this.push(v.y);
                         break;
                     }
                     case 0x0e: // SFVTPV
-                        gs.fv = { ...gs.pv };
+                        gs.fv = gs.pv;
                         break;
                     case 0x0f: { // ISECT
                         const b1 = this.pop(), b0 = this.pop(), a1 = this.pop(), a0 = this.pop(), p = this.pop();
@@ -626,7 +688,8 @@ class Execution {
                     case 0x17: {
                         const n = this.pop();
                         if (n < 0) throw new HintError('invalid loop');
-                        gs.loop = Math.min(n, 65535) || 1;
+                        // (a loop of 0 handles no points, like FreeType)
+                        gs.loop = Math.min(n, 65535);
                         break;
                     }
 
@@ -845,8 +908,8 @@ class Execution {
                         this.cvtIndex(n);
                         let distance = size.cvt[n];
                         if (gs.zp0 === 0) {
-                            z.orgX[p] = z.curX[p] = distance * gs.fv.x;
-                            z.orgY[p] = z.curY[p] = distance * gs.fv.y;
+                            z.orgX[p] = z.curX[p] = mulFix14(distance, gs.fv.x);
+                            z.orgY[p] = z.curY[p] = mulFix14(distance, gs.fv.y);
                         }
                         const current = this.project(z.curX[p], z.curY[p]);
                         if (op & 1) {
@@ -864,6 +927,7 @@ class Execution {
                         this.point(z1, p);
                         if (gs.zp1 === 0) {
                             z1.orgX[p] = z0.orgX[gs.rp0]; z1.orgY[p] = z0.orgY[gs.rp0];
+                            this.moveOriginal(z1, p, d);
                             z1.curX[p] = z1.orgX[p]; z1.curY[p] = z1.orgY[p];
                         }
                         const distance = this.project(z1.curX[p] - z0.curX[gs.rp0], z1.curY[p] - z0.curY[gs.rp0]);
@@ -880,7 +944,7 @@ class Execution {
                         this.point(refZone, ref);
                         const d = this.project(refZone.curX[ref] - refZone.orgX[ref], refZone.curY[ref] - refZone.orgY[ref]);
                         const mv = this.moveVector();
-                        const dx = d * mv.x, dy = d * mv.y;
+                        const dx = mulFix(d, mv.x), dy = mulFix(d, mv.y);
                         const shift = (z: Zone, p: number, touch: boolean): void => {
                             z.curX[p] += dx;
                             z.curY[p] += dy;
@@ -910,10 +974,14 @@ class Execution {
                         const d = this.pop(), z = this.zone(gs.zp2);
                         for (let n = this.loopCount(); n > 0; n--) {
                             const p = this.point(z, this.pop());
-                            z.curX[p] += d * gs.fv.x;
-                            z.curY[p] += d * gs.fv.y;
-                            if (gs.fv.x !== 0) z.touchX[p] = 1;
-                            if (gs.fv.y !== 0) z.touchY[p] = 1;
+                            if (gs.fv.x !== 0) {
+                                z.curX[p] += mulFix14(d, gs.fv.x);
+                                z.touchX[p] = 1;
+                            }
+                            if (gs.fv.y !== 0) {
+                                z.curY[p] += mulFix14(d, gs.fv.y);
+                                z.touchY[p] = 1;
+                            }
                         }
                         break;
                     }
@@ -930,8 +998,9 @@ class Execution {
                             const p = this.point(z2, this.pop());
                             const orgDistance = this.originalDistance(gs.zp2, p, gs.zp0, gs.rp1, twilight, false);
                             const curDistance = this.project(z2.curX[p] - curBaseX, z2.curY[p] - curBaseY);
-                            // (with an empty original range the point keeps its original distance, like Microsoft's rasterizer)
-                            const newDistance = orgDistance === 0 ? 0 : oldRange !== 0 ? roundHalfAway(orgDistance * curRange / oldRange) : roundHalfAway(orgDistance);
+                            // (with an empty original range the point gets its original distance, unscaled like
+                            // FreeType's, which is what Microsoft's rasterizer does)
+                            const newDistance = orgDistance === 0 ? 0 : oldRange !== 0 ? mulDiv(orgDistance, curRange, oldRange) : orgDistance;
                             this.move(z2, p, newDistance - curDistance);
                         }
                         break;
@@ -978,7 +1047,8 @@ class Execution {
                     }
                     case 0x5d: case 0x71: case 0x72: // DELTAP1-3
                     case 0x73: case 0x74: case 0x75: { // DELTAC1-3
-                        const n = this.pop();
+                        // (more pairs than the stack holds: only the ones it holds, like FreeType)
+                        const n = Math.max(0, Math.min(this.pop(), this.stack.length >> 1));
                         const range = op === 0x5d || op === 0x73 ? 0 : op === 0x71 || op === 0x74 ? 16 : 32;
                         for (let k = 0; k < n; k++) {
                             const target = this.pop(), arg = this.pop();
@@ -1055,8 +1125,8 @@ class Execution {
             if (Math.abs(cvt - gs.singleWidth) < gs.singleWidthCutIn) cvt = cvt >= 0 ? gs.singleWidth : -gs.singleWidth;
 
             if (gs.zp1 === 0) {
-                z1.orgX[p] = z0.orgX[gs.rp0] + cvt * gs.fv.x;
-                z1.orgY[p] = z0.orgY[gs.rp0] + cvt * gs.fv.y;
+                z1.orgX[p] = z0.orgX[gs.rp0] + mulFix14(cvt, gs.fv.x);
+                z1.orgY[p] = z0.orgY[gs.rp0] + mulFix14(cvt, gs.fv.y);
                 z1.curX[p] = z1.orgX[p];
                 z1.curY[p] = z1.orgY[p];
             }

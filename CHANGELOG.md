@@ -53,6 +53,14 @@
 - `Image.renderSVG()`: `overflow="inherit"` on markers and nested viewports takes the parent's value.
 - `Image.renderSVG()`: path data ends at the first character that isn't part of it, instead of skipping it.
 - `Image.renderSVG()`: line ends (CR LF, CR) read as line feeds, like XML parsers read them.
+- Hinting (`renderText` with `hinting`) places points exactly like FreeType's TrueType interpreter (version 35): vectors,
+  projections and moves in its integer arithmetic (2.14 unit vectors normalized like FT_Vector_NormLen, its rounding of
+  products and movement factors, points touched only where they move), `SLOOP` with 0, `IP` on the unscaled outline,
+  composite glyphs' instructions measuring the hinted components at a scale of 1 and their origins left unrounded
+  without instructions, and `DELTAP`/`DELTAC` asking for more pairs than the stack holds. Over 18 fonts (DejaVu,
+  Carlito, Noto, Source Sans, Amiri, M+, Open Sans...) at 8-48 pixels, and all 6190 glyphs of DejaVu Sans at 4 sizes,
+  every point is where FreeType puts it; before, up to 30% of the glyphs of some fonts were off by fractions of a
+  pixel, a few (DejaVu Sans Mono) by up to 4 pixels.
 
 ## 3.8.1
 
