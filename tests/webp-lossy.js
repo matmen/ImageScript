@@ -158,8 +158,10 @@ const alphaReferences = {
 
     // alphaQuality for animations, also encoded a frame at a time
     const faded = new Animation([0, 1].map(i => Frame.from(new Image(40, 30).fill((x, y) => Image.rgbaToColor(200, 50 * i, 9, x * 6 + y)), 100)), 0);
-    const fadedWebp = await faded.encodeWebP({quality: 80, alphaQuality: 0, optimize: false});
-    const encoder = Animation.webpEncoder(40, 30, {loopCount: 0, quality: 80, alphaQuality: 0, optimize: false});
+    // (the same creation time: it's written in seconds, two encodes can be a second apart)
+    const metadata = {creationTime: 0};
+    const fadedWebp = await faded.encodeWebP({quality: 80, alphaQuality: 0, optimize: false, metadata});
+    const encoder = Animation.webpEncoder(40, 30, {loopCount: 0, quality: 80, alphaQuality: 0, optimize: false, metadata});
     for (const frame of faded) await encoder.add(frame);
     if (sha256(await encoder.finish()) !== sha256(fadedWebp)) panic('alphaQuality: the incremental encoder writes another file');
     for (const frame of await Animation.decode(fadedWebp)) {
