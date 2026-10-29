@@ -336,6 +336,35 @@ function transform(r: BitReader): Transform {
 }
 
 /** A Modular image: channels (the first nbMeta of them meta channels) and the transforms to undo */
+/** Where an RCT's 3 channels go after it's undone (offsets from its first) */
+export function rctOrder(rctType: number): number[] {
+    const perm = Math.floor(rctType / 7);
+    return [perm % 3, (perm + 1 + Math.floor(perm / 3)) % 3, (perm + 2 - Math.floor(perm / 3)) % 3];
+}
+
+/** Samples i0 to i1 of an inverse RCT (of the channels a, b, c, in place; their permutation is rctOrder's) */
+export function rctSamples([a, b, c]: Int32Array[], rctType: number, i0: number, i1: number): void {
+    const type = rctType % 7;
+    if (type === 6) {
+        // YCoCg
+        for (let i = i0; i < i1; i++) {
+            const Y = a[i], Co = b[i], Cg = c[i];
+            const tmp = (Y - (Cg >> 1)) | 0, G = (Cg + tmp) | 0, B = (tmp - (Co >> 1)) | 0;
+            a[i] = (B + Co) | 0;
+            b[i] = G;
+            c[i] = B;
+        }
+    } else if (type !== 0) {
+        const second = type >> 1, third = type & 1;
+        for (let i = i0; i < i1; i++) {
+            const first = a[i];
+            if (third) c[i] = (c[i] + first) | 0;
+            if (second === 1) b[i] = (b[i] + first) | 0;
+            else if (second === 2) b[i] = (b[i] + (((first + c[i]) | 0) >> 1)) | 0;
+        }
+    }
+}
+
 export class ModularImage {
     nbMeta = 0;
     transforms: Transform[] = [];
@@ -423,8 +452,9 @@ export class ModularImage {
     }
 
     /** undoes the transforms */
-    undo(): void {
-        while (this.transforms.length) {
+    /** Undoes the transforms but the first keep ones */
+    undo(keep = 0): void {
+        while (this.transforms.length > keep) {
             const t = this.transforms.pop() as Transform;
             if (t.id === TR_RCT) this.inverseRCT(t);
             else if (t.id === TR_PALETTE) this.inversePalette(t);
@@ -433,31 +463,21 @@ export class ModularImage {
     }
 
     private inverseRCT(t: Transform): void {
+        const c = this.channels[t.beginC];
+        rctSamples(this.rctChannels(t), t.rctType, 0, c.w * c.h);
+        this.permuteRCT(t);
+    }
+
+    /** The channels of an RCT (of the same size), as they are before it's undone */
+    rctChannels(t: Transform): Int32Array[] {
         this.checkEqual(t.beginC, t.beginC + 2);
-        const m = t.beginC, perm = Math.floor(t.rctType / 7), type = t.rctType % 7;
-        const ch = this.channels, c0 = ch[m], c1 = ch[m + 1], c2 = ch[m + 2];
-        const o0 = m + perm % 3, o1 = m + (perm + 1 + Math.floor(perm / 3)) % 3, o2 = m + (perm + 2 - Math.floor(perm / 3)) % 3;
-        if (type !== 0) {
-            const a = c0.data, b = c1.data, c = c2.data, n = c0.w * c0.h;
-            if (type === 6) {
-                // YCoCg
-                for (let i = 0; i < n; i++) {
-                    const Y = a[i], Co = b[i], Cg = c[i];
-                    const tmp = (Y - (Cg >> 1)) | 0, G = (Cg + tmp) | 0, B = (tmp - (Co >> 1)) | 0;
-                    a[i] = (B + Co) | 0;
-                    b[i] = G;
-                    c[i] = B;
-                }
-            } else {
-                const second = type >> 1, third = type & 1;
-                for (let i = 0; i < n; i++) {
-                    const first = a[i];
-                    if (third) c[i] = (c[i] + first) | 0;
-                    if (second === 1) b[i] = (b[i] + first) | 0;
-                    else if (second === 2) b[i] = (b[i] + (((first + c[i]) | 0) >> 1)) | 0;
-                }
-            }
-        }
+        return [0, 1, 2].map(i => this.channels[t.beginC + i].data);
+    }
+
+    /** The permutation of an RCT's channels (after its samples are undone, see rctSamples) */
+    permuteRCT(t: Transform): void {
+        const m = t.beginC, ch = this.channels, [c0, c1, c2] = ch.slice(m, m + 3);
+        const [o0, o1, o2] = rctOrder(t.rctType).map(o => m + o);
         ch[o0] = c0;
         ch[o1] = c1;
         ch[o2] = c2;

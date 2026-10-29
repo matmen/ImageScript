@@ -8,7 +8,7 @@ import { toSRGB, hdrToLinear, ToneMapping, REFERENCE_WHITE } from '../hdr.ts';
 import type { Planes } from './frame.ts';
 
 // a sample (0-1) as a byte
-const byte = (v: number): number => v <= 0 ? 0 : v >= 1 ? 255 : Math.round(v * 255);
+export const byte = (v: number): number => v <= 0 ? 0 : v >= 1 ? 255 : Math.round(v * 255);
 
 // linear light to sRGB like libjxl (TF_SRGB::EncodedFromDisplay, lib/jxl/cms/transfer_functions-inl.h): a rational
 // polynomial of the square root instead of the power, within 5e-7
@@ -87,6 +87,8 @@ export class ColorOutput {
      * them (straight alpha, no black or spot channels), then XYB ones become interleaved sRGB bytes right away
      */
     transform(p: Planes, ycbcr: boolean, final = false): Planes {
+        // (bytes already: see modularToBytes)
+        if (p.rgba) return p;
         const image = this.image, n = p.width * p.height, ch = p.channels.slice();
         if (ycbcr) {
             const [cb, y, cr] = ch, r = new Float32Array(n), g = new Float32Array(n), b = new Float32Array(n);
@@ -123,6 +125,11 @@ export class ColorOutput {
             ch.splice(0, 3, R, G, B);
         }
         return { width: p.width, height: p.height, channels: ch };
+    }
+
+    /** Whether toRGBA makes bytes of the samples as they are (not XYB, not PQ or HLG) */
+    bytesOfSamples(): boolean {
+        return !this.image.xybEncoded && !this.hdrSignal;
     }
 
     /** What transform converts XYB to bytes with right away (final, not YCbCr; see xybToBytes), null if it doesn't */

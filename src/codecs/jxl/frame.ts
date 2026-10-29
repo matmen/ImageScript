@@ -10,13 +10,14 @@ import {
     FrameHeader, TOC, frameHeader, toc, passShifts, FRAME_LF, FRAME_REGULAR, FRAME_SKIP_PROGRESSIVE, BLEND_REPLACE, BLEND_ADD,
     BLEND_BLEND, BLEND_MULADD, BLEND_MUL, FLAG_PATCHES, FLAG_SPLINES, FLAG_NOISE, FLAG_USE_LF_FRAME, type EPF
 } from './frame-header.ts';
-import { ModularImage, Channel, MAConfig, channel, readTree, decodeModular } from './modular.ts';
+import { ModularImage, Channel, MAConfig, TR_RCT, channel, readTree, decodeModular, rctOrder, rctSamples } from './modular.ts';
 import { upsample } from './upsample.ts';
 import { gaborish, gaborishRows, epf, epfStrip, epfScratch, epfSteps, epfStrips } from './filters.ts';
 import { VarDCT, VarDCTGlobal, readVarDCTGlobal, type VarDCTShared } from './vardct.ts';
 import { runChunks, shared, sharedOf, type ChunkTask, type Thread } from '../../util/threads.ts';
 import { Patch, Splines, readPatches, applyPatches, readSplines, renderSplines, readNoise, renderNoise } from './features.ts';
-import { ColorOutput, xybToBytes } from './color.ts';
+import { byte, ColorOutput, xybToBytes } from './color.ts';
+import { littleEndian } from '../../util/alpha.ts';
 import { Blending, performBlending, PB_REPLACE, PB_ADD, PB_BLEND_ABOVE, PB_ADD_ABOVE, PB_MUL } from './blend.ts';
 
 /** Float planes: the 3 color channels (or 1), then the extra channels */
@@ -149,8 +150,15 @@ export async function decodeFrame(d: Uint8Array, r: BitReader, state: DecoderSta
         }
     }
     if (!groupsDone) for (let g = 0; g < f.numGroups; g++) local(g);
-    lf.modular.undo();
-    let planes = modularToPlanes(lf, f, image);
+    // (a lossless frame shown as it is: its samples to bytes right away)
+    const bytes = !vardct && f.modular && !f.doYCbCr && !f.gab && !f.epf && !lf.patches && !lf.splines && !lf.noise && f.upsampling === 1
+        && f.ecUpsampling.every(u => u === 1) && shownAsIs(f, image) && state.output.bytesOfSamples() && !image.bitDepth.float;
+    let planes: Planes;
+    if (bytes) planes = await modularToBytes(lf, f, image, pool);
+    else {
+        lf.modular.undo();
+        planes = modularToPlanes(lf, f, image);
+    }
     let sigma: Float32Array | null = null;
     if (vardct) {
         const xyb = vardct.rendered;
@@ -313,18 +321,21 @@ function decodeModularGroup(r: BitReader, lf: LfGlobal, f: FrameHeader, x0: numb
 }
 
 // a Modular image's channels as floats: [0, 1] for integers, cast for float samples; XYB scaled by the LF dequantization
+// a channel's samples as floats (integers scaled to 0 to 1)
+function samplesToFloat(c: Channel, depth: ImageHeader['bitDepth']): Float32Array {
+    const o = new Float32Array(c.w * c.h);
+    if (depth.float) for (let i = 0; i < o.length; i++) o[i] = floatSample(c.data[i], depth.bits, depth.expBits);
+    else {
+        const scale = 1 / (2 ** depth.bits - 1);
+        for (let i = 0; i < o.length; i++) o[i] = c.data[i] * scale;
+    }
+    return o;
+}
+
 function modularToPlanes(lf: LfGlobal, f: FrameHeader, image: ImageHeader): Planes {
     const ch = lf.modular.channels.slice(lf.modular.nbMeta);
     const out: Float32Array[] = [];
-    const toFloat = (c: Channel, depth = image.bitDepth): Float32Array => {
-        const o = new Float32Array(c.w * c.h);
-        if (depth.float) for (let i = 0; i < o.length; i++) o[i] = floatSample(c.data[i], depth.bits, depth.expBits);
-        else {
-            const scale = 1 / (2 ** depth.bits - 1);
-            for (let i = 0; i < o.length; i++) o[i] = c.data[i] * scale;
-        }
-        return o;
-    };
+    const toFloat = (c: Channel, depth = image.bitDepth): Float32Array => samplesToFloat(c, depth);
     if (!f.modular) {
         // (the extra channels only)
         image.extraChannels.forEach((ec, i) => out.push(toFloat(ch[i], ec.bitDepth)));
@@ -345,6 +356,74 @@ function modularToPlanes(lf: LfGlobal, f: FrameHeader, image: ImageHeader): Plan
     } else for (let c = 0; c < numColor; c++) out.push(toFloat(ch[c]));
     image.extraChannels.forEach((ec, i) => out.push(toFloat(ch[numColor + i], ec.bitDepth)));
     return { width: f.sampleWidth, height: f.sampleHeight, channels: out };
+}
+
+/**
+ * The color channels of a lossless frame's Modular image (integer samples, not XYB, 1 or 3 channels) as interleaved
+ * RGBA bytes like toRGBA makes of modularToPlanes' (the alpha of 255; the extra channels' planes as there), in threads
+ * if there are; the transforms undone, an RCT of the colors applied first with the conversion
+ */
+async function modularToBytes(lf: LfGlobal, f: FrameHeader, image: ImageHeader, pool: FrameThreads): Promise<Planes> {
+    const m = lf.modular, numColor = f.encodedColorChannels, n = f.width * f.height, first = m.transforms[0];
+    const rct = numColor === 3 && first?.id === TR_RCT && first.beginC === m.nbMeta ? first : null;
+    m.undo(rct ? 1 : 0);
+    const color = rct ? m.rctChannels(rct) : [0, 1, 2].map(c => m.channels[m.nbMeta + (numColor === 1 ? 0 : c)].data);
+    const task = (threaded: boolean): PostTask => ({
+        task: 'jxl-post', kind: 'samples', w: f.width, h: f.height, inputs: [], outputs: [], samples: threaded ? color.map(sharedOf) : color,
+        rctType: rct ? rct.rctType : -1, bits: image.bitDepth.bits, rgba: new Uint8Array(threaded ? new SharedArrayBuffer(4 * n) : new ArrayBuffer(4 * n)),
+    });
+    const rgba = await threaded(pool, n, async threads => {
+        const t = task(true);
+        await runChunks(threads, t, Math.ceil(f.height / BAND), postChunks(t));
+        // (the samples undone in shared memory; the pixels not: APIs like crypto.subtle and TextDecoder reject views of it)
+        if (rct) for (let c = 0; c < 3; c++) m.channels[m.nbMeta + c].data = (t.samples as Int32Array[])[c];
+        return new Uint8Array(t.rgba as Uint8Array);
+    }, () => {
+        const t = task(false);
+        samplesToBytes(t.samples as Int32Array[], t.rctType as number, t.bits as number, t.rgba as Uint8Array, 0, n);
+        return t.rgba as Uint8Array;
+    });
+    if (rct) {
+        m.permuteRCT(rct);
+        m.transforms.length = 0;
+    }
+    const ch = m.channels.slice(m.nbMeta);
+    return { width: f.width, height: f.height, channels: image.extraChannels.map((ec, i) => samplesToFloat(ch[numColor + i], ec.bitDepth)), rgba };
+}
+
+/**
+ * Samples i0 to i1 of 3 color channels as RGBA bytes (see modularToBytes): first undoing an RCT (of rctType, -1 for
+ * none), the samples bits deep
+ */
+function samplesToBytes(samples: Int32Array[], rctType: number, bits: number, rgba: Uint8Array, i0: number, i1: number): void {
+    if (rctType >= 0) rctSamples(samples, rctType, i0, i1);
+    // (the RCT's channels go to their places)
+    const order = rctType >= 0 ? rctOrder(rctType) : [0, 1, 2], [r, g, b] = [0, 1, 2].map(c => samples[order.indexOf(c)]);
+    const max = 2 ** bits - 1, scale = 1 / max;
+    // (the bytes of the samples 0 to max: through the same Float32 value as the planes)
+    const table = bits <= 16 ? byteTable(bits) : null;
+    if (table && littleEndian) {
+        // (a pixel per 32-bit word)
+        const words = new Uint32Array(rgba.buffer, rgba.byteOffset, rgba.length >> 2);
+        const at = (v: number): number => v >>> 0 <= max ? table[v] : v < 0 ? 0 : 255;
+        for (let i = i0; i < i1; i++) words[i] = at(r[i]) | at(g[i]) << 8 | at(b[i]) << 16 | 0xff000000;
+    } else {
+        [r, g, b].forEach((data, c) => {
+            for (let i = i0, o = 4 * i0 + c; i < i1; i++, o += 4) rgba[o] = table ? (data[i] >>> 0 <= max ? table[data[i]] : data[i] < 0 ? 0 : 255) : byte(Math.fround(data[i] * scale));
+        });
+        for (let o = 4 * i0 + 3; o < 4 * i1; o += 4) rgba[o] = 255;
+    }
+}
+
+const byteTables = new Map<number, Uint8Array>();
+// the bytes of the samples 0 to 2^bits - 1 (see samplesToBytes)
+function byteTable(bits: number): Uint8Array {
+    let table = byteTables.get(bits);
+    if (!table) {
+        const scale = 1 / (2 ** bits - 1);
+        byteTables.set(bits, table = Uint8Array.from({ length: 2 ** bits }, (_, v) => byte(Math.fround(v * scale))));
+    }
+    return table;
 }
 
 /** The restoration filters (sigma: per 8x8 block for VarDCT, blocks sigmaStride per row) */
@@ -371,13 +450,16 @@ async function threaded<T>(pool: FrameThreads, pixels: number, inThreads: (threa
     return here();
 }
 
-// a typed array in shared memory (itself if it is)
+// planes in shared memory
 const sharedPlanes = (n: number, w: number, h: number): Float32Array[] => Array.from({ length: n }, () => new Float32Array(new SharedArrayBuffer(4 * w * h)));
 
-/** The rows of the steps after decoding for threads (see postChunks): Gaborish, an EPF pass, XYB to bytes */
+/**
+ * The rows of the steps after decoding for threads (see postChunks): Gaborish, an EPF pass, XYB to bytes, integer
+ * samples to bytes
+ */
 export interface PostTask extends ChunkTask {
     task: 'jxl-post';
-    kind: 'gaborish' | 'epf' | 'xyb';
+    kind: 'gaborish' | 'epf' | 'xyb' | 'samples';
     w: number;
     h: number;
     inputs: Float32Array[];
@@ -391,6 +473,9 @@ export interface PostTask extends ChunkTask {
     m?: number[];
     bias?: number[];
     k?: number;
+    samples?: Int32Array[];
+    rctType?: number;
+    bits?: number;
 }
 
 // (the rows of a chunk of Gaborish and the XYB conversion; EPF's are its strips)
@@ -404,6 +489,7 @@ export function postChunks(t: PostTask): (chunk: number) => void {
         const scratch = epfScratch(w);
         return chunk => epfStrip(inputs, outputs, w, h, t.epf as EPF, t.sigma ?? null, t.bw as number, t.step as number, chunk, scratch);
     }
+    if (t.kind === 'samples') return chunk => samplesToBytes(t.samples as Int32Array[], t.rctType as number, t.bits as number, t.rgba as Uint8Array, chunk * BAND * w, Math.min(h, (chunk + 1) * BAND) * w);
     const [x, y, b] = inputs;
     return chunk => xybToBytes(x, y, b, t.m as number[], t.bias as number[], t.k as number, t.rgba as Uint8Array, chunk * BAND * w, Math.min(h, (chunk + 1) * BAND) * w);
 }
@@ -431,6 +517,7 @@ async function filterThreaded(p: Planes, f: FrameHeader, image: ImageHeader, sig
 
 /** Upsamples the color channels and the extra channels to the frame's size */
 function upsamplePlanes(p: Planes, f: FrameHeader, image: ImageHeader): Planes {
+    if (f.upsampling === 1 && f.ecUpsampling.every(u => u === 1)) return p;
     const numColor = p.channels.length - image.extraChannels.length, W = f.upsampledWidth, H = f.upsampledHeight;
     const channels = p.channels.map((c, i) => {
         const up = i < numColor ? f.upsampling : f.ecUpsampling[i - numColor];
@@ -459,6 +546,15 @@ function floatSample(v: number, bits: number, expBits: number): number {
 // ---- rendering: filters, features, upsampling, the color transform, blending, references
 
 // what follows the features: storing LF frames and references, the color transform, blending
+// whether a frame can be saved as a reference
+const referenced = (f: FrameHeader): boolean => !f.isLast && (f.duration === 0 || f.saveAsReference !== 0) && f.type !== FRAME_LF;
+
+// whether only toRGBA uses the planes of a frame (if of the image's size): shown as it is, replacing all, not
+// referenced; with straight alpha only
+const shownAsIs = (f: FrameHeader, image: ImageHeader): boolean => (f.type === FRAME_REGULAR || f.type === FRAME_SKIP_PROGRESSIVE) && !f.haveCrop
+    && f.blending.mode === BLEND_REPLACE && f.ecBlending.every(b => b.mode === BLEND_REPLACE) && f.width === image.width && f.height === image.height
+    && !referenced(f) && image.extraChannels.every(e => e.type === EXTRA_ALPHA && !e.alphaAssociated);
+
 async function render(p: Planes, f: FrameHeader, state: DecoderState, pool: FrameThreads): Promise<Frame> {
     const image = state.image;
     let planes = p;
@@ -466,15 +562,13 @@ async function render(p: Planes, f: FrameHeader, state: DecoderState, pool: Fram
         state.lfFrames[f.lfLevel - 1] = planes;
         return { header: f, canvas: null };
     }
-    const canReference = !f.isLast && (f.duration === 0 || f.saveAsReference !== 0) && f.type !== FRAME_LF;
+    const canReference = referenced(f);
     if (canReference && f.saveBeforeCT) {
         state.references[f.saveAsReference] = planes;
         state.referenceIsXYB[f.saveAsReference] = image.xybEncoded;
     }
     const normal = f.type === FRAME_REGULAR || f.type === FRAME_SKIP_PROGRESSIVE;
-    // (only toRGBA uses the planes of a frame shown as it is: replacing all, not referenced; with straight alpha only)
-    const replaces = !f.haveCrop && f.blending.mode === BLEND_REPLACE && f.ecBlending.every(b => b.mode === BLEND_REPLACE) && p.width === image.width && p.height === image.height;
-    const final = normal && replaces && !canReference && image.extraChannels.every(e => e.type === EXTRA_ALPHA && !e.alphaAssociated);
+    const final = shownAsIs(f, image) && p.width === image.width && p.height === image.height;
     // (XYB to bytes in threads)
     const bytes = state.output.bytesParams(f.doYCbCr, final), input = planes;
     planes = bytes ? await threaded(pool, planes.width * planes.height, async threads => {

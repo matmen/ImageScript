@@ -24,6 +24,10 @@
   instead of 640 ms lossy and 328 ms instead of 671 ms lossless, a 5120x2880 one in 568 ms instead of 1121 ms and
   487 ms instead of 1122 ms. Lossy frames no longer keep the coefficients of the whole frame (about 100 MB at 4K): each
   group is rendered once its passes are read.
+- Lossless JPEG XLs shown as they are (integer samples, no filters or upsampling) become RGBA bytes right away instead
+  of through float planes, in threads from 1 megapixel on, with an RCT of the colors undone in the same pass: the same
+  pixels. A 3840x2160 image from `encodeJXL()` decodes in 304 ms instead of 379 ms with 8 threads, 548 ms instead of
+  581 ms with one.
 
 ### Tests
 
