@@ -8,8 +8,9 @@
 ---
 
 **ImageScript** decodes, edits and encodes images in pure TypeScript: no WebAssembly, no native binaries, no
-dependencies. It runs in Node.js 22.13+, Deno, Bun and browsers, with `import` or `require()`, and includes type
-definitions.
+dependencies. It runs in Node.js 22.13+, Deno, Bun, browsers and edge runtimes (Cloudflare Workers, Vercel's Edge
+Runtime, Deno Deploy), with `import` or `require()`, and includes type definitions. Encoders use worker threads where
+the runtime has them and images are large enough to gain from them.
 
 ```sh
 npm install imagescript              # Node.js, Bun and bundlers

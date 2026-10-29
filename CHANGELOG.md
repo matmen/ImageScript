@@ -13,6 +13,12 @@
   640x640 pixels at effort 0, 448x448 at 1, 320x320 at 2), browser pages without cross-origin isolation (no
   SharedArrayBuffer), runtimes without workers, and workers that fail to start encode on the calling thread as before.
 
+### Tests
+
+- Edge runtimes are tested: Cloudflare's workerd (with and without `nodejs_compat`) and Vercel's Edge Runtime run every
+  codec and the renderers bundled like deployments (`tests/edge`), and Chromium runs them bundled by Vite, with threads
+  on a cross-origin isolated page and without on another (`tests/browser`).
+
 ## 3.9.0
 
 ### Features

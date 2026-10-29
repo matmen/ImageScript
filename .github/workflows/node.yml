@@ -1,6 +1,6 @@
 name: node
 
-# tests every pushed branch in Node, Deno and Bun, and pull requests from forks (pull requests from branches of this repository are
+# tests every pushed branch in Node, Deno, Bun, edge runtimes and Chromium, and pull requests from forks (pull requests from branches of this repository are
 # already tested by their push); release.yml runs it before publishing
 on:
   push:
@@ -76,3 +76,32 @@ jobs:
     # (JSR type checks the sources with Deno's TypeScript, stricter than ours: what release.yml would publish)
     - if: matrix.runtime == 'deno' && matrix.os == 'ubuntu-latest'
       run: deno publish --dry-run --allow-dirty
+
+  # edge runtimes (Cloudflare's workerd, with and without Node.js compatibility, and Vercel's Edge Runtime) and Chromium
+  # (bundled by Vite, threads with cross-origin isolation, without them otherwise), bundled like deployments
+  edge:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24.x
+    - run: npm install
+    - run: npm run build
+    - run: npm install --no-save esbuild@0.28.2 miniflare@4.20260730.0 edge-runtime@4.0.1
+    - run: node tests/edge/run.mjs
+
+  browser:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24.x
+    - run: npm install
+    - run: npm run build
+    - run: npm install --no-save vite@6.4.5 playwright@1.64.1 esbuild@0.28.2
+    - run: npx playwright install --with-deps chromium
+    - run: node tests/browser/run.mjs
