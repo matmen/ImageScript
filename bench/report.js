@@ -3,7 +3,8 @@ import fs from 'node:fs';
 
 const results = JSON.parse(fs.readFileSync(new URL('./results.json', import.meta.url)));
 const installs = JSON.parse(fs.readFileSync(new URL('./installs.json', import.meta.url)));
-const { libraries, TEXT, TEXT_SIZE, SVG_WIDTH } = await import('./libs.js');
+const { libraries, TEXT, TEXT_SIZE, SVG_WIDTH, AVIF_QUALITY, JXL_QUALITY } = await import('./libs.js');
+const quality = results.quality ?? {};
 const LIBS = libraries.map(l => l.name);
 const KIND = Object.fromEntries(libraries.map(l => [l.name, l.kind]));
 const HIGHLIGHT = 'ImageScript 3';
@@ -51,7 +52,7 @@ function barChart(title, subtitle, groups, file) {
             else {
                 const w = Math.max(2, v / max * barW);
                 body += bar(pad + labelW + 1, cy - barH / 2, w, barH, hl ? 'bar highlight' : 'bar');
-                body += `<text class="${hl ? 'text bold' : 'text'}" x="${pad + labelW + w + 8}" y="${cy + 4}">${esc(group.format(v))}</text>`;
+                body += `<text class="${hl ? 'text bold' : 'text'}" x="${pad + labelW + w + 8}" y="${cy + 4}">${esc(group.format(v, lib))}</text>`;
             }
             y += rowH;
         }
@@ -72,6 +73,8 @@ ${body}
 const SPEED = [
     ['decode JPEG', 'decode JPEG'], ['decode PNG', 'decode PNG'], ['decode WebP', 'decode WebP (lossy)'],
     ['encode JPEG', 'encode JPEG (quality 80)'], ['encode PNG', 'encode PNG'], ['encode WebP', 'encode WebP (lossless)'],
+    ['decode AVIF', 'decode AVIF'], ['decode JPEG XL', 'decode JPEG XL'],
+    ['encode AVIF', `encode AVIF (quality ${AVIF_QUALITY})`], ['encode JPEG XL', `encode JPEG XL (quality ${JXL_QUALITY})`],
     ['resize', 'resize to half'], ['rotate', 'rotate by 30°'], ['blur', 'blur (radius 5)'],
     ['composite', 'composite an overlay'], ['crop', 'crop'], ['clone', 'clone'],
     ['text', 'render text'], ['svg', 'render SVG'],
@@ -84,14 +87,18 @@ const NOTES = { resize: 'ImageScript 1: nearest neighbor only, others bilinear' 
 const split = (keys, file, title, input = 'on a 1920×1080 photo') => barChart(title, `operations per second ${input}, more is faster · Node.js ${results.node.match(/\d+/)[0]}, ${cpu}`,
     SPEED.filter(([key]) => keys.includes(key)).map(([key, label]) => ({ title: label, note: NOTES[key], values: ops(key), format: number })), file);
 split(['decode JPEG', 'decode PNG', 'decode WebP', 'encode JPEG', 'encode PNG', 'encode WebP'], 'codecs.svg', 'Decoding and encoding');
+split(['decode AVIF', 'decode JPEG XL', 'encode AVIF', 'encode JPEG XL'], 'modern.svg', 'AVIF and JPEG XL');
 split(['resize', 'rotate', 'blur', 'composite', 'crop', 'clone'], 'operations.svg', 'Image operations');
 split(['text', 'svg'], 'rendering.svg', 'Rendering', `(text at ${TEXT_SIZE}px, SVG ${SVG_WIDTH} wide)`);
 split(['decode GIF', 'encode GIF'], 'animation.svg', 'Animations', 'on a 300×300 GIF with 101 frames');
 
 barChart('Install size', 'node_modules after npm install in an empty project (all dependencies and native binaries), less is better',
     [{ title: 'install size', values: Object.fromEntries(LIBS.map(l => [l, installs[l].bytes])), format: bytes }], 'install.svg');
-barChart('File sizes', 'encoded with each library\'s default settings, less is better',
-    Object.keys(results.sizes).map(key => ({ title: key.replace('JPEG', 'JPEG (quality 80)').replace('WebP', 'WebP (lossless)'), values: results.sizes[key], format: bytes })), 'sizes.svg');
+// (AVIF and JPEG XL with their PSNR: the libraries' quality scales differ)
+const sizeLabel = key => key.replace(/JPEG$/, 'JPEG (quality 80)').replace('WebP', 'WebP (lossless)').replace('AVIF', `AVIF (quality ${AVIF_QUALITY})`).replace('JPEG XL', `JPEG XL (quality ${JXL_QUALITY})`);
+const sizeText = (key, lib) => bytes(results.sizes[key][lib]) + (quality[key]?.[lib] ? `, ${quality[key][lib]} dB` : '');
+barChart('File sizes', 'encoded with each library\'s default settings (AVIF and JPEG XL: at the same quality, with their PSNR), less is better',
+    Object.keys(results.sizes).map(key => ({ title: sizeLabel(key), values: results.sizes[key], format: (v, lib) => sizeText(key, lib) })), 'sizes.svg');
 
 // tables: the same numbers, to read exactly
 const table = (rows, columns, cell) => [
@@ -106,11 +113,13 @@ const readme = `# ImageScript benchmark
 How [ImageScript](https://github.com/matmen/ImageScript) compares to other image libraries for Node.js: speed, file
 sizes and what installing each takes. ImageScript is plain JavaScript with no dependencies, so it runs wherever
 JavaScript does, like Jimp, image-js and PureJsImage; sharp and @napi-rs/canvas wrap native libraries (libvips, Skia),
-Photon and ImageScript 1 are WebAssembly.
+Photon and ImageScript 1 are WebAssembly, and so is jsquash (Squoosh's libavif and libjxl, for AVIF and JPEG XL).
 
 <img src="charts/install.svg" alt="Install size of each library">
 
 <img src="charts/codecs.svg" alt="Decoding and encoding speed">
+
+<img src="charts/modern.svg" alt="AVIF and JPEG XL decoding and encoding speed">
 
 <img src="charts/operations.svg" alt="Speed of image operations">
 
@@ -128,7 +137,7 @@ ${table(SPEED, LIBS, speedCell)}
 
 Encoded sizes:
 
-${table(Object.keys(results.sizes).map(k => [k, k]), LIBS, (key, lib) => results.sizes[key][lib] ? bytes(results.sizes[key][lib]) : '–')}
+${table(Object.keys(results.sizes).map(k => [k, k]), LIBS, (key, lib) => results.sizes[key][lib] ? sizeText(key, lib) : '–')}
 
 | | ${LIBS.map(l => `**${l}**`).join(' | ')} |
 |---|${LIBS.map(() => '---').join('|')}|
@@ -140,8 +149,14 @@ ${table(Object.keys(results.sizes).map(k => [k, k]), LIBS, (key, lib) => results
 ## Method
 
 - Inputs (in \`inputs/\`, sources in [inputs/SOURCES.md](inputs/SOURCES.md)): a 1920×1080 photo (JPEG, and made from it
-  when the benchmark starts, PNG and lossy WebP), a 1434×1434 graphic with transparency (PNG), a 445×445 diagram with
-  transparency placed on the photo (PNG), a 300×300 GIF with 101 frames.
+  when the benchmark starts, PNG, lossy WebP, AVIF by sharp (libaom) and JPEG XL by jsquash (libjxl, effort 7), both
+  at the qualities below), a 1434×1434 graphic with transparency (PNG), a 445×445 diagram with transparency placed on
+  the photo (PNG), a 300×300 GIF with 101 frames.
+- AVIF and JPEG XL are encoded at the same nominal quality (${AVIF_QUALITY} and ${JXL_QUALITY}); as the libraries' scales differ,
+  the file sizes come with their PSNR (of the color over black, decoded by libavif and libjxl). PureJsImage's AVIF
+  encoder has no quality option, and its JPEG XL decoder doesn't support everything libjxl's files use, which shows as
+  failing. jsquash only encodes and decodes AVIF and JPEG XL (it gets the other inputs as pixels); @napi-rs/canvas
+  decodes both with Skia's codecs, but doesn't encode them.
 - Rendering: "${TEXT}" in Source Sans 3 at ${TEXT_SIZE}px, and \`tests/svgs/features.svg\` (gradients, clipping,
   CSS) at ${SVG_WIDTH} pixels wide. Jimp, image-js, PureJsImage and Photon can't render TrueType/OpenType fonts or SVGs; ImageScript 1 crashes
   on this SVG; @napi-rs/canvas (Skia's SVG module) ignores its CSS, so it draws a little less.
@@ -154,7 +169,7 @@ ${table(Object.keys(results.sizes).map(k => [k, k]), LIBS, (key, lib) => results
   otherwise, e.g. its PNG compression level.
 - Threads: ImageScript uses worker threads where they pay off (the processors available, at most 8), and sharp gets
   as many (\`sharp.concurrency()\`; its default on glibc Linux without jemalloc, like on CI, is one). The other
-  libraries run on one thread.
+  libraries run on one thread (jsquash turns its threaded builds off in Node).
 - [tinybench](https://github.com/tinylibs/tinybench), at least 1.5 seconds and 3 runs per measurement, every library
   in its own process.
 - The release workflow runs the benchmark for every release and commits the results, on a GitHub Actions runner;

@@ -7,6 +7,7 @@ import { libraries } from './libs.js';
 
 const file = new URL('./results.json', import.meta.url);
 const previous = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file)) : { speed: {}, sizes: {} };
+previous.quality ??= {};
 const names = process.argv.length > 2 ? process.argv.slice(2) : libraries.map(l => l.name);
 
 // os.cpus() reports "unknown" inside some containers, /proc/cpuinfo still has the model
@@ -17,7 +18,8 @@ const results = {
     cpu: cpu && cpu !== 'unknown' ? cpu : fs.readFileSync('/proc/cpuinfo', 'utf8').match(/model name\s*:\s*(.+)/)?.[1] ?? 'unknown',
     versions: { ...previous.versions },
     speed: previous.speed,
-    sizes: previous.sizes
+    sizes: previous.sizes,
+    quality: previous.quality
 };
 
 for (const name of names) {
@@ -25,10 +27,11 @@ for (const name of names) {
     if (!lib) throw new Error(`unknown library ${name}`);
     const output = execFileSync(process.execPath, ['--expose-gc', new URL('./bench.js', import.meta.url).pathname, name],
         { stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 1 << 24 });
-    const { speed, sizes } = JSON.parse(output);
-    for (const table of [results.speed, results.sizes]) for (const task in table) delete table[task][name];
+    const { speed, sizes, quality } = JSON.parse(output);
+    for (const table of [results.speed, results.sizes, results.quality]) for (const task in table) delete table[task][name];
     for (const [task, r] of Object.entries(speed)) (results.speed[task] ??= {})[name] = r;
     for (const [task, size] of Object.entries(sizes)) (results.sizes[task] ??= {})[name] = size;
+    for (const [task, db] of Object.entries(quality)) (results.quality[task] ??= {})[name] = db;
     results.versions[name] = process.env.IMAGESCRIPT === 'local' && lib.package === 'imagescript'
         ? 'local' : JSON.parse(fs.readFileSync(new URL(`./node_modules/${lib.package}/package.json`, import.meta.url))).version;
 }

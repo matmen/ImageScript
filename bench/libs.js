@@ -20,6 +20,21 @@ const photon = require('@silvia-odwyer/photon-node');
 const { createImageLibrary } = await import('purejsimage');
 const { allCodecs } = await import('purejsimage/codecs/all');
 const pureJsImage = createImageLibrary(allCodecs);
+// jsquash: Squoosh's libavif and libjxl builds (their threaded builds are off in Node: one thread), the modules given
+const jsquash = {};
+for (const [name, file] of [['avif/encode', 'avif/codec/enc/avif_enc.wasm'], ['avif/decode', 'avif/codec/dec/avif_dec.wasm'],
+    ['jxl/encode', 'jxl/codec/enc/jxl_enc.wasm'], ['jxl/decode', 'jxl/codec/dec/jxl_dec.wasm']]) {
+    const codec = await import(`@jsquash/${name}.js`);
+    await codec.init(await WebAssembly.compile(fs.readFileSync(new URL(`./node_modules/@jsquash/${file}`, import.meta.url))));
+    jsquash[name] = codec.default;
+}
+
+/** libavif's or libjxl's RGBA of an AVIF or JPEG XL (for the quality of the encoded files) */
+export const referenceDecode = async (data, format) => (await jsquash[`${format}/decode`](data)).data;
+
+// lossy AVIF and JPEG XL at the same nominal quality in every library (their scales differ: the file sizes come with
+// their PSNR)
+export const AVIF_QUALITY = 60, JXL_QUALITY = 90;
 
 // the same work in every library: halve the size (bilinear where it can be chosen), rotate by 30° (growing the
 // image to fit), blur with a radius/sigma of 5, place a semi-transparent overlay, cut out a quarter
@@ -33,13 +48,15 @@ const font = fs.readFileSync(FONT_FILE), svg = fs.readFileSync(SVG_FILE, 'utf8')
 const svgScale = SVG_WIDTH / Number(svg.match(/<svg[^>]*\swidth="(\d+)/)[1]);
 const svgAtWidth = svg.replace(/<svg[^>]*>/, tag => tag.replace(/\s(width|height)="(\d+)"/g, (_, name, value) => ` ${name}="${Math.round(value * svgScale)}"`));
 
-const imageScript = (IS, { version, package: pkg, kind, blur = true, webp = true, bilinear = true }) => ({
+const imageScript = (IS, { version, package: pkg, kind, blur = true, webp = true, bilinear = true, modern = true }) => ({
     name: `ImageScript ${version}`, package: pkg, kind,
+    ...modern && { decodes: ['avif', 'jxl'] },
     decode: data => IS.Image.decode(data),
     encode: {
         png: image => image.encode(),
         jpeg: image => image.encodeJPEG(80),
-        ...webp && { webp: image => image.encodeWebP() }
+        ...webp && { webp: image => image.encodeWebP() },
+        ...modern && { avif: image => image.encodeAVIF({ quality: AVIF_QUALITY }), jxl: image => image.encodeJXL({ quality: JXL_QUALITY }) }
     },
     resize: image => image.clone().resize(...RESIZE, bilinear ? IS.Image.RESIZE_BILINEAR : IS.Image.RESIZE_NEAREST_NEIGHBOR),
     rotate: image => image.clone().rotate(ANGLE),
@@ -71,7 +88,7 @@ const drawn = (width, height, draw) => {
 
 export const libraries = [
     imageScript(ImageScript, { version: '3', package: 'imagescript', kind: 'JavaScript' }),
-    imageScript(ImageScriptV1, { version: '1', package: 'imagescript-v1', kind: 'WebAssembly', blur: false, webp: false, bilinear: false }),
+    imageScript(ImageScriptV1, { version: '1', package: 'imagescript-v1', kind: 'WebAssembly', blur: false, webp: false, bilinear: false, modern: false }),
     {
         name: 'Jimp', package: 'jimp', kind: 'JavaScript',
         decode: data => Jimp.fromBuffer(data),
@@ -104,12 +121,14 @@ export const libraries = [
         // PureJsImage works on pipelines from encoded data to encoded data, without decoded images: a decoded image is
         // a BMP, its fastest uncompressed format (a BMP to BMP pipeline takes about 40 ms on the photo), and every
         // operation runs a pipeline from it back to a BMP, like sharp's raw pixels
-        name: 'PureJsImage', package: 'purejsimage', kind: 'JavaScript',
+        name: 'PureJsImage', package: 'purejsimage', kind: 'JavaScript', decodes: ['avif', 'jxl'],
         decode: async data => toBmp(await pureJsImage.open(data)),
         encode: {
             png: async image => (await pureJsImage.open(image)).png().toUint8Array(),
             jpeg: async image => (await pureJsImage.open(image)).jpeg({ quality: 80 }).toUint8Array(),
-            webp: async image => (await pureJsImage.open(image)).webp({ lossless: true }).toUint8Array()
+            webp: async image => (await pureJsImage.open(image)).webp({ lossless: true }).toUint8Array(),
+            // (it has no quality option)
+            avif: async image => (await pureJsImage.open(image)).avif().toUint8Array()
         },
         resize: async image => toBmp((await pureJsImage.open(image)).resize({ width: RESIZE[0], height: RESIZE[1], kernel: 'bilinear', fit: 'fill' })),
         rotate: async image => toBmp((await pureJsImage.open(image)).rotate(ANGLE, { background: 'transparent' })),
@@ -132,12 +151,13 @@ export const libraries = [
         clone: image => clonePhoton(image)
     },
     {
-        name: 'sharp', package: 'sharp', kind: 'native (libvips)',
+        name: 'sharp', package: 'sharp', kind: 'native (libvips)', decodes: ['avif'],
         decode: async data => toRaw(sharp(data).ensureAlpha()),
         encode: {
             png: image => pipeline(image).png().toBuffer(),
             jpeg: image => pipeline(image).jpeg({ quality: 80 }).toBuffer(),
-            webp: image => pipeline(image).webp({ lossless: true }).toBuffer()
+            webp: image => pipeline(image).webp({ lossless: true }).toBuffer(),
+            avif: image => pipeline(image).avif({ quality: AVIF_QUALITY }).toBuffer()
         },
         resize: image => toRaw(pipeline(image).resize(...RESIZE, { kernel: 'linear', fit: 'fill' })),
         rotate: image => toRaw(pipeline(image).rotate(ANGLE, { background: { r: 0, g: 0, b: 0, alpha: 0 } })),
@@ -154,6 +174,16 @@ export const libraries = [
             decode: async data => { const { data: pixels, info } = await sharp(data, { animated: true }).ensureAlpha().raw().toBuffer({ resolveWithObject: true }); return { pixels, info }; },
             encode: ({ pixels, info }) => sharp(pixels, { raw: { width: info.width, height: info.height, channels: 4, pageHeight: info.pageHeight } })
                 .gif({ delay: info.delay, loop: info.loop }).toBuffer()
+        }
+    },
+    {
+        // AVIF and JPEG XL only: a decoded image is an ImageData, made from raw pixels for the other inputs
+        name: 'jsquash', package: '@jsquash/avif', packages: ['@jsquash/avif', '@jsquash/jxl'], kind: 'WebAssembly', decodes: ['avif', 'jxl'],
+        fromPixels: ({ data, width, height }) => ({ data: new Uint8ClampedArray(data), width, height, colorSpace: 'srgb' }),
+        decode: data => data[4] === 0x66 && data[5] === 0x74 ? jsquash['avif/decode'](data) : jsquash['jxl/decode'](data),
+        encode: {
+            avif: image => jsquash['avif/encode'](image, { quality: AVIF_QUALITY }),
+            jxl: image => jsquash['jxl/encode'](image, { quality: JXL_QUALITY })
         }
     },
     {
