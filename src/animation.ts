@@ -1,3 +1,4 @@
+import { profileTransform } from './util/icc.ts';
 import * as gifCodec from './codecs/gif.ts';
 import * as png from './codecs/png.ts';
 import * as webp from './codecs/webp.ts';
@@ -42,6 +43,8 @@ export interface AnimationDecodeOptions {
      * bombs) can't exhaust the memory. Default: `268402689` (16383², like sharp), `Infinity` for no limit
      */
     maxPixels?: number;
+    /** Whether to convert the colors of frames with an embedded ICC profile (APNGs, WebPs) to sRGB, like `applyColorProfile` of {@link Image.decode}. Default: `true` */
+    applyColorProfile?: boolean;
 }
 
 /** The options all animation encoders have */
@@ -414,7 +417,12 @@ export class Animation extends Array<Frame> {
      * @ignore
      */
     private static async __decode__(input: BinaryData, onlyFirstFrameOrOptions: boolean | AnimationDecodeOptions): Promise<Animation> {
-        const { onlyFirstFrame: onlyExtractFirstFrame = false, maxPixels = MAX_PIXELS } = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions : { onlyFirstFrame: onlyFirstFrameOrOptions };
+        const { onlyFirstFrame: onlyExtractFirstFrame = false, maxPixels = MAX_PIXELS, applyColorProfile = true } = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions : { onlyFirstFrame: onlyFirstFrameOrOptions };
+        const profile = (frames: Frame[], icc: Uint8Array | undefined): Frame[] => {
+            const transform = applyColorProfile && icc ? profileTransform(icc) : null;
+            if (transform) for (const frame of frames) transform(frame.bitmap);
+            return frames;
+        };
         const data = view(input);
         const type = ImageType.getType(data);
 
@@ -422,18 +430,18 @@ export class Animation extends Array<Frame> {
 
         if (type === 'webp') {
             const decoded = webp.decodeAnimation(data, onlyExtractFirstFrame, maxPixels);
-            const frames = canvasFrames(decoded.width, decoded.height, webp.composite(decoded));
+            const frames = profile(canvasFrames(decoded.width, decoded.height, webp.composite(decoded)), decoded.icc);
             return new Animation(frames, fromPlays(decoded.loopCount));
         }
 
         // (still PNGs decode like images, keeping their orientation as it is like before)
         if (type === 'png' && !png.isAnimated(data)) {
-            const image = await Image.decode(data, { maxPixels, applyOrientation: false });
+            const image = await Image.decode(data, { maxPixels, applyOrientation: false, applyColorProfile });
             return new Animation(canvasFrames(image.width, image.height, [{ pixels: image.bitmap, duration: 0 }]), -1);
         }
         if (type === 'png') {
             const decoded = await png.decodeAnimation(data, onlyExtractFirstFrame, maxPixels);
-            const frames = canvasFrames(decoded.width, decoded.height, png.compositeAnimation(decoded));
+            const frames = profile(canvasFrames(decoded.width, decoded.height, png.compositeAnimation(decoded)), decoded.icc);
             return new Animation(frames, decoded.frames.length > 1 ? fromPlays(decoded.plays) : -1);
         }
 
@@ -450,7 +458,7 @@ export class Animation extends Array<Frame> {
             return new Animation(frames, frames.length > 1 ? loopCount : -1);
         }
 
-        if (type) return new Animation([Frame.from(await Image.decode(data, { maxPixels }), 0)]);
+        if (type) return new Animation([Frame.from(await Image.decode(data, { maxPixels, applyColorProfile }), 0)]);
         throw new Error('Unsupported image type');
     }
 

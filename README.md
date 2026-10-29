@@ -51,6 +51,7 @@ Coordinates are 0-based, `(0, 0)` is the top left pixel. A bigger example is the
 
 Animated WebPs and JPEG XLs decode too, and [animations](https://imagescript.matmen.dev/classes/Animation.html)
 encode as GIF, APNG or WebP, also [a frame at a time](https://imagescript.matmen.dev/classes/Animation.html#webpencoder).
+Embedded ICC color profiles (Display P3, Adobe RGB, ...) are converted to sRGB when decoding, like browsers show them.
 
 - [Text rendering](https://imagescript.matmen.dev/classes/Image.html#rendertext) with TrueType and OpenType fonts,
   in every script, with color emoji

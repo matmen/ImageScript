@@ -17,6 +17,7 @@ import * as quantize from './codecs/quantize.ts';
 import * as textRenderer from './render/text.ts';
 import * as svgRenderer from './render/svg.ts';
 import { BinaryData, view } from './util/mem.ts';
+import { profileTransform } from './util/icc.ts';
 import { ImageType } from './image-type.ts';
 import { TextLayout } from './text-layout.ts';
 import { Metadata, resolveMetadata, pngText, exifData } from './metadata.ts';
@@ -183,6 +184,14 @@ export interface TextOptions extends TextStyle {
 export interface DecodeOptions {
     /** Whether to rotate/mirror JPEGs, TIFFs, PNGs and WebPs as their orientation tag (Exif or XMP) says. Default: `true` */
     applyOrientation?: boolean;
+    /**
+     * Whether to convert the colors of images with an embedded ICC profile (PNG, JPEG, WebP, AVIF, TIFF) to sRGB, like
+     * browsers show them: wide gamut photos (Display P3 from phones, Adobe RGB, ProPhoto) look as intended instead of
+     * washed out. Matrix/TRC profiles (RGB and gray) are applied, relative colorimetric (colors outside sRGB are
+     * clipped); profiles with only lookup tables, CMYK ones and ones that are sRGB anyway leave the pixels as they are.
+     * Default: `true`
+     */
+    applyColorProfile?: boolean;
     /**
      * The most pixels to decode: larger images throw a RangeError before anything that size is allocated, so small
      * files declaring huge images (decompression bombs) can't exhaust the memory. Default: `268402689` (16383², like
@@ -2202,12 +2211,12 @@ export class Image {
      * @return The decoded image
      */
     static async decode(input: BinaryData, options: DecodeOptions = {}): Promise<Image> {
-        const { applyOrientation = true, maxPixels = MAX_PIXELS, toneMapping = 'reinhard' } = options;
+        const { applyOrientation = true, applyColorProfile = true, maxPixels = MAX_PIXELS, toneMapping = 'reinhard' } = options;
         if (toneMapping !== 'reinhard' && toneMapping !== 'clamp') throw new TypeError(`toneMapping must be 'reinhard' or 'clamp', not ${String(toneMapping)}`);
         const data = view(input);
         const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
-        const decoded: { width: number, height: number, pixels: Uint8Array, orientation?: number } = await decoding(() => {
+        const decoded: { width: number, height: number, pixels: Uint8Array, orientation?: number, icc?: Uint8Array } = await decoding(() => {
             if (ImageType.isPNG(dataView)) return png.decode(data, maxPixels);
             if (ImageType.isJPEG(dataView)) return jpeg.decode(data, { maxPixels });
             if (ImageType.isTIFF(dataView)) return tiff.decode(data, maxPixels);
@@ -2233,6 +2242,7 @@ export class Image {
             throw new Error('Unsupported image type');
         });
 
+        if (applyColorProfile && decoded.icc) profileTransform(decoded.icc)?.(decoded.pixels);
         // the decoded pixels become the bitmap, without a copy
         const image = new Image(decoded.width, decoded.height);
         image.bitmap = decoded.pixels;

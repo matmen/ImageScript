@@ -47,7 +47,7 @@ interface SampleReader {
     (rowOffset: number, n: number): { raw: number, value: number };
 }
 
-export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS): Promise<{ width: number, height: number, pixels: Uint8Array, orientation: number }> {
+export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS): Promise<{ width: number, height: number, pixels: Uint8Array, orientation: number, icc?: Uint8Array }> {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
     let little: boolean;
@@ -130,6 +130,9 @@ export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS): Promise<
         return v && v.length ? v[0] : fallback;
     }
 
+    // the ICC profile (InterColorProfile, its bytes)
+    const profileTag = tags.get(34675);
+    const icc = profileTag && TYPE_SIZES[profileTag.type] === 1 ? data.subarray(profileTag.offset, profileTag.offset + profileTag.count) : undefined;
     const orientationTag = value(TAGS.Orientation, 1);
     const orientation = orientationTag >= 1 && orientationTag <= 8 ? orientationTag : 1;
     const width = value(TAGS.ImageWidth);
@@ -206,7 +209,7 @@ export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS): Promise<
             blitRGBA(decoded.pixels, decoded.width, decoded.height, pixels, width, height, (s % segmentsAcross) * segmentWidth, (s / segmentsAcross | 0) * segmentHeight);
         }
 
-        return { width, height, pixels, orientation };
+        return { width, height, pixels, orientation, icc };
     }
 
     // decompress every segment into a contiguous sample buffer (one plane per sample when planar)
@@ -231,7 +234,7 @@ export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS): Promise<
         }
 
         ycbcrUnitsToRGBA(units, width, height, h, v, ycbcrConversion(values), pixels);
-        return { width, height, pixels, orientation };
+        return { width, height, pixels, orientation, icc };
     }
 
     const rowBytes = Math.ceil(width * samplesPerRow * bps / 8);
@@ -312,7 +315,7 @@ export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS): Promise<
         }
     }
 
-    return { width, height, pixels, orientation };
+    return { width, height, pixels, orientation, icc };
 }
 
 // returns a function reading the n-th sample of a row as {raw, value} with value scaled to 8 bits

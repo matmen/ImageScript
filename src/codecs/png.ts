@@ -13,6 +13,8 @@ const tRNS = 0x74524e53;
 const IDAT = 0x49444154;
 const IEND = 0x49454e44;
 const eXIf = 0x65584966;
+const iCCP = 0x69434350;
+const sRGB = 0x73524742;
 const tEXt = 0x74455874;
 const zTXt = 0x7a545874;
 const iTXt = 0x69545874;
@@ -47,6 +49,8 @@ export interface Decoded {
     pixels: Uint8Array;
     /** Exif orientation (1-8) */
     orientation: number;
+    /** the embedded ICC profile (unless an sRGB chunk says the image is sRGB) */
+    icc?: Uint8Array;
 }
 
 // where the pixels of an (interlacing) pass go: output offset of the pass' row y, and the step between its pixels
@@ -485,6 +489,8 @@ interface Parsed {
     transparency: Uint8Array | null;
     idat: Uint8Array[];
     exif: Uint8Array | null;
+    /** the iCCP chunk, null if there is none or an sRGB chunk */
+    iccp: Uint8Array | null;
     text: Array<{ type: number, chunk: Uint8Array }>;
     /** set for APNGs: number of frames and plays (0 = forever) */
     animation: { frames: number, plays: number } | null;
@@ -505,6 +511,7 @@ function parse(array: Uint8Array): Parsed {
     let transparency: Uint8Array | null = null;
     const idat: Uint8Array[] = [];
     let exif: Uint8Array | null = null;
+    let iccp: Uint8Array | null = null, srgb = false;
     const text: Array<{ type: number, chunk: Uint8Array }> = [];
     let animation: Parsed['animation'] = null;
     const frames: Parsed['frames'] = [];
@@ -575,6 +582,8 @@ function parse(array: Uint8Array): Parsed {
             if (length < 4 || view.getUint32(start) !== sequence++ || !current || current.data === idat) animationError = true;
             else current.data.push(chunk.subarray(4));
         } else if (type === eXIf) exif ??= chunk;
+        else if (type === iCCP) iccp ??= chunk;
+        else if (type === sRGB) srgb = true;
         else if (type === tEXt || type === zTXt || type === iTXt) text.push({ type, chunk });
         else if (type === IEND) break;
 
@@ -596,7 +605,7 @@ function parse(array: Uint8Array): Parsed {
         if (frames.length > animation.frames) frames.length = animation.frames;
         if (!frames.length || frames.length < animation.frames || frames.some(f => !f.data.length)) animationError = true;
     }
-    return { header, palette, transparency, idat, exif, text, animation, frames, animationError };
+    return { header, palette, transparency, idat, exif, iccp: srgb ? null : iccp, text, animation, frames, animationError };
 }
 
 // the interlace passes of an image ([x start, y start, x step, y step, width, height]) and its inflated size
@@ -655,7 +664,19 @@ export async function decode(array: Uint8Array, maxPixels = MAX_PIXELS): Promise
     const { width, height } = p.header;
     checkPixels(width, height, maxPixels);
     const pixels = await decodeImageData(p, p.idat, width, height);
-    return { width, height, pixels, orientation: p.exif ? exifOrientation(p.exif) : await textOrientation(p.text) };
+    return { width, height, pixels, orientation: p.exif ? exifOrientation(p.exif) : await textOrientation(p.text), icc: await profile(p.iccp) };
+}
+
+// an iCCP chunk's profile (a name, the compression method 0, the deflated profile), undefined if it's damaged
+async function profile(chunk: Uint8Array | null): Promise<Uint8Array | undefined> {
+    if (!chunk) return undefined;
+    const separator = chunk.indexOf(0);
+    if (separator < 1 || separator > 79 || chunk[separator + 1] !== 0) return undefined;
+    try {
+        return await decompressAsync(chunk.subarray(separator + 2), 1 << 26);
+    } catch {
+        return undefined;
+    }
 }
 
 /** Decodes a PNG into 8-bit RGBA at once (inflated without the native, asynchronous streams; for small images) */
@@ -697,7 +718,7 @@ export function isAnimated(array: Uint8Array): boolean {
  * a single frame
  * @return plays: 0 = forever
  */
-export async function decodeAnimation(array: Uint8Array, onlyFirstFrame = false, maxPixels = MAX_PIXELS): Promise<{ width: number, height: number, plays: number, frames: APNGFrame[] }> {
+export async function decodeAnimation(array: Uint8Array, onlyFirstFrame = false, maxPixels = MAX_PIXELS): Promise<{ width: number, height: number, plays: number, frames: APNGFrame[], icc?: Uint8Array }> {
     const p = parse(array);
     const { width, height } = p.header;
     // every frame is composited onto a canvas of its own
@@ -706,7 +727,7 @@ export async function decodeAnimation(array: Uint8Array, onlyFirstFrame = false,
     // broken animations show the default image, like browsers do
     if (!p.animation || p.animationError) {
         const pixels = await decodeImageData(p, p.idat, width, height);
-        return { width, height, plays: 0, frames: [{ x: 0, y: 0, width, height, duration: 0, dispose: 0, blend: 0, pixels }] };
+        return { width, height, plays: 0, frames: [{ x: 0, y: 0, width, height, duration: 0, dispose: 0, blend: 0, pixels }], icc: await profile(p.iccp) };
     }
 
     const frames: APNGFrame[] = [];
@@ -722,7 +743,7 @@ export async function decodeAnimation(array: Uint8Array, onlyFirstFrame = false,
         if (onlyFirstFrame) break;
     }
 
-    return { width, height, plays: p.animation.plays, frames };
+    return { width, height, plays: p.animation.plays, frames, icc: await profile(p.iccp) };
 }
 
 /**

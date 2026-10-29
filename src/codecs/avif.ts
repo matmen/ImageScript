@@ -5,6 +5,7 @@
  * (PQ, HLG) tone mapped. Copyright 2019 Joe Drago, BSD-2-Clause License (see THIRD_PARTY_NOTICES.md)
  */
 
+import { parseProfile } from '../util/icc.ts';
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { decodeAV1, Frame } from './av1/frame.ts';
 import { toSRGB, hdrToLinear, ToneMapping } from './hdr.ts';
@@ -472,7 +473,7 @@ function toRgba(y: Yuv, alpha: Yuv | null, toneMapping: ToneMapping, premultipli
 }
 
 /** Decodes an AVIF (its primary item, or the first frame of an image sequence) into RGBA */
-export function decode(d: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard'): { width: number, height: number, pixels: Uint8Array } {
+export function decode(d: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard'): { width: number, height: number, pixels: Uint8Array, icc?: Uint8Array } {
     if (!isAVIF(d)) throw new Error('AVIF: invalid header');
     let meta: Box | undefined, moov: Box | undefined;
     for (const box of boxes(d, 0, d.length)) {
@@ -497,6 +498,13 @@ export function decode(d: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneM
             const alphaItem = alphaOf(primary);
             const color = decodeItem(d, it, items, idat, maxPixels);
             applyColr(d, it, color);
+            // an ICC profile describes the RGB values (rather than the primaries and transfer of the nclx box or the
+            // sequence header), if it can be applied
+            const icc = iccOf(d, it);
+            if (icc && parseProfile(icc)) {
+                color.primaries = 1;
+                color.transfer = 13;
+            }
             let alpha = alphaItem ? decodeItem(d, alphaItem, items, idat, maxPixels) : null;
             if (!alphaItem && it.type === 'grid') {
                 // or each of a grid's tiles has an alpha item, arranged like them
@@ -511,11 +519,20 @@ export function decode(d: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneM
                 else if (box.type === 'irot') ({ width, height, pixels } = rotate(pixels, width, height, d[box.start] & 3));
                 else if (box.type === 'imir') pixels = mirror(pixels, width, height, d[box.start] & 1);
             }
-            return { width, height, pixels };
+            return { width, height, pixels, icc };
         }
     }
     if (moov) return decodeSequence(d, moov, maxPixels, toneMapping);
     throw new Error('AVIF: no image');
+}
+
+// the ICC profile of a colr box (prof or rICC)
+function iccOf(d: Uint8Array, it: Item): Uint8Array | undefined {
+    for (const { box } of it.props) {
+        const type = box.type === 'colr' && box.end - box.start > 4 ? fourcc(d, box.start) : '';
+        if (type === 'prof' || type === 'rICC') return d.subarray(box.start + 4, box.end);
+    }
+    return undefined;
 }
 
 // the colr box's (nclx) color description overrides the AV1 sequence header's

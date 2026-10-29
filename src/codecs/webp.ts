@@ -15,7 +15,7 @@ import { finite } from '../util/options.ts';
 const fourCC = (s: string): number => s.charCodeAt(0) | s.charCodeAt(1) << 8 | s.charCodeAt(2) << 16 | s.charCodeAt(3) << 24;
 const RIFF = fourCC('RIFF'), WEBP = fourCC('WEBP');
 const VP8 = fourCC('VP8 '), VP8L = fourCC('VP8L'), VP8X = fourCC('VP8X');
-const ALPH = fourCC('ALPH'), ANIM = fourCC('ANIM'), ANMF = fourCC('ANMF'), EXIF = fourCC('EXIF');
+const ALPH = fourCC('ALPH'), ANIM = fourCC('ANIM'), ANMF = fourCC('ANMF'), EXIF = fourCC('EXIF'), ICCP = fourCC('ICCP');
 
 export interface WebPFrame {
     x: number;
@@ -40,6 +40,8 @@ export interface WebPAnimation {
     /** ARGB background color hint (decoders, like browsers, are free to ignore it) */
     background: number;
     frames: WebPFrame[];
+    /** the embedded ICC profile */
+    icc?: Uint8Array;
 }
 
 interface Chunk {
@@ -151,9 +153,10 @@ export function isAnimated(data: Uint8Array): boolean {
 /**
  * Decodes a still WebP into RGBA pixels. Animated WebPs decode to their first frame composited on the canvas
  */
-export function decode(data: Uint8Array, maxPixels = MAX_PIXELS): { width: number, height: number, pixels: Uint8Array, orientation: number } {
+export function decode(data: Uint8Array, maxPixels = MAX_PIXELS): { width: number, height: number, pixels: Uint8Array, orientation: number, icc?: Uint8Array } {
     const list = container(data);
     if (!list.length) throw new Error('WebP: no image data');
+    const icc = list.find(c => c.type === ICCP)?.data;
 
     let orientation = 1;
     const exif = list.find(c => c.type === EXIF);
@@ -162,7 +165,7 @@ export function decode(data: Uint8Array, maxPixels = MAX_PIXELS): { width: numbe
     if (list.some(c => c.type === ANMF)) {
         const animation = decodeAnimation(data, true, maxPixels);
         const frame = composite(animation)[0];
-        return { width: animation.width, height: animation.height, pixels: frame.pixels, orientation };
+        return { width: animation.width, height: animation.height, pixels: frame.pixels, orientation, icc };
     }
 
     const image = decodeBitstream(list, maxPixels);
@@ -171,7 +174,7 @@ export function decode(data: Uint8Array, maxPixels = MAX_PIXELS): { width: numbe
         const width = u24(list[0].data, 4) + 1, height = u24(list[0].data, 7) + 1;
         if (width !== image.width || height !== image.height) throw new Error('WebP: canvas and image sizes differ');
     }
-    return { ...image, orientation };
+    return { ...image, orientation, icc };
 }
 
 /**
@@ -182,7 +185,7 @@ export function decodeAnimation(data: Uint8Array, onlyFirstFrame = false, maxPix
     const header = list[0];
     if (!header || header.type !== VP8X || !list.some(c => c.type === ANMF)) {
         const { width, height, pixels } = decodeBitstream(list, maxPixels);
-        return { width, height, loopCount: 0, background: 0, frames: [{ x: 0, y: 0, width, height, duration: 0, blend: false, dispose: false, pixels }] };
+        return { width, height, loopCount: 0, background: 0, frames: [{ x: 0, y: 0, width, height, duration: 0, blend: false, dispose: false, pixels }], icc: list.find(c => c.type === ICCP)?.data };
     }
 
     if (header.data.length < 10) throw new Error('WebP: invalid VP8X chunk');
@@ -217,7 +220,7 @@ export function decodeAnimation(data: Uint8Array, onlyFirstFrame = false, maxPix
     }
 
     if (!frames.length) throw new Error('WebP: animation without frames');
-    return { width, height, loopCount, background, frames };
+    return { width, height, loopCount, background, frames, icc: list.find(c => c.type === ICCP)?.data };
 }
 
 /**
