@@ -12,6 +12,12 @@ import * as hdr from './codecs/hdr.ts';
 import * as avif from './codecs/avif.ts';
 import * as avifEnc from './codecs/avif-enc.ts';
 import { availableThreads } from './util/threads.ts';
+
+// (worker threads: the processors available, at most 8)
+const defaultThreads = (): number => Math.max(1, Math.min(availableThreads(), 8));
+const checkThreads = (threads: number): void => {
+    if (!Number.isInteger(threads) || threads < 1) throw new RangeError(`threads must be a positive integer, not ${threads}`);
+};
 import * as jxl from './codecs/jxl.ts';
 import type { ToneMapping } from './codecs/hdr.ts';
 import * as quantize from './codecs/quantize.ts';
@@ -221,6 +227,13 @@ export interface JXLEncodeOptions {
      * text-like features that repeat (the glyphs of screenshots) once, as patches like `cjxl -e 7`. Default: `1`
      */
     effort?: number;
+    /**
+     * At most this many worker threads search the transforms of lossy compression in parallel (the same file, faster),
+     * `1` for none. Effort 0 (no search), small images (under about 512x512 pixels at effort 1, 384x384 at 2), and
+     * runtimes whose workers can't share memory (browsers without cross-origin isolation) encode without them.
+     * Default: the processors available, at most 8
+     */
+    threads?: number;
     /** Metadata to include, see {@link Metadata} */
     metadata?: Metadata;
 }
@@ -2176,8 +2189,8 @@ export class Image {
      * Encodes the image as AVIF (AV1, with an alpha image if the image has transparency)
      * @param options See {@link AVIFEncodeOptions}
      */
-    async encodeAVIF({ quality = 60, alphaQuality = 100, subsampling = '4:4:4', effort = 1, threads = Math.max(1, Math.min(availableThreads(), 8)), metadata = {} }: AVIFEncodeOptions = {}): Promise<Uint8Array> {
-        if (!Number.isInteger(threads) || threads < 1) throw new RangeError(`threads must be a positive integer, not ${threads}`);
+    async encodeAVIF({ quality = 60, alphaQuality = 100, subsampling = '4:4:4', effort = 1, threads = defaultThreads(), metadata = {} }: AVIFEncodeOptions = {}): Promise<Uint8Array> {
+        checkThreads(threads);
         const exif = exifData(resolveMetadata(metadata));
         return avifEnc.encode(this.__bytes__(), this.width, this.height, { quality: finite(quality, 'quality'), alphaQuality: finite(alphaQuality, 'alphaQuality'), subsampling, effort, exif, threads });
     }
@@ -2190,8 +2203,9 @@ export class Image {
      * transparency) is lossless either way. The codestream is in the container, with the metadata as Exif
      * @param options See {@link JXLEncodeOptions}
      */
-    async encodeJXL({ quality, effort = 1, metadata = {} }: JXLEncodeOptions = {}): Promise<Uint8Array> {
+    async encodeJXL({ quality, effort = 1, threads = defaultThreads(), metadata = {} }: JXLEncodeOptions = {}): Promise<Uint8Array> {
         if (!Number.isInteger(effort) || effort < 0 || effort > 2) throw new RangeError(`effort must be an integer 0-2, not ${effort}`);
+        checkThreads(threads);
         let distance = 0;
         if (quality !== undefined) {
             const q = finite(quality, 'quality');
@@ -2199,7 +2213,7 @@ export class Image {
             // (cjxl's distance of a quality)
             distance = q >= 100 ? 0 : q >= 30 ? 0.1 + (100 - q) * 0.09 : 53 / 3000 * q * q - 23 / 20 * q + 25;
         }
-        return jxl.encode(this.__bytes__(), this.width, this.height, exifData(resolveMetadata(metadata)), distance, effort);
+        return jxl.encode(this.__bytes__(), this.width, this.height, exifData(resolveMetadata(metadata)), distance, effort, threads);
     }
 
     /**

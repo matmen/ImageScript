@@ -129,3 +129,37 @@ export function startThreads(n: number): Thread[] | null {
         return null;
     }
 }
+
+/** A task split into chunks, for runChunks: the worker task's name and its data (typed arrays in shared memory) */
+export interface ChunkTask {
+    task: string;
+    /** the next chunk to take (an Int32Array of 1 in shared memory, set by runChunks) */
+    counter?: Int32Array;
+    chunks?: number;
+}
+
+/**
+ * Runs chunks 0 to count - 1 of a task, each threads' next one (worker.ts runs a chunk task's chunks with the same
+ * function as local, see chunkTasks there), or all of them here without threads: their results
+ */
+export async function runChunks<R>(threads: Thread[] | null, task: ChunkTask, count: number, local: (chunk: number) => R): Promise<R[]> {
+    const results = new Array<R>(count);
+    if (!threads || count < 2) {
+        for (let i = 0; i < count; i++) results[i] = local(i);
+        return results;
+    }
+    const counter = new Int32Array(new SharedArrayBuffer(4));
+    await Promise.all(threads.slice(0, count).map(t => t.run({ ...task, counter, chunks: count }, m => {
+        const { chunk, result } = m as { chunk: number, result: R };
+        results[chunk] = result;
+    })));
+    return results;
+}
+
+/** A copy of a typed array in shared memory (for threads) */
+export function shared<T extends Float32Array | Int32Array | Int8Array | Uint8Array | Uint16Array>(array: T): T {
+    const Type = array.constructor as new (buffer: SharedArrayBuffer) => T;
+    const copy = new Type(new SharedArrayBuffer(array.byteLength));
+    copy.set(array);
+    return copy;
+}

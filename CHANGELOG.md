@@ -12,6 +12,10 @@
   Deno, Bun and browsers (Web Workers; bundlers like Vite pick up the worker's module). Small images (under about
   640x640 pixels at effort 0, 448x448 at 1, 320x320 at 2), browser pages without cross-origin isolation (no
   SharedArrayBuffer), runtimes without workers, and workers that fail to start encode on the calling thread as before.
+- Lossy `encodeJXL()` searches the varblocks in worker threads (`JXLEncodeOptions.threads`, the same default), rows of
+  64x64 areas in parallel like libjxl's: the same files. A 1920x1080 photo takes 1.1 s instead of 2.4 s at effort 1 and
+  1.8 s instead of 5.0 s at effort 2 (8 threads). Effort 0 (which has no search) and images under about 512x512 pixels
+  at effort 1, 384x384 at 2, encode without threads.
 
 ### Tests
 

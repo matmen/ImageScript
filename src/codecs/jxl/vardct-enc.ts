@@ -5,6 +5,7 @@
  * contexts, chroma from luma per tile (libjxl's fast search), the edge preserving filter. Copyright (c) the JPEG XL
  * Project Authors, BSD-3-Clause License (see THIRD_PARTY_NOTICES.md)
  */
+import { startThreads } from '../../util/threads.ts';
 import { findPatches } from './patches-enc.ts';
 import { BitWriter } from './bit-writer.ts';
 import { imageHeader, u32 } from './headers-enc.ts';
@@ -22,7 +23,13 @@ export interface VarDCTOptions {
     distance: number;
     /** 0: 8x8 DCTs only (like libjxl's effort 3), 1: libjxl's varblock search (its effort 5), 2: also the 4x8 and AFV transforms */
     effort: number;
+    /** at most this many worker threads (1: none) */
+    threads: number;
 }
+
+// (images below this many pixels encode faster without threads, which take about 0.1 s to start: by effort; effort 0
+// has no varblock search, what the threads run)
+const MIN_THREADED_PIXELS = [Infinity, 512 * 512, 384 * 384];
 
 // libjxl's opsin absorbance matrix and bias (lib/jxl/cms/opsin_params.h)
 const OPSIN = [
@@ -167,7 +174,7 @@ function chromaFromLuma(raw: Float32Array[], types: Int8Array, muls: Int32Array,
 }
 
 /** Encodes RGBA pixels as a lossy JPEG XL codestream, alpha (if the image has transparency) losslessly */
-export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { distance, effort }: VarDCTOptions): Uint8Array {
+export async function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { distance, effort, threads: maxThreads }: VarDCTOptions): Promise<Uint8Array> {
     if (width < 1 || height < 1) throw new RangeError('JPEG XL: dimensions must be at least 1');
     const bw = Math.ceil(width / 8), bh = Math.ceil(height / 8), pw = bw * 8;
     const planes = toXYB(rgba, width, height, pw, bh * 8);
@@ -191,7 +198,24 @@ export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { 
     // HF multipliers
     // patches at effort 2: text-like features of screenshots stored once (subtracted from the planes here)
     const patches = effort >= 2 ? findPatches(planes, pw, width, height, distance, alpha ? 1 : 0) : null;
-    const types = effort ? chooseVarblocks(planes, pw, bw, bh, initialQuantField(distance * 0.62, planes, pw, bh * 8, 0.725 / (distance * 0.62)), distance, effort === 1 ? 5 : 4) : new Int8Array(bw * bh);
+    // (the search in threads, if they start: the same types)
+    let types = new Int8Array(bw * bh);
+    if (effort) {
+        const field = initialQuantField(distance * 0.62, planes, pw, bh * 8, 0.725 / (distance * 0.62));
+        // (at most one per 256x256 pixels: more take longer to start than they save)
+        const n = Math.min(maxThreads, Math.ceil(bh / 8), Math.floor(width * height / 65536));
+        let threads = n > 1 && width * height >= MIN_THREADED_PIXELS[effort] ? startThreads(n) : null;
+        try {
+            types = await chooseVarblocks(planes, pw, bw, bh, field, distance, effort === 1 ? 5 : 4, threads);
+        } catch (e) {
+            if (!threads) throw e;
+            for (const t of threads) t.terminate();
+            threads = null;
+            types = await chooseVarblocks(planes, pw, bw, bh, field, distance, effort === 1 ? 5 : 4, null);
+        } finally {
+            if (threads) for (const t of threads) t.terminate();
+        }
+    }
     const muls = new Int32Array(bw * bh).fill(mul);
 
     // the varblocks' coefficients (in the planes' layout) and the LF of their blocks

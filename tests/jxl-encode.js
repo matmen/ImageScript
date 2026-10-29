@@ -113,6 +113,16 @@ const codestream = jxl => {
         else if (jxl.length > effort0 * 1.02) panic(`effort ${effort}: ${jxl.length} B, effort 0 ${effort0} B`);
     }
     for (const effort of [-1, 3, 1.5]) if (!await shot.encodeJXL({quality: 90, effort}).then(() => false, e => e instanceof RangeError)) panic(`effort ${effort} should throw`);
+    // threads (the varblock search of rows of 64x64 areas in parallel): the same files as without
+    {
+        const big = photo.clone().resize(640, Image.RESIZE_AUTO);
+        for (const effort of [1, 2]) {
+            const one = await big.encodeJXL({quality: 85, effort, threads: 1, metadata: {creationTime: 0}});
+            const four = await big.encodeJXL({quality: 85, effort, threads: 4, metadata: {creationTime: 0}});
+            if (Buffer.compare(Buffer.from(one), Buffer.from(four))) panic(`threads, effort ${effort}: not the same file`);
+        }
+        for (const threads of [0, 2.5]) if (!await big.encodeJXL({quality: 85, threads}).then(() => false, e => e instanceof RangeError)) panic(`threads ${threads} should throw`);
+    }
     // patches (effort 2): repeated glyphs of text on a flat background are found, stored in a reference frame and
     // added back
     {

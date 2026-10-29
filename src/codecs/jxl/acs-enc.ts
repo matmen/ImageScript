@@ -4,6 +4,7 @@
  * area: the best 8x8 transform of each block, merged into larger DCTs where they are estimated to cost less.
  * Copyright (c) the JPEG XL Project Authors, BSD-3-Clause License (see THIRD_PARTY_NOTICES.md)
  */
+import { runChunks, shared, type ChunkTask, type Thread } from '../../util/threads.ts';
 import { forwardTransform } from './transforms-enc.ts';
 import { inverseTransform } from './dct.ts';
 import { defaultDequant, MATRIX_INDEX } from './quant.ts';
@@ -117,8 +118,8 @@ function best8x8(x: number, y: number, speed: number, cfg: Config): [number, num
 class Strategy {
     readonly types: Int8Array;
 
-    constructor(readonly bw: number, readonly bh: number) {
-        this.types = new Int8Array(bw * bh);
+    constructor(readonly bw: number, readonly bh: number, types?: Int8Array) {
+        this.types = types ?? new Int8Array(bw * bh);
     }
 
     set(bx: number, by: number, type: number): void {
@@ -285,7 +286,32 @@ function processRect(bx: number, by: number, w: number, h: number, speed: number
  * The varblock types of an image (XYB planes of whole blocks, rows stride apart): libjxl's search at a speed tier (5:
  * its effort 5, 4: also the 4x8 and AFV transforms)
  */
-export function chooseVarblocks(planes: Float32Array[], stride: number, bw: number, bh: number, field: QuantField, distance: number, speed: number): Int8Array {
+export async function chooseVarblocks(planes: Float32Array[], stride: number, bw: number, bh: number, field: QuantField, distance: number, speed: number, threads: Thread[] | null): Promise<Int8Array> {
+    const types = new Int8Array(threads ? new SharedArrayBuffer(bw * bh) : new ArrayBuffer(bw * bh));
+    const task: VarblockTask = {
+        task: 'jxl-varblocks', stride, bw, bh, distance, speed, types,
+        planes: threads ? planes.map(shared) : planes,
+        field: threads ? { quant: shared(field.quant), mask: shared(field.mask), mask1x1: shared(field.mask1x1) } : field,
+    };
+    // (a row of 64x64 areas each, independent of the others)
+    await runChunks(threads, task, Math.ceil(bh / 8), varblockChunks(task));
+    return types;
+}
+
+/** The varblock search of rows of 64x64 areas (see chooseVarblocks) */
+export interface VarblockTask extends ChunkTask {
+    planes: Float32Array[];
+    stride: number;
+    bw: number;
+    bh: number;
+    field: QuantField;
+    distance: number;
+    speed: number;
+    types: Int8Array;
+}
+
+/** The search of a row of 64x64 areas (the chunk), its types set */
+export function varblockChunks({ planes, stride, bw, bh, field, distance, speed, types }: VarblockTask): (chunk: number) => void {
     const ratio = (distance + 0.13731742964354549) / (1 + 0.13731742964354549);
     const cfg: Config = {
         planes, stride, bw, field, distance,
@@ -293,7 +319,9 @@ export function chooseVarblocks(planes: Float32Array[], stride: number, bw: numb
         zerosMul: 9.3089059022677905 * ratio ** 0.50990926717963703,
         costDelta: 10.833273317067883 * ratio ** 0.36702940662370243
     };
-    const s = new Strategy(bw, bh);
-    for (let by = 0; by < bh; by += 8) for (let bx = 0; bx < bw; bx += 8) processRect(bx, by, Math.min(8, bw - bx), Math.min(8, bh - by), speed, cfg, s);
-    return s.types;
+    const s = new Strategy(bw, bh, types);
+    return row => {
+        const by = row * 8;
+        for (let bx = 0; bx < bw; bx += 8) processRect(bx, by, Math.min(8, bw - bx), Math.min(8, bh - by), speed, cfg, s);
+    };
 }
