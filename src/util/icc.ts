@@ -135,8 +135,10 @@ export function profileTransform(icc: Uint8Array): ((rgba: Uint8Array | Uint8Cla
 
     if (p.gray) {
         // (the gray's luminance in all three channels: the profile's white is sRGB's)
+        // (only for gray images: like libpng, a gray profile of a color image isn't applied)
         const k = linear[0], lut = Uint8Array.from({ length: 256 }, (_, i) => out(k[i]));
         return rgba => {
+            for (let i = 0; i < rgba.length; i += 4) if (rgba[i] !== rgba[i + 1] || rgba[i] !== rgba[i + 2]) return;
             for (let i = 0; i < rgba.length; i += 4) rgba[i] = rgba[i + 1] = rgba[i + 2] = lut[rgba[i]];
         };
     }

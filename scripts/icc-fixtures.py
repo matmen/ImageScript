@@ -3,7 +3,7 @@
 # ImageCms) converts them to, relative colorimetric to sRGB, as PNGs: from the source pixels for the lossless formats,
 # from what Pillow decodes for JPEG and AVIF. The profiles are matrix/TRC ones written here (Display P3 with a
 # parametric curve, Adobe RGB with a gamma, P3 with a table curve, Rec. 2020 with a type 4 parametric curve, gray), and
-# one that is sRGB (its pixels stay as they are). Needs Pillow (with AVIF) and numpy:
+# one that is sRGB (its pixels stay as they are), and a gray one on a color image (not applied). Needs Pillow (with AVIF) and numpy:
 #   python scripts/icc-fixtures.py
 import io, struct
 from pathlib import Path
@@ -127,3 +127,5 @@ convert(Image.open(out / 'display-p3.avif'), icc).save(out / 'display-p3.avif.re
 gray = source.convert('L')
 gray.save(out / 'gray.png', icc_profile=gray_profile)
 convert(gray, gray_profile).save(out / 'gray.ref.png')
+# a gray profile on a color image (invalid, like libpng says: not applied)
+source.save(out / 'gray-on-rgb.png', icc_profile=gray_profile)

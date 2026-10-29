@@ -32,6 +32,9 @@ const difference = (a, b) => {
         const raw = await Image.decode(data, {applyColorProfile: false});
         if (file !== 'srgb.png' && difference(raw, ref) <= tolerance) panic(`${file}: applyColorProfile: false should keep the stored colors`);
     }
+    // (a gray profile of a color image isn't applied)
+    const color = await Image.decode(await fs.readFile('./tests/icc/gray-on-rgb.png'));
+    if (difference(color, await Image.decode(await fs.readFile('./tests/icc/gray-on-rgb.png'), {applyColorProfile: false})) !== 0) panic('a gray profile of a color image should be ignored');
     // (an sRGB profile leaves the pixels as they are)
     const srgb = await fs.readFile('./tests/icc/srgb.png');
     if (difference(await Image.decode(srgb), await Image.decode(srgb, {applyColorProfile: false})) !== 0) panic('an sRGB profile should leave the pixels as they are');

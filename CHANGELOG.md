@@ -26,8 +26,8 @@
   (ICCP, also animated), AVIFs (colr prof/rICC, which then describe the RGB values instead of the nclx box) and TIFFs.
   Matrix/TRC profiles (RGB and gray; gamma, table and parametric curves) are applied relative colorimetric, colors
   outside sRGB clipped: Display P3 photos from phones, Adobe RGB and ProPhoto images no longer look washed out. The
-  results are within 1 of LittleCMS's. Profiles with only lookup tables, CMYK profiles and ones that are sRGB (like
-  most cameras embed) leave the pixels as they are; converting a 1920x1080 image takes about 35 ms.
+  results are within 1 of LittleCMS's. Profiles with only lookup tables, CMYK profiles, gray profiles of color images (like libpng,
+  which rejects them) and ones that are sRGB (like most cameras embed) leave the pixels as they are; converting a 1920x1080 image takes about 35 ms.
 - `font-size` resolves `em`, `ex`, percentages and keywords against the parent's size for all elements (lengths in `em`
   used the default 16 pixels when an ancestor's size was relative), and `font-weight` `bolder` and `lighter`.
 - `Image.renderSVG()` blends elements with `mix-blend-mode` (all 16 modes and `plus-lighter`, in CSS) and isolates
