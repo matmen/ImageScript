@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.9.0
+
+### Features
+
+- `Image.renderSVG()` blends elements with `mix-blend-mode` (all 16 modes and `plus-lighter`, in CSS) and isolates
+  groups with `isolation: isolate`, like resvg (the blend modes are the ones feBlend already used). All of resvg's 21
+  mix-blend-mode and 2 isolation tests pass, up from 4 and 1.
+- `Image.renderSVG()` applies `transform-origin` (keywords, lengths and percentages) to transforms of elements, clip
+  paths, gradients and patterns; the root's transform turns around the center of its viewport, like resvg's. 21 of
+  resvg's 23 transform-origin tests pass (the others have text), up from 3.
+- `Image.renderSVG()` paints in the order of `paint-order` (fill, stroke and markers). 12 of resvg's 14 tests pass (the
+  others have text), up from 6.
+- `Image.renderSVG()` paints with `context-fill` and `context-stroke`: inside markers the paint of the shape they're on,
+  inside `<use>` that of the element, in their coordinates and bounding boxes (gradients and patterns too). 13 of
+  resvg's 16 tests pass, up from 2.
+- `Image.renderSVG()` draws shapes without antialiasing for `shape-rendering: crispEdges` and `optimizeSpeed`, and fills
+  the root's viewBox with its `background-color` (in CSS).
+
+### Fixes
+
+- `Image.renderSVG()`: zero length dashes (`stroke-dasharray="0 40"`) at the start of a path get caps too, and square
+  ones are turned along the path.
+- `Image.renderSVG()`: shapes without a bounding box (horizontal and vertical lines and curves) painted with an
+  `objectBoundingBox` gradient or pattern use its fallback color, and curves along an axis no longer count as having
+  one.
+- `Image.renderSVG()`: elements with `display: none` don't count towards the bounding boxes of groups (clip paths,
+  masks, gradients and filters in `objectBoundingBox` units).
+- `Image.renderSVG()`: `overflow="inherit"` on markers and nested viewports takes the parent's value.
+- `Image.renderSVG()`: path data ends at the first character that isn't part of it, instead of skipping it.
+
 ## 3.8.1
 
 ### Performance

@@ -16,18 +16,19 @@ import { PathCommand } from './font.ts';
 import { base64 } from '../util/bytes.ts';
 import { gunzip } from '../codecs/zlib.ts';
 import { applyFilter, Filter, Primitive, Kind, Input, Transfer, ColorMatrix, Pixmap, Light } from './filter.ts';
+import { BLEND_MODES, blendPixel } from './blend.ts';
 
 const UNSUPPORTED = new Set(['text', 'filter', 'pattern', 'marker', 'foreignObject', 'script', 'style', 'title', 'desc', 'metadata',
     'defs', 'clipPath', 'mask', 'linearGradient', 'radialGradient', 'stop', 'symbol', 'font', 'font-face', 'animate', 'animateTransform', 'animateMotion', 'set']);
 
 const INHERITED = new Set(['fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-linecap', 'stroke-linejoin',
     'stroke-miterlimit', 'stroke-dasharray', 'stroke-dashoffset', 'color', 'visibility', 'clip-rule', 'font-size', 'marker-start', 'marker-mid',
-    'marker-end', 'image-rendering', 'color-interpolation-filters']);
+    'marker-end', 'image-rendering', 'color-interpolation-filters', 'paint-order', 'shape-rendering']);
 
 // elements a switch may choose from
 const SWITCHABLE = new Set(['svg', 'g', 'a', 'switch', 'use', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'image', 'foreignObject']);
 
-const PROPERTIES = new Set([...INHERITED, 'opacity', 'display', 'clip-path', 'mask', 'stop-color', 'stop-opacity', 'transform', 'filter', 'flood-color',
+const PROPERTIES = new Set([...INHERITED, 'opacity', 'display', 'clip-path', 'mask', 'stop-color', 'stop-opacity', 'transform', 'transform-origin', 'filter', 'flood-color',
     'flood-opacity', 'lighting-color']);
 
 interface XNode {
@@ -59,6 +60,17 @@ interface Context {
     depth: number;
     /** set within the elements a <use> references */
     instanced?: boolean;
+    /** what context-fill and context-stroke refer to: the shape a marker is on, or the nearest <use> */
+    contextElement?: ContextElement;
+}
+
+interface ContextElement {
+    style: Style;
+    matrix: Matrix;
+    viewport: Viewport;
+    bbox: () => BBox | null;
+    /** the context element's own context element */
+    outer?: ContextElement;
 }
 
 interface Paint {
@@ -77,6 +89,8 @@ interface Coverage {
 interface Subpath {
     points: number[];
     closed: boolean;
+    /** the direction of a zero length dash, for its square caps */
+    direction?: number[];
 }
 
 interface BBox {
@@ -109,7 +123,7 @@ const DEFAULTS: Record<string, string> = {
     'color': 'black', 'visibility': 'visible', 'clip-rule': 'nonzero', 'font-size': '16', 'opacity': '1', 'display': 'inline',
     'stop-color': 'black', 'stop-opacity': '1', 'marker-start': 'none', 'marker-mid': 'none', 'marker-end': 'none',
     'image-rendering': 'auto', 'filter': 'none', 'flood-color': 'black', 'flood-opacity': '1', 'color-interpolation-filters': 'linearRGB',
-    'lighting-color': 'white'
+    'lighting-color': 'white', 'shape-rendering': 'auto'
 };
 
 const SAMPLES = 16; // sub-scanlines per pixel
@@ -711,7 +725,7 @@ class Document {
 
         const style: Style = {};
         for (const name of PROPERTIES) {
-            if (name === 'transform') continue;
+            if (name === 'transform' || name === 'transform-origin') continue;
             let value: string | undefined = own[name];
             if (value === 'inherit' || (value === undefined && INHERITED.has(name))) value = parent ? parent[name] : DEFAULTS[name];
             if (value === undefined || value === 'initial') value = DEFAULTS[name];
@@ -720,7 +734,12 @@ class Document {
 
         // currentColor resolves to the color of the element using it
         style['mask-type'] = own['mask-type'] || node.attrs['mask-type'];
+        // (only properties in CSS, not attributes)
+        style['mix-blend-mode'] = own['mix-blend-mode'];
+        style.isolation = own.isolation;
+        style['background-color'] = own['background-color'];
         style.transform = own.transform;
+        style['transform-origin'] = own['transform-origin'];
         node.computed = style;
         node.computedParent = parent;
         return style;
@@ -755,7 +774,7 @@ class Document {
         if (style.display === 'none') return;
 
         let matrix = context.matrix;
-        if (style.transform && !root) matrix = multiply(matrix, parseTransform(style.transform));
+        if (style.transform && !root) matrix = multiply(matrix, transformOf(style, context.viewport));
 
         const opacity = clamp01(parseNumber(style.opacity, 1));
         if (opacity <= 0) return;
@@ -788,15 +807,15 @@ class Document {
                     const path = shapePath(node, ctx.viewport, parseNumber(style['font-size'], 16));
                     if (!path) return;
                     this.paintPath(path, node, ctx);
-                    if (style.visibility === 'visible') this.renderMarkers(path, node, ctx);
                 }
             }
         };
         const draw = filters && filters.length ? (layer: Layer): void => this.filtered(filters, matrix, layer, drawContent) : (layer: Layer): void => drawContent(layer);
 
-        if (opacity >= 1 && !clipping && !masking) return draw(context.layer);
+        const blend = style['mix-blend-mode'] && BLEND_MODES.has(style['mix-blend-mode']) ? style['mix-blend-mode'] : 'normal';
+        if (opacity >= 1 && !clipping && !masking && blend === 'normal' && style.isolation !== 'isolate') return draw(context.layer);
 
-        // render into a separate layer, then composite with opacity, clip path and mask
+        // render into a separate (isolated) layer, then composite with opacity, clip path, mask and blend mode
         const layer = new Layer(context.layer.width, context.layer.height);
         draw(layer);
 
@@ -808,7 +827,7 @@ class Document {
             else alpha = values;
         }
 
-        context.layer.composite(layer, opacity, alpha);
+        context.layer.composite(layer, opacity, alpha, blend);
     }
 
     // renders into a layer clipped to a rectangle in user space (viewports of nested svg and symbol elements)
@@ -840,7 +859,7 @@ class Document {
         if (viewBox) matrix = multiply(matrix, viewBoxTransform(viewBox, width, height, node.attrs.preserveAspectRatio));
 
         const inner = { ...ctx, matrix, viewport: viewBox ? { width: viewBox[2], height: viewBox[3] } : { width, height } };
-        if (/^(visible|auto)$/.test(node.attrs.overflow || '')) return this.renderChildren(node, inner);
+        if (overflowVisible(node)) return this.renderChildren(node, inner);
         this.clipped(ctx, x, y, width, height, layer => this.renderChildren(node, { ...inner, layer }));
     }
 
@@ -854,6 +873,9 @@ class Document {
         const x = parseLength(node.attrs.x, ctx.viewport, 16, 'x');
         const y = parseLength(node.attrs.y, ctx.viewport, 16, 'y');
         const matrix = multiply(ctx.matrix, [1, 0, 0, 1, x, y]);
+        // (its bounding box is that of its content, in its coordinates)
+        let content: Matrix = target.attrs.transform ? originTransform(target.attrs.transform, target.attrs['transform-origin'], ctx.viewport) : [1, 0, 0, 1, 0, 0];
+        const contextElement: ContextElement = { style: ctx.style as Style, matrix, viewport: ctx.viewport, bbox: () => this.groupBoundingBox(target, ctx.viewport, content), outer: ctx.contextElement };
 
         if (target.name === 'symbol' || target.name === 'svg') {
             const style = this.computeStyle(target, ctx.style);
@@ -869,10 +891,12 @@ class Document {
             let outer = matrix;
             if (target.name === 'svg') outer = multiply(outer, [1, 0, 0, 1, parseLength(target.attrs.x, ctx.viewport, 16, 'x'), parseLength(target.attrs.y, ctx.viewport, 16, 'y')]);
             const inner = viewBox ? multiply(outer, viewBoxTransform(viewBox, width, height, target.attrs.preserveAspectRatio)) : outer;
+            const inverse = invert(matrix);
+            if (inverse) content = multiply(inverse, inner);
 
             const opacity = clamp01(parseNumber(style.opacity, 1));
-            const innerContext = { ...ctx, matrix: inner, style, viewport: viewBox ? { width: viewBox[2], height: viewBox[3] } : { width, height }, instanced: true };
-            const draw = (layer: Layer): void => /^(visible|auto)$/.test(target.attrs.overflow || '')
+            const innerContext = { ...ctx, matrix: inner, style, viewport: viewBox ? { width: viewBox[2], height: viewBox[3] } : { width, height }, instanced: true, contextElement };
+            const draw = (layer: Layer): void => overflowVisible(target)
                 ? this.renderChildren(target, { ...innerContext, layer })
                 : this.clipped({ ...ctx, matrix: outer, layer }, 0, 0, width, height, inner => this.renderChildren(target, { ...innerContext, layer: inner }));
 
@@ -886,7 +910,7 @@ class Document {
         // render the referenced element as if it were a child of the use element
         const computed = target.computed, computedParent = target.computedParent;
         target.computed = null;
-        this.renderNode(target, { ...ctx, matrix, instanced: true });
+        this.renderNode(target, { ...ctx, matrix, instanced: true, contextElement });
         target.computed = computed;
         target.computedParent = computedParent;
     }
@@ -954,14 +978,24 @@ class Document {
         const { width, height } = documentSize(root);
         let matrix0 = matrix;
         const rootStyle = this.computeStyle(root, null);
-        if (rootStyle.transform) matrix0 = multiply(matrix0, parseTransform(rootStyle.transform));
+        // (the root's transform wraps the viewBox mapping, it turns around the center of the viewport by default)
+        if (rootStyle.transform) matrix0 = multiply(matrix0, transformOf(rootStyle, { width, height }, '50% 50%'));
         if (viewBox) matrix0 = multiply(matrix0, viewBoxTransform(viewBox, width, height, root.attrs.preserveAspectRatio));
         const viewport = viewBox ? { width: viewBox[2], height: viewBox[3] } : { width, height };
+
+        // the root's background color covers its viewBox (like resvg's)
+        const background = parseColor(rootStyle['background-color']);
+        if (background && background[3] > 0) {
+            const [x, y, w, h] = viewBox || [0, 0, width, height];
+            const coverage = rasterize([transformPoints([x, y, x + w, y, x + w, y + h, x, y + h], matrix0)], false, layer.width, layer.height);
+            if (coverage) layer.fill(coverage, solidPaint(background));
+        }
         this.renderNode(root, { matrix: matrix0, style: null, viewport, layer, depth, instanced }, true);
     }
 
+    // paints a shape's fill, stroke and markers
     paintPath(path: PathCommand[], node: XNode, ctx: Context): void {
-        const { matrix, layer } = ctx;
+        const { matrix } = ctx;
         const style = ctx.style as Style;
         if (style.visibility === 'hidden' || style.visibility === 'collapse') return;
 
@@ -970,30 +1004,43 @@ class Document {
         const subpaths = flatten(path, tolerance);
         const bbox = boundingBox(subpaths);
 
-        const fill = this.paint(style.fill, style, bbox, matrix, style['fill-opacity'], ctx);
-        if (fill && node.name !== 'line') {
-            const polygons = subpaths.map(points => transformPoints(points.points, matrix));
-            const coverage = rasterize(polygons, style['fill-rule'] === 'evenodd', layer.width, layer.height);
-            if (coverage) layer.fill(coverage, fill);
-        }
-
-        const stroke = this.paint(style.stroke, style, bbox, matrix, style['stroke-opacity'], ctx);
-        const strokeWidth = parseLength(style['stroke-width'], ctx.viewport, 16, 'diagonal');
-        if (stroke && strokeWidth > 0) {
-            let lines = subpaths;
-            const fontSize = parseNumber(style['font-size'], 16);
-            const dashes = parseDashArray(style['stroke-dasharray'], ctx.viewport, fontSize);
-            if (dashes) lines = dash(subpaths, dashes, parseLength(style['stroke-dashoffset'], ctx.viewport, fontSize, 'diagonal'));
-
-            const polygons = strokePolygons(lines, strokeWidth / 2, style['stroke-linecap'], style['stroke-linejoin'],
-                Math.max(1, parseNumber(style['stroke-miterlimit'], 4)), tolerance).map(points => transformPoints(points, matrix));
-            const coverage = rasterize(polygons, false, layer.width, layer.height);
-            if (coverage) layer.fill(coverage, stroke);
+        for (const part of paintOrder(style['paint-order'])) {
+            if (part === 'fill') this.paintFill(subpaths, bbox, node, ctx);
+            else if (part === 'stroke') this.paintStroke(subpaths, bbox, tolerance, ctx);
+            else if (style.visibility === 'visible') this.renderMarkers(path, bbox, node, ctx);
         }
     }
 
+    paintFill(subpaths: Subpath[], bbox: BBox | null, node: XNode, ctx: Context): void {
+        const { matrix, layer } = ctx;
+        const style = ctx.style as Style;
+        const fill = node.name === 'line' ? null : this.paint(style.fill, style, bbox, matrix, style['fill-opacity'], ctx);
+        if (!fill) return;
+        const polygons = subpaths.map(points => transformPoints(points.points, matrix));
+        const coverage = rasterize(polygons, style['fill-rule'] === 'evenodd', layer.width, layer.height);
+        if (coverage) layer.fill(crisp(coverage, style), fill);
+    }
+
+    paintStroke(subpaths: Subpath[], bbox: BBox | null, tolerance: number, ctx: Context): void {
+        const { matrix, layer } = ctx;
+        const style = ctx.style as Style;
+        const stroke = this.paint(style.stroke, style, bbox, matrix, style['stroke-opacity'], ctx);
+        const strokeWidth = parseLength(style['stroke-width'], ctx.viewport, 16, 'diagonal');
+        if (!stroke || !(strokeWidth > 0)) return;
+
+        let lines = subpaths;
+        const fontSize = parseNumber(style['font-size'], 16);
+        const dashes = parseDashArray(style['stroke-dasharray'], ctx.viewport, fontSize);
+        if (dashes) lines = dash(subpaths, dashes, parseLength(style['stroke-dashoffset'], ctx.viewport, fontSize, 'diagonal'));
+
+        const polygons = strokePolygons(lines, strokeWidth / 2, style['stroke-linecap'], style['stroke-linejoin'],
+            Math.max(1, parseNumber(style['stroke-miterlimit'], 4)), tolerance).map(points => transformPoints(points, matrix));
+        const coverage = rasterize(polygons, false, layer.width, layer.height);
+        if (coverage) layer.fill(crisp(coverage, style), stroke);
+    }
+
     // draws the markers of a shape (like usvg's markers, crates/usvg/src/parser/marker.rs)
-    renderMarkers(path: PathCommand[], node: XNode, ctx: Context): void {
+    renderMarkers(path: PathCommand[], bbox: BBox | null, node: XNode, ctx: Context): void {
         const style = ctx.style as Style;
         for (let p = node.parent; p; p = p.parent) if (p.name === 'clipPath') return;
         const kinds = ['marker-start', 'marker-mid', 'marker-end'] as const;
@@ -1019,12 +1066,13 @@ class Document {
             // the clip (unless overflow is visible): the marker's size in the viewBox's coordinates
             const inverse = invert(viewBoxMatrix);
             if (!inverse) continue;
-            const clip = /^(visible|auto)$/.test(marker.attrs.overflow?.trim() || '') ? null
+            const clip = overflowVisible(marker) ? null
                 : transformPoints([0, 0, width, height], inverse);
 
             const orient = (marker.attrs.orient || '').trim();
             const fixed = orient === 'auto' || orient === 'auto-start-reverse' ? null : parseAngle(orient);
             const markerStyle = this.styleOf(marker);
+            const contextElement = { style, matrix: ctx.matrix, viewport: ctx.viewport, bbox: () => bbox, outer: ctx.contextElement };
 
             const draw = (x: number, y: number, index: number): void => {
                 let angle = fixed ?? vertexAngle(segments, index);
@@ -1036,7 +1084,7 @@ class Document {
                 }
                 matrix = multiply(matrix, [sx * units, 0, 0, sy * units, -refX * sx * units, -refY * sy * units]);
 
-                const inner = { ...ctx, matrix, style: markerStyle, depth: ctx.depth + 1, viewport: viewBox ? { width: viewBox[2], height: viewBox[3] } : ctx.viewport };
+                const inner = { ...ctx, matrix, style: markerStyle, depth: ctx.depth + 1, viewport: viewBox ? { width: viewBox[2], height: viewBox[3] } : ctx.viewport, contextElement };
                 this.active.add(marker);
                 if (!clip) this.renderChildren(marker, inner);
                 else this.clipped(inner, Math.min(clip[0], clip[2]), Math.min(clip[1], clip[3]), Math.abs(clip[2] - clip[0]), Math.abs(clip[3] - clip[1]),
@@ -1063,6 +1111,13 @@ class Document {
     // returns a paint function (x, y) => [r, g, b, a] in device pixels, or null for no paint
     paint(value: string | undefined, style: Style, bbox: BBox | null, matrix: Matrix, opacityValue: string | undefined, ctx: Context): Paint | null {
         if (!value || value === 'none') return null;
+        // (context paints are painted in the context element's coordinates, with its bounding box)
+        if (value === 'context-fill' || value === 'context-stroke') {
+            const element = ctx.contextElement;
+            if (!element) return null;
+            return this.paint(element.style[value === 'context-fill' ? 'fill' : 'stroke'], element.style, element.bbox(), element.matrix, opacityValue,
+                { ...ctx, viewport: element.viewport, contextElement: element.outer });
+        }
         const opacity = clamp01(parseNumber(opacityValue, 1));
 
         let color = value;
@@ -1101,6 +1156,8 @@ class Document {
             const names = current.name === node.name ? [...geometry, 'gradientUnits', 'gradientTransform', 'spreadMethod'] : ['gradientUnits', 'gradientTransform', 'spreadMethod'];
             for (const name of names)
                 if (attrs[name] === undefined && current.attrs[name] !== undefined) attrs[name] = current.attrs[name];
+            // (the transform turns around the origin of the gradient it comes from)
+            if (attrs.gradientTransform === current.attrs.gradientTransform && attrs['transform-origin'] === undefined) attrs['transform-origin'] = this.styleOf(current)['transform-origin'] ?? '';
 
             if (!stops) {
                 const own = current.children.filter(child => child.name === 'stop');
@@ -1130,7 +1187,8 @@ class Document {
         }
 
         const objectBox = attrs.gradientUnits !== 'userSpaceOnUse';
-        if (objectBox && (!bbox || bbox.width <= 0 || bbox.height <= 0)) return null;
+        // (shapes without a bounding box use the fallback color instead)
+        if (objectBox && noArea(bbox)) return undefined;
 
         const coordinate = (value: string | undefined, fallback: number, axis: 'x' | 'y' | 'diagonal'): number => {
             if (value === undefined) return fallback;
@@ -1140,7 +1198,7 @@ class Document {
 
         let gradientMatrix = matrix;
         if (objectBox && bbox) gradientMatrix = multiply(gradientMatrix, [bbox.width, 0, 0, bbox.height, bbox.x, bbox.y]);
-        if (attrs.gradientTransform) gradientMatrix = multiply(gradientMatrix, parseTransform(attrs.gradientTransform));
+        if (attrs.gradientTransform) gradientMatrix = multiply(gradientMatrix, originTransform(attrs.gradientTransform, attrs['transform-origin'], ctx.viewport));
         const inverse = invert(gradientMatrix);
         if (!inverse) return null;
 
@@ -1220,6 +1278,7 @@ class Document {
         for (let current: XNode | null = node, depth = 0; current && depth < 16 && current.name === 'pattern'; current = this.reference(this.href(current)), depth++) {
             for (const name of names)
                 if (attrs[name] === undefined && current.attrs[name] !== undefined) attrs[name] = current.attrs[name];
+            if (attrs.patternTransform === current.attrs.patternTransform && attrs['transform-origin'] === undefined) attrs['transform-origin'] = this.styleOf(current)['transform-origin'] ?? '';
             if (!content && current.children.some(child => child.svg)) content = current;
         }
         return { attrs, content };
@@ -1232,7 +1291,10 @@ class Document {
         const objectBox = attrs.patternUnits !== 'userSpaceOnUse';
         const contentBox = attrs.patternContentUnits === 'objectBoundingBox';
         const viewBox = parseViewBox(attrs.viewBox);
-        if ((objectBox || (contentBox && !viewBox)) && (!bbox || bbox.width <= 0 || bbox.height <= 0)) return null;
+        const noBox = noArea(bbox);
+        // (shapes without a bounding box use the fallback color instead)
+        if (objectBox && noBox) return undefined;
+        if (contentBox && !viewBox && noBox) return null;
         const box = bbox || { x: 0, y: 0, width: 0, height: 0 };
 
         const coordinate = (name: string, axis: 'x' | 'y'): number => {
@@ -1248,7 +1310,7 @@ class Document {
         // (a patternTransform that can't be inverted is ignored, like resvg does)
         let patternMatrix = matrix, rotated = matrix[1] !== 0 || matrix[2] !== 0;
         if (attrs.patternTransform) {
-            const transform = parseTransform(attrs.patternTransform), transformed = multiply(patternMatrix, transform);
+            const transform = originTransform(attrs.patternTransform, attrs['transform-origin'], ctx.viewport), transformed = multiply(patternMatrix, transform);
             if (invert(transformed)) {
                 patternMatrix = transformed;
                 rotated ||= transform[1] !== 0 || transform[2] !== 0;
@@ -1500,8 +1562,7 @@ class Document {
             }
             case 'feBlend': {
                 const mode = node.attrs.mode?.trim() || 'normal';
-                const modes = /^(normal|multiply|screen|overlay|darken|lighten|color-dodge|color-burn|hard-light|soft-light|difference|exclusion|hue|saturation|color|luminosity)$/;
-                return { type: 'blend', mode: modes.test(mode) ? mode : 'normal', input: input('in'), input2: input('in2') };
+                return { type: 'blend', mode: BLEND_MODES.has(mode) && mode !== 'plus-lighter' ? mode : 'normal', input: input('in'), input2: input('in2') };
             }
             case 'feMorphology': {
                 let rx = scale[0], ry = scale[1];
@@ -1692,11 +1753,11 @@ class Document {
         this.active.add(clip);
 
         let clipMatrix = matrix;
-        if (style.transform) clipMatrix = multiply(clipMatrix, parseTransform(style.transform));
+        if (style.transform) clipMatrix = multiply(clipMatrix, transformOf(style, context.viewport));
         if (clip.attrs.clipPathUnits === 'objectBoundingBox') {
             const path = shapePath(node, context.viewport, 16);
             const bbox = path ? boundingBox(flatten(path, 0.1)) : this.groupBoundingBox(node, context.viewport);
-            if (!bbox || bbox.width <= 0 || bbox.height <= 0) return alpha;
+            if (!bbox || noArea(bbox)) return alpha;
             clipMatrix = multiply(clipMatrix, [bbox.width, 0, 0, bbox.height, bbox.x, bbox.y]);
         }
 
@@ -1706,7 +1767,7 @@ class Document {
             if (childStyle.display === 'none' || childStyle.visibility === 'hidden') continue;
 
             let childMatrix = clipMatrix;
-            if (childStyle.transform) childMatrix = multiply(childMatrix, parseTransform(childStyle.transform));
+            if (childStyle.transform) childMatrix = multiply(childMatrix, transformOf(childStyle, context.viewport));
 
             let shape = child;
             if (child.name === 'use') {
@@ -1714,7 +1775,7 @@ class Document {
                 if (!target || !['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon'].includes(target.name)) continue;
                 childMatrix = multiply(childMatrix, [1, 0, 0, 1, parseLength(child.attrs.x, context.viewport, 16, 'x'), parseLength(child.attrs.y, context.viewport, 16, 'y')]);
                 const targetStyle = this.computeStyle(target, childStyle);
-                if (targetStyle.transform) childMatrix = multiply(childMatrix, parseTransform(targetStyle.transform));
+                if (targetStyle.transform) childMatrix = multiply(childMatrix, transformOf(targetStyle, context.viewport));
                 shape = target;
             }
 
@@ -1751,7 +1812,7 @@ class Document {
         return alpha;
     }
 
-    groupBoundingBox(node: XNode, viewport: Viewport): BBox | null {
+    groupBoundingBox(node: XNode, viewport: Viewport, matrix: Matrix = [1, 0, 0, 1, 0, 0]): BBox | null {
         let box: BBox | null = null;
         const visit = (n: XNode, matrix: Matrix): void => {
             // (an image's bounding box is its rectangle)
@@ -1763,10 +1824,11 @@ class Document {
                 const b = boundingBox(points.map(p => ({ points: p })));
                 if (b) box = box ? union(box, b) : b;
             }
-            for (const child of n.children)
-                visit(child, child.attrs.transform ? multiply(matrix, parseTransform(child.attrs.transform)) : matrix);
+            // (elements that aren't displayed don't count)
+            for (const child of n.children) if (child.svg && this.styleOf(child).display !== 'none')
+                visit(child, child.attrs.transform ? multiply(matrix, originTransform(child.attrs.transform, child.attrs['transform-origin'], viewport)) : matrix);
         };
-        visit(node, [1, 0, 0, 1, 0, 0]);
+        visit(node, matrix);
         return box;
     }
 
@@ -1779,7 +1841,7 @@ class Document {
         const bbox = path ? boundingBox(flatten(path, 0.1)) : this.groupBoundingBox(node, context.viewport);
         const userSpace = mask.attrs.maskUnits === 'userSpaceOnUse';
         const contentBox = mask.attrs.maskContentUnits === 'objectBoundingBox';
-        if ((!userSpace || contentBox) && (!bbox || bbox.width <= 0 || bbox.height <= 0)) return values;
+        if ((!userSpace || contentBox) && noArea(bbox)) return values;
 
         const box = bbox || { x: 0, y: 0, width: 0, height: 0 };
         const fraction = (name: string, fallback: number): number => {
@@ -2257,11 +2319,22 @@ class Layer {
             }
     }
 
-    composite(layer: Layer, opacity: number, mask: Float32Array | null): void {
+    composite(layer: Layer, opacity: number, mask: Float32Array | null, blend = 'normal'): void {
         if (layer.x1 <= layer.x0) return;
         this.extend(layer.x0, layer.y0, layer.x1, layer.y1);
 
         const s = layer.data, d = this.data;
+        if (blend !== 'normal') {
+            for (let y = layer.y0; y < layer.y1; y++) {
+                for (let p = y * this.width + layer.x0, end = y * this.width + layer.x1, i = p * 4; p < end; p++, i += 4) {
+                    const f = mask ? opacity * mask[p] : opacity;
+                    if (s[i + 3] <= 0 || f <= 0) continue;
+                    blendPixel(blend, s[i] * f, s[i + 1] * f, s[i + 2] * f, s[i + 3] * f, d, i);
+                    for (let k = i; k < i + 4; k++) d[k] = Math.min(Math.max(d[k], 0), 1);
+                }
+            }
+            return;
+        }
         for (let y = layer.y0; y < layer.y1; y++) {
             for (let p = y * this.width + layer.x0, end = y * this.width + layer.x1, i = p * 4; p < end; p++, i += 4) {
                 if (s[i + 3] <= 0) continue;
@@ -2308,6 +2381,14 @@ class Layer {
  * @param {Array<Array<number>>} polygons flat [x0, y0, x1, y1, ...] lists in device pixels, implicitly closed
  * @return {{x0: number, y0: number, w: number, h: number, data: Float32Array}|null}
  */
+// shapes rendered without antialiasing: pixels are covered or not
+function crisp(coverage: Coverage, style: Style): Coverage {
+    if (style['shape-rendering'] !== 'crispEdges' && style['shape-rendering'] !== 'optimizeSpeed') return coverage;
+    const { data } = coverage;
+    for (let i = 0; i < data.length; i++) data[i] = data[i] >= 0.5 ? 1 : 0;
+    return coverage;
+}
+
 function rasterize(polygons: number[][], evenOdd: boolean, width: number, height: number): Coverage | null {
     const edges: Array<{ top: number, bottom: number, x: number, slope: number, dir: number }> = [];
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -2494,7 +2575,13 @@ function parsePath(d: string): PathCommand[] {
     const path: PathCommand[] = [];
     // numbers stay strings so compact arc flags can be split later
     const items: Array<string | { command: string }> = [];
-    for (const m of d.matchAll(PATH_TOKENS)) items.push(m[1] ? { command: m[1] } : m[2]);
+    // (anything but separators between the tokens ends the path data there)
+    let end = 0;
+    for (const m of d.matchAll(PATH_TOKENS)) {
+        if (m.index !== end && !/^[\s,]*$/.test(d.slice(end, m.index))) break;
+        end = m.index + m[0].length;
+        items.push(m[1] ? { command: m[1] } : m[2]);
+    }
 
     let i = 0;
     let command: string | null = null;
@@ -2720,6 +2807,13 @@ function flatten(path: PathCommand[], tolerance: number): Subpath[] {
     return subpaths;
 }
 
+// whether a bounding box is missing or has no width or height (up to the rounding of flattened curves)
+function noArea(bbox: BBox | null): boolean {
+    if (!bbox) return true;
+    const epsilon = 1e-9 * Math.max(1, Math.abs(bbox.x), Math.abs(bbox.y));
+    return !(bbox.width > epsilon) || !(bbox.height > epsilon);
+}
+
 function boundingBox(subpaths: Array<{ points: number[] }>): BBox | null {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const { points } of subpaths)
@@ -2765,7 +2859,8 @@ function dash(subpaths: Subpath[], pattern: number[], offset: number): Subpath[]
 
         let index = 0;
         let remaining = ((offset % total) + total) % total;
-        while (remaining >= pattern[index]) {
+        // (a zero length dash at the start is a dot there)
+        while (remaining > pattern[index] || (remaining === pattern[index] && remaining > 0)) {
             remaining -= pattern[index];
             index = (index + 1) % pattern.length;
         }
@@ -2790,7 +2885,7 @@ function dash(subpaths: Subpath[], pattern: number[], offset: number): Subpath[]
                     if (on) {
                         if (current) {
                             current.push(mx, my);
-                            result.push({ points: current, closed: false });
+                            result.push({ points: current, closed: false, direction: [(bx - ax) / length, (by - ay) / length] });
                         }
                         current = null;
                     } else current = [mx, my];
@@ -2837,7 +2932,7 @@ function strokePolygons(subpaths: Subpath[], halfWidth: number, cap: string | un
         add(polygon);
     };
 
-    for (const { points: raw, closed } of subpaths) {
+    for (const { points: raw, closed, direction } of subpaths) {
         // drop consecutive duplicate points
         const points = [raw[0], raw[1]];
         for (let i = 2; i < raw.length; i += 2)
@@ -2849,8 +2944,9 @@ function strokePolygons(subpaths: Subpath[], halfWidth: number, cap: string | un
         if (n === 1) {
             // zero length subpaths only produce caps
             const [x, y] = points;
+            const [dx, dy] = direction ? [direction[0] * halfWidth, direction[1] * halfWidth] : [halfWidth, 0];
             if (cap === 'round') circle(x, y);
-            else if (cap === 'square') add([x - halfWidth, y - halfWidth, x + halfWidth, y - halfWidth, x + halfWidth, y + halfWidth, x - halfWidth, y + halfWidth]);
+            else if (cap === 'square') add([x - dx + dy, y - dy - dx, x + dx + dy, y + dy - dx, x + dx - dy, y + dy + dx, x - dx - dy, y - dy + dx]);
             continue;
         }
 
@@ -2955,6 +3051,55 @@ function parseTransform(value: string): Matrix {
     }
 
     return matrix;
+}
+
+// an element's transform around its transform-origin
+function transformOf(style: Style, viewport: Viewport, fallback?: string): Matrix {
+    return originTransform(style.transform as string, style['transform-origin'] ?? fallback, viewport, parseNumber(style['font-size'], 16));
+}
+
+function originTransform(transform: string, origin: string | undefined, viewport: Viewport, fontSize = 16): Matrix {
+    const matrix = parseTransform(transform);
+    const at = origin ? parseOrigin(origin, viewport, fontSize) : null;
+    return at ? multiply(multiply([1, 0, 0, 1, at[0], at[1]], matrix), [1, 0, 0, 1, -at[0], -at[1]]) : matrix;
+}
+
+const ORIGIN_KEYWORDS: Record<string, ['x' | 'y' | null, string]> = { left: ['x', '0%'], right: ['x', '100%'], top: ['y', '0%'], bottom: ['y', '100%'], center: [null, '50%'] };
+
+// transform-origin: one or two keywords or lengths (x first unless a keyword says otherwise), and an ignored z length
+function parseOrigin(value: string, viewport: Viewport, fontSize: number): [number, number] | null {
+    const parts = value.trim().split(/\s+/);
+    if (parts.length > 3 || (parts.length === 3 && !LENGTH.test(parts[2]))) return null;
+    const terms = parts.slice(0, 2).map(part => {
+        const keyword = ORIGIN_KEYWORDS[part];
+        return keyword ? { axis: keyword[0], value: keyword[1] } : LENGTH.test(part) ? { axis: null, value: part } : null;
+    });
+    if (terms.some(term => !term)) return null;
+    const center = { axis: null, value: '50%' };
+    let [x, y] = terms as { axis: 'x' | 'y' | null, value: string }[];
+    if (!y) [x, y] = x.axis === 'y' ? [center, x] : [x, center];
+    else if (x.axis === 'y' || y.axis === 'x') [x, y] = [y, x];
+    if (x.axis === 'y' || y.axis === 'x') return null;
+    return [parseLength(x.value, viewport, fontSize, 'x'), parseLength(y.value, viewport, fontSize, 'y')];
+}
+
+// the order fill, stroke and markers are painted in: the ones given, then the others in their normal order
+function paintOrder(value: string | undefined): ('fill' | 'stroke' | 'markers')[] {
+    const normal = ['fill', 'stroke', 'markers'] as const;
+    const given = value && value !== 'normal' ? value.trim().split(/\s+/) : [];
+    if (given.some((part, i) => !(normal as readonly string[]).includes(part) || given.indexOf(part) !== i)) return [...normal];
+    return [...given as typeof normal[number][], ...normal.filter(part => !given.includes(part))];
+}
+
+// whether an element's content isn't clipped to its viewport (inherit takes the parent's value: by default hidden for
+// elements establishing viewports except the root, visible for others)
+function overflowVisible(node: XNode): boolean {
+    let value = node.attrs.overflow?.trim();
+    for (let p = node.parent; value === 'inherit'; p = p.parent) {
+        if (!p || p.name === '#root') return true;
+        value = p.attrs.overflow?.trim() ?? (/^(svg|symbol|marker|pattern)$/.test(p.name) && p.parent && p.parent.name !== '#root' ? 'hidden' : 'visible');
+    }
+    return value === 'visible' || value === 'auto';
 }
 
 function parseViewBox(value: string | undefined): number[] | null {

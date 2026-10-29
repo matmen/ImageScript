@@ -3,12 +3,12 @@
  * crates/resvg/src/filter: mod.rs, box_blur.rs (itself based on https://github.com/fschutt/fastblur), iir_blur.rs,
  * color_matrix.rs, component_transfer.rs, composite.rs, morphology.rs, convolve_matrix.rs, turbulence.rs (itself from
  * the reference implementation in the SVG 1.1 specification), lighting.rs, displacement_map.rs; Copyright 2017 the Resvg
- * Authors, MIT License) and the blend modes of tiny-skia (https://github.com/linebender/tiny-skia,
- * src/pipeline/highp.rs; Copyright 2011 Google Inc., 2020 Yevhenii Reizner, BSD-3-Clause License,
- * itself from Skia). The IIR blur
+ * Authors, MIT License). The IIR blur
  * follows Pascal Getreuer's gaussianiir (http://www.getreuer.info/home/gaussianiir; Simplified BSD License), an
  * implementation of Alvarez and Mazorra's fast Gaussian convolution. See THIRD_PARTY_NOTICES.md
  */
+
+import { blendPixel } from './blend.ts';
 
 /** premultiplied RGBA pixels */
 export interface Pixmap {
@@ -643,80 +643,13 @@ function transfer(f: Exclude<Transfer, null>, value: number): number {
     return u8(clamp(0, v, 1) * 255);
 }
 
-// feBlend's modes, like tiny-skia's (premultiplied, the source over the destination)
+// feBlend's modes (the source over the destination)
 function blend(dst: Pixmap, src: Pixmap, mode: string): void {
     const s = src.data, d = dst.data;
-    const inv = (v: number): number => 1 - v;
-    const lum = (r: number, g: number, b: number): number => r * 0.3 + g * 0.59 + b * 0.11;
-    const sat = (r: number, g: number, b: number): number => Math.max(r, g, b) - Math.min(r, g, b);
-    const setSat = (c: number[], value: number): void => {
-        const mn = Math.min(c[0], c[1], c[2]), mx = Math.max(c[0], c[1], c[2]), range = mx - mn;
-        for (let k = 0; k < 3; k++) c[k] = range === 0 ? 0 : (c[k] - mn) * value / range;
-    };
-    const setLum = (c: number[], l: number): void => {
-        const diff = l - lum(c[0], c[1], c[2]);
-        for (let k = 0; k < 3; k++) c[k] += diff;
-    };
-    const clipColor = (c: number[], a: number): void => {
-        const mn = Math.min(c[0], c[1], c[2]), mx = Math.max(c[0], c[1], c[2]), l = lum(c[0], c[1], c[2]);
-        for (let k = 0; k < 3; k++) {
-            let v = c[k];
-            if (!(mx >= 0)) v = l + (v - l) * l / (l - mn);
-            if (mx > a) v = l + (v - l) * (a - l) / (mx - l);
-            c[k] = Math.max(v, 0);
-        }
-    };
-    const separable = (sc: number, dc: number, sa: number, da: number): number => {
-        switch (mode) {
-            case 'multiply': return sc * inv(da) + dc * inv(sa) + sc * dc;
-            case 'screen': return sc + dc - sc * dc;
-            case 'darken': return sc + dc - Math.max(sc * da, dc * sa);
-            case 'lighten': return sc + dc - Math.min(sc * da, dc * sa);
-            case 'difference': return sc + dc - 2 * Math.min(sc * da, dc * sa);
-            case 'exclusion': return sc + dc - 2 * sc * dc;
-            case 'color-burn':
-                return dc === da ? dc + sc * inv(da) : sc === 0 ? dc * inv(sa) : sa * (da - Math.min(da, (da - dc) * sa / sc)) + sc * inv(da) + dc * inv(sa);
-            case 'color-dodge':
-                return dc === 0 ? sc * inv(da) : sc === sa ? sc + dc * inv(sa) : sa * Math.min(da, dc * sa / (sa - sc)) + sc * inv(da) + dc * inv(sa);
-            case 'hard-light':
-                return sc * inv(da) + dc * inv(sa) + (2 * sc <= sa ? 2 * sc * dc : sa * da - 2 * (da - dc) * (sa - sc));
-            case 'overlay':
-                return sc * inv(da) + dc * inv(sa) + (2 * dc <= da ? 2 * sc * dc : sa * da - 2 * (da - dc) * (sa - sc));
-            case 'soft-light': {
-                const m = da > 0 ? dc / da : 0, s2 = 2 * sc, m4 = 4 * m;
-                const darkSrc = dc * (sa + (s2 - sa) * (1 - m));
-                const darkDst = (m4 * m4 + m4) * (m - 1) + 7 * m;
-                const liteDst = Math.sqrt(m) - m;
-                const liteSrc = dc * sa + da * (s2 - sa) * (4 * dc <= da ? darkDst : liteDst);
-                return sc * inv(da) + dc * inv(sa) + (s2 <= sa ? darkSrc : liteSrc);
-            }
-            default: return sc + dc * inv(sa);
-        }
-    };
-    const c = [0, 0, 0];
+    const out = [0, 0, 0, 0];
     for (let i = 0; i < d.length; i += 4) {
-        const r = s[i] / 255, g = s[i + 1] / 255, b = s[i + 2] / 255, a = s[i + 3] / 255;
-        const dr = d[i] / 255, dg = d[i + 1] / 255, db = d[i + 2] / 255, da = d[i + 3] / 255;
-        let out: number[];
-        if (mode === 'hue' || mode === 'saturation' || mode === 'color' || mode === 'luminosity') {
-            if (mode === 'hue') {
-                c[0] = r * a; c[1] = g * a; c[2] = b * a;
-                setSat(c, sat(dr, dg, db) * a);
-                setLum(c, lum(dr, dg, db) * a);
-            } else if (mode === 'saturation') {
-                c[0] = dr * a; c[1] = dg * a; c[2] = db * a;
-                setSat(c, sat(r, g, b) * da);
-                setLum(c, lum(dr, dg, db) * a);
-            } else if (mode === 'color') {
-                c[0] = r * da; c[1] = g * da; c[2] = b * da;
-                setLum(c, lum(dr, dg, db) * a);
-            } else {
-                c[0] = dr * a; c[1] = dg * a; c[2] = db * a;
-                setLum(c, lum(r, g, b) * da);
-            }
-            clipColor(c, a * da);
-            out = [r * inv(da) + dr * inv(a) + c[0], g * inv(da) + dg * inv(a) + c[1], b * inv(da) + db * inv(a) + c[2], a + da - a * da];
-        } else out = [separable(r, dr, a, da), separable(g, dg, a, da), separable(b, db, a, da), da * inv(a) + a];
+        for (let k = 0; k < 4; k++) out[k] = d[i + k] / 255;
+        blendPixel(mode, s[i] / 255, s[i + 1] / 255, s[i + 2] / 255, s[i + 3] / 255, out, 0);
         for (let k = 0; k < 4; k++) d[i + k] = u8(clamp(0, out[k], 1) * 255 + 0.5);
     }
 }
