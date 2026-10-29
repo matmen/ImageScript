@@ -294,6 +294,17 @@ write('grid', avif([Item(1, b'grid', grid_data, [(ispe(124, 100), 0), (pixi(8, 3
                     Item(2, b'grid', grid_data, [(ispe(124, 100), 0), (pixi(8, 1), 0), (auxc, 0)], [(b'dimg', [20, 21, 22, 23]), (b'auxl', [1])], hidden=True),
                     *tiles, *alpha_tiles]))
 
+# large enough for threads (4 megapixels; the tests decode with the default threads): a 4:2:0 image converted to RGB
+# in bands, a 3x2 grid of 1024x704 tiles for a 3072x1400 image, its tiles decoded in parallel
+write('threads', avif([image(encode([yuv(photo(2048, 2048), '420', 8)], '420', 8, ['--cq-level=63', '--cpu-used=6']), '420', 8, 2048, 2048)]))
+big_rgb, big_tiles = photo(3072, 1408), []
+for i in range(6):
+    y, x = i // 3 * 704, i % 3 * 1024
+    unit = encode([yuv(big_rgb[y:y + 704, x:x + 1024], '420', 8)], '420', 8, ['--cq-level=63', '--cpu-used=6'])[0]
+    big_tiles.append(Item(10 + i, b'av01', unit, [(av1c(unit, '420', 8), 1), (ispe(1024, 704), 0), (pixi(8, 3), 0)], hidden=True))
+write('threads-grid', avif([Item(1, b'grid', bytes([0, 0, 1, 2]) + struct.pack('>HH', 3072, 1400), [(ispe(3072, 1400), 0), (pixi(8, 3), 0)],
+                                 [(b'dimg', list(range(10, 16)))]), *big_tiles]))
+
 # transformations: a 30x20 clean aperture 3 right of and 2 above the center, rotated by 90° anticlockwise, mirrored
 # top to bottom (applied in this order, the order of the properties)
 clap = box(b'clap', struct.pack('>8i', 30, 1, 20, 1, 3, 1, -2, 1))

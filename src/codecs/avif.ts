@@ -9,6 +9,7 @@ import { parseProfile } from '../util/icc.ts';
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { decodeAV1, Frame } from './av1/frame.ts';
 import { toSRGB, hdrToLinear, ToneMapping } from './hdr.ts';
+import { runChunks, sharedOf, startThreads, type ChunkTask, type Thread } from '../util/threads.ts';
 
 interface Box { type: string, start: number, end: number }
 
@@ -203,7 +204,16 @@ function fromFrame(f: Frame): Yuv {
 }
 
 // decodes an AV1 image item (with the av1C's configuration OBUs if its data lacks a sequence header)
-function decodeAV1Item(d: Uint8Array, it: Item, idat: Box | undefined, maxPixels: number): Yuv {
+// what decoding an AV1 item takes: its data (with the configuration OBUs), the operating point and layer (-1: the
+// highest) to show, the size it says it has
+interface AV1Input {
+    data: Uint8Array;
+    operatingPoint: number;
+    layer: number;
+    size: [number, number] | null;
+}
+
+function av1Input(d: Uint8Array, it: Item, idat: Box | undefined): AV1Input {
     let data = itemData(d, it, idat);
     const av1C = property(it, 'av1C');
     if (av1C && av1C.end - av1C.start > 4 && (data[0] >> 3 & 15) !== 1) {
@@ -214,22 +224,37 @@ function decodeAV1Item(d: Uint8Array, it: Item, idat: Box | undefined, maxPixels
         data = joined;
     }
     // layered images: the operating point (a1op) and the layer (lsel) to show
-    const a1op = property(it, 'a1op'), lsel = property(it, 'lsel');
+    const a1op = property(it, 'a1op'), lsel = property(it, 'lsel'), ispe = property(it, 'ispe');
     const layer = lsel ? d[lsel.start] << 8 | d[lsel.start + 1] : 0xffff;
-    const frame = decodeAV1(data, 0, data.length, { maxPixels, operatingPoint: a1op ? d[a1op.start] : 0, layer: layer === 0xffff ? -1 : layer });
-    if (frame.incomplete) {
-        // the layer to show uses inter prediction: a lower one is shown if it has the image's size
-        const ispe = property(it, 'ispe');
-        const view = new DataView(d.buffer, d.byteOffset, d.byteLength);
-        if (!ispe || view.getUint32(ispe.start + 4) !== frame.hdr.upscaledWidth || view.getUint32(ispe.start + 8) !== frame.height)
-            throw new Error('AVIF: layered images with inter predicted layers are not supported');
-    }
+    const view = new DataView(d.buffer, d.byteOffset, d.byteLength);
+    return {
+        data, operatingPoint: a1op ? d[a1op.start] : 0, layer: layer === 0xffff ? -1 : layer,
+        size: ispe ? [view.getUint32(ispe.start + 4), view.getUint32(ispe.start + 8)] : null
+    };
+}
+
+function decodeAV1Input({ data, operatingPoint, layer, size }: AV1Input, maxPixels: number): Yuv {
+    const frame = decodeAV1(data, 0, data.length, { maxPixels, operatingPoint, layer });
+    // (the layer to show uses inter prediction: a lower one is shown if it has the image's size)
+    if (frame.incomplete && (!size || size[0] !== frame.hdr.upscaledWidth || size[1] !== frame.height))
+        throw new Error('AVIF: layered images with inter predicted layers are not supported');
     return fromFrame(frame);
 }
 
-// a grid's tiles (all the same size) put together, cropped to its output size
-// a grid: of its own tiles, or of the given ones (the alpha items of a grid's tiles)
-function decodeGrid(d: Uint8Array, it: Item, items: Map<number, Item>, idat: Box | undefined, maxPixels: number, tiles = it.refs.get('dimg') ?? []): Yuv {
+const decodeAV1Item = (d: Uint8Array, it: Item, idat: Box | undefined, maxPixels: number): Yuv => decodeAV1Input(av1Input(d, it, idat), maxPixels);
+
+/** The decoding of a grid's tiles in threads (see decodeGrid) */
+export interface TileTask extends ChunkTask {
+    inputs: AV1Input[];
+    maxPixels: number;
+}
+
+/** The decoding of a tile (the chunk) */
+export function tileChunks({ inputs, maxPixels }: TileTask): (chunk: number) => Yuv {
+    return i => decodeAV1Input(inputs[i], maxPixels);
+}
+
+async function decodeGrid(d: Uint8Array, it: Item, items: Map<number, Item>, idat: Box | undefined, maxPixels: number, threads: Thread[] | null, tiles = it.refs.get('dimg') ?? []): Promise<Yuv> {
     const g = itemData(d, it, idat);
     const view = new DataView(g.buffer, g.byteOffset, g.byteLength);
     const wide = g[1] & 1;
@@ -238,41 +263,60 @@ function decodeGrid(d: Uint8Array, it: Item, items: Map<number, Item>, idat: Box
     checkPixels(width, height, maxPixels);
     if (tiles.length !== rows * cols) throw new Error('AVIF: the grid has the wrong number of tiles');
     if (new Set(tiles).size !== tiles.length) throw new Error('AVIF: the grid repeats tiles');
-    let out: Yuv | null = null;
-    for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-            const tileItem = items.get(tiles[r * cols + c]);
-            if (!tileItem || tileItem.type !== 'av01') throw new Error('AVIF: invalid grid tile');
-            const tile = decodeAV1Item(d, tileItem, idat, maxPixels);
-            if (!out) {
-                if (tile.width * cols < width || tile.height * rows < height) throw new Error('AVIF: the grid\'s tiles are too small');
-                out = { ...tile, width, height, planes: [], strides: [] };
-                for (let p = 0; p < tile.planes.length; p++) {
-                    const sx = p && tile.layout < 3 ? 1 : 0, sy = p && tile.layout === 1 ? 1 : 0;
-                    const stride = (width + sx) >> sx;
-                    out.strides.push(stride);
-                    out.planes.push(new Uint16Array(stride * ((height + sy) >> sy)));
-                }
-            } else if (tile.layout !== out.layout || tile.bitdepth !== out.bitdepth) throw new Error('AVIF: the grid\'s tiles differ');
-            for (let p = 0; p < out.planes.length; p++) {
-                const sx = p && out.layout < 3 ? 1 : 0, sy = p && out.layout === 1 ? 1 : 0;
-                const tw = (tile.width + sx) >> sx, th = (tile.height + sy) >> sy;
-                const x0 = c * tw, y0 = r * th;
-                const pw = (width + sx) >> sx, ph = (height + sy) >> sy;
-                for (let y = 0; y < th && y0 + y < ph; y++) {
-                    const n = Math.min(tw, pw - x0);
-                    if (n <= 0) break;
-                    out.planes[p].set(tile.planes[p].subarray(y * tile.strides[p], y * tile.strides[p] + n), (y0 + y) * out.strides[p] + x0);
-                }
+    const inputs = tiles.map(id => {
+        const tileItem = items.get(id);
+        if (!tileItem || tileItem.type !== 'av01') throw new Error('AVIF: invalid grid tile');
+        return av1Input(d, tileItem, idat);
+    });
+    // (a tile into its place in the grid, which the first one makes)
+    const place = (grid: Yuv | null, k: number, tile: Yuv): Yuv => {
+        const r = Math.floor(k / cols), c = k % cols;
+        let out = grid;
+        if (!out) {
+            if (tile.width * cols < width || tile.height * rows < height) throw new Error('AVIF: the grid\'s tiles are too small');
+            out = { ...tile, width, height, planes: [], strides: [] };
+            for (let p = 0; p < tile.planes.length; p++) {
+                const sx = p && tile.layout < 3 ? 1 : 0, sy = p && tile.layout === 1 ? 1 : 0;
+                const stride = (width + sx) >> sx;
+                out.strides.push(stride);
+                out.planes.push(new Uint16Array(stride * ((height + sy) >> sy)));
+            }
+        } else if (tile.layout !== out.layout || tile.bitdepth !== out.bitdepth) throw new Error('AVIF: the grid\'s tiles differ');
+        for (let p = 0; p < out.planes.length; p++) {
+            const sx = p && out.layout < 3 ? 1 : 0, sy = p && out.layout === 1 ? 1 : 0;
+            const tw = (tile.width + sx) >> sx, th = (tile.height + sy) >> sy;
+            const x0 = c * tw, y0 = r * th;
+            const pw = (width + sx) >> sx, ph = (height + sy) >> sy;
+            for (let y = 0; y < th && y0 + y < ph; y++) {
+                const n = Math.min(tw, pw - x0);
+                if (n <= 0) break;
+                out.planes[p].set(tile.planes[p].subarray(y * tile.strides[p], y * tile.strides[p] + n), (y0 + y) * out.strides[p] + x0);
             }
         }
+        return out;
+    };
+    let decoded: Yuv[] | null = null;
+    const n = threads ? Math.min(threads.length, Math.ceil(inputs.length / TILES_PER_THREAD)) : 0;
+    if (threads && n > 1) {
+        // (the tiles' data in one buffer in shared memory)
+        const data = new Uint8Array(new SharedArrayBuffer(inputs.reduce((n, i) => n + i.data.length, 0)));
+        let o = 0;
+        for (const input of inputs) {
+            data.set(input.data, o);
+            input.data = data.subarray(o, o += input.data.length);
+        }
+        const task: TileTask = { task: 'avif-tiles', inputs, maxPixels };
+        // (threads that fail, or a tile that can't be decoded: here, one after the other)
+        decoded = await runChunks(threads.slice(0, n), task, inputs.length, tileChunks(task)).catch(() => null);
     }
+    let out: Yuv | null = null;
+    for (let k = 0; k < inputs.length; k++) out = place(out, k, decoded ? decoded[k] : decodeAV1Input(inputs[k], maxPixels));
     return out as Yuv;
 }
 
-function decodeItem(d: Uint8Array, it: Item, items: Map<number, Item>, idat: Box | undefined, maxPixels: number): Yuv {
+async function decodeItem(d: Uint8Array, it: Item, items: Map<number, Item>, idat: Box | undefined, maxPixels: number, threads: Thread[] | null): Promise<Yuv> {
     if (it.type === 'av01') return decodeAV1Item(d, it, idat, maxPixels);
-    if (it.type === 'grid') return decodeGrid(d, it, items, idat, maxPixels);
+    if (it.type === 'grid') return decodeGrid(d, it, items, idat, maxPixels, threads);
     throw new Error(`AVIF: unsupported item type ${it.type}`);
 }
 
@@ -333,6 +377,8 @@ interface Conversion {
     red: Uint8Array | null;
     blue: Uint8Array | null;
     gTerm: Float32Array | null;
+    /** subsampled: the chroma samples times the bilinear weights 9/16, 3/16 and 1/16 */
+    weighted: Float32Array[] | null;
 }
 
 // a row of a 4:4:4 image with the chroma terms computed ahead
@@ -344,6 +390,24 @@ function convertRow444(c: Conversion, j: number): void {
         out[p] = red[y * n + v];
         out[p + 1] = toByte(f32(tableY[y] - gTerm[u * n + v]));
         out[p + 2] = blue[y * n + u];
+        out[p + 3] = 255;
+    }
+}
+
+// a row of a subsampled (4:2:0, 4:2:2) color image without HDR or premultiplied alpha, by the weighted chroma samples
+function convertRowSubsampled(c: Conversion, j: number): void {
+    const { width, height, layout, Y, U, V, cs, sy, tableY, out, cr2, cb2, crg, cbg, kgInverse } = c, [w9, w3, w1] = c.weighted as Float32Array[];
+    const uvRow = (j >> sy) * cs, yRow = j * c.ys;
+    const adjRow = layout === 1 && !(j === 0 || j === height - 1 && j % 2) ? j % 2 ? cs : -cs : 0;
+    for (let i = 0, p = j * width * 4; i < width; i++, p += 4) {
+        const lum = tableY[Y[yRow + i]];
+        // bilinear: the nearest chroma sample, the ones next to it in the row and column, the diagonal one
+        const o = uvRow + (i >> 1), adjCol = i === 0 || i === width - 1 && i % 2 ? 0 : i % 2 ? 1 : -1;
+        const cb = f32(f32(f32(w9[U[o]] + w3[U[o + adjCol]]) + w3[U[o + adjRow]]) + w1[U[o + adjCol + adjRow]]);
+        const cr = f32(f32(f32(w9[V[o]] + w3[V[o + adjCol]]) + w3[V[o + adjRow]]) + w1[V[o + adjCol + adjRow]]);
+        out[p] = toByte(f32(lum + f32(cr2 * cr)));
+        out[p + 1] = toByte(f32(lum - f32(f32(2 * f32(f32(crg * cr) + f32(cbg * cb))) * kgInverse)));
+        out[p + 2] = toByte(f32(lum + f32(cb2 * cb)));
         out[p + 3] = 255;
     }
 }
@@ -408,8 +472,20 @@ function convertRow(c: Conversion, j: number): void {
     }
 }
 
-// (premultiplied: the color is multiplied by the alpha, divided by it here like libavif does, before rounding)
-function toRgba(y: Yuv, alpha: Yuv | null, toneMapping: ToneMapping, premultiplied = false): Uint8Array {
+/** The conversion of bands of 64 rows in threads (see toRgba) */
+export interface ConversionTask extends ChunkTask, Conversion {}
+
+/** The conversion of a band of 64 rows (the chunk) */
+export function conversionChunks(c: ConversionTask): (chunk: number) => void {
+    const row = c.red ? convertRow444 : c.weighted ? convertRowSubsampled : convertRow;
+    return band => {
+        for (let j = band * 64; j < Math.min(c.height, band * 64 + 64); j++) row(c, j);
+    };
+}
+
+// (premultiplied: the color is multiplied by the alpha, divided by it here like libavif does, before rounding; the
+// rows in threads, if there are)
+async function toRgba(y: Yuv, alpha: Yuv | null, toneMapping: ToneMapping, premultiplied = false, threads: Thread[] | null = null): Promise<Uint8Array> {
     const { width, height, bitdepth, layout } = y;
     const max = (1 << bitdepth) - 1;
     // (in single precision, like libavif)
@@ -422,16 +498,20 @@ function toRgba(y: Yuv, alpha: Yuv | null, toneMapping: ToneMapping, premultipli
         tableY[i] = (i - biasY) / rangeY;
         tableUV[i] = identity ? tableY[i] : (i - biasUV) / rangeUV;
     }
-    let out: Uint8Array = new Uint8Array(width * height * 4);
+    // (what the threads write to and read: in shared memory)
+    const array = <T>(Type: new (buffer: ArrayBufferLike) => T, bytes: number, length: number): T =>
+        new Type(threads ? new SharedArrayBuffer(bytes * length) : new ArrayBuffer(bytes * length));
+    let out: Uint8Array = array(Uint8Array, 1, width * height * 4);
     // HDR (PQ, HLG): the non-linear RGB values, converted to linear light and tone mapped after
     const hdr = y.transfer === TRANSFER_PQ || y.transfer === TRANSFER_HLG;
-    const rgb = hdr ? new Float32Array(width * height * 3) : null;
-    const Y = y.planes[0], ys = y.strides[0];
-    const color = layout !== 0 && y.planes.length === 3;
-    const U = y.planes[1], V = y.planes[2], cs = y.strides[1];
+    const rgb = hdr ? array(Float32Array, 4, width * height * 3) : null;
+    const planes = threads ? y.planes.map(sharedOf) : y.planes;
+    const Y = planes[0], ys = y.strides[0];
+    const color = layout !== 0 && planes.length === 3;
+    const U = planes[1], V = planes[2], cs = y.strides[1];
     const sx = layout < 3 ? 1 : 0, sy = layout === 1 ? 1 : 0;
     // the alpha image's luma, 0-1; a limited range is expanded to the full one like libavif does
-    const alphas = alpha ? new Float32Array(width * height).fill(1) : null;
+    const alphas = alpha ? array(Float32Array, 4, width * height).fill(1) : null;
     if (alpha && alphas) {
         const A = alpha.planes[0], as = alpha.strides[0], amax = (1 << alpha.bitdepth) - 1;
         const lo = 16 << (alpha.bitdepth - 8), span = 219 << (alpha.bitdepth - 8);
@@ -447,13 +527,13 @@ function toRgba(y: Yuv, alpha: Yuv | null, toneMapping: ToneMapping, premultipli
     const c: Conversion = {
         width, height, layout, color, identity, ycgco, Y, U, V, ys, cs, sx, sy, tableY, tableUV, out, rgb, unmultiply,
         cr2: f32(2 * f32(1 - kr)), cb2: f32(2 * f32(1 - kb)), crg: f32(kr * f32(1 - kr)), cbg: f32(kb * f32(1 - kb)), kgInverse: 1 / kg,
-        n: max + 1, red: null, blue: null, gTerm: null
+        n: max + 1, red: null, blue: null, gTerm: null, weighted: null
     };
     // 4:4:4 (most AVIFs): red and blue by luma and chroma sample, green's chroma term by both chroma samples,
     // computed ahead when there are enough pixels (at most half as many entries)
     const n = max + 1;
     if (layout === 3 && color && !identity && !ycgco && !rgb && !unmultiply && n * n * 2 <= width * height) {
-        const red = c.red = new Uint8Array(n * n), blue = c.blue = new Uint8Array(n * n), gTerm = c.gTerm = new Float32Array(n * n);
+        const red = c.red = array(Uint8Array, 1, n * n), blue = c.blue = array(Uint8Array, 1, n * n), gTerm = c.gTerm = array(Float32Array, 4, n * n);
         for (let v = 0; v < n; v++) {
             const rTerm = f32(c.cr2 * tableUV[v]), bTerm = f32(c.cb2 * tableUV[v]);
             for (let y = 0; y < n; y++) {
@@ -465,15 +545,30 @@ function toRgba(y: Yuv, alpha: Yuv | null, toneMapping: ToneMapping, premultipli
             const cbTerm = f32(c.cbg * tableUV[u]);
             for (let v = 0; v < n; v++) gTerm[u * n + v] = f32(f32(2 * f32(f32(c.crg * tableUV[v]) + cbTerm)) * c.kgInverse);
         }
-        for (let j = 0; j < height; j++) convertRow444(c, j);
-    } else for (let j = 0; j < height; j++) convertRow(c, j);
+    } else if (layout < 3 && color && !identity && !ycgco && !rgb && !unmultiply) c.weighted = [0.5625, 0.1875, 0.0625].map(w => tableUV.map(v => f32(v * w)));
+    const task: ConversionTask = { ...c, task: 'avif-convert' };
+    try {
+        await runChunks(threads, task, Math.ceil(height / 64), conversionChunks(task));
+    } catch {
+        // (threads that fail: here)
+        await runChunks(null, task, Math.ceil(height / 64), conversionChunks(task));
+    }
+    // (the pixels not in shared memory: APIs like crypto.subtle and TextDecoder reject views of it)
+    if (threads && !rgb) out = new Uint8Array(out);
     if (rgb) out = toSRGB(hdrToLinear(rgb, y.transfer, y.primaries), toneMapping);
     if (alphas) for (let i = 0; i < alphas.length; i++) out[i * 4 + 3] = Math.round(alphas[i] * 255);
     return out;
 }
 
 /** Decodes an AVIF (its primary item, or the first frame of an image sequence) into RGBA */
-export function decode(d: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard'): { width: number, height: number, pixels: Uint8Array, icc?: Uint8Array } {
+// (images below this many pixels decode faster without threads, which take about 0.1 s to start, and the pixels per
+// thread)
+const MIN_THREADED_PIXELS = 4 << 20, PIXELS_PER_THREAD = 1 << 20;
+// (each thread decoding a grid's tiles warms the whole AV1 decoder up: they decode at least this many each)
+const TILES_PER_THREAD = 4;
+
+/** Decodes an AVIF's primary item or first frame, the conversion to RGBA in up to threads worker threads */
+export async function decode(d: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard', threads = 1): Promise<{ width: number, height: number, pixels: Uint8Array, icc?: Uint8Array }> {
     if (!isAVIF(d)) throw new Error('AVIF: invalid header');
     let meta: Box | undefined, moov: Box | undefined;
     for (const box of boxes(d, 0, d.length)) {
@@ -496,34 +591,48 @@ export function decode(d: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneM
                 return undefined;
             };
             const alphaItem = alphaOf(primary);
-            const color = decodeItem(d, it, items, idat, maxPixels);
-            applyColr(d, it, color);
-            // an ICC profile describes the RGB values (rather than the primaries and transfer of the nclx box or the
-            // sequence header), if it can be applied
-            const icc = iccOf(d, it);
-            if (icc && parseProfile(icc)) {
-                color.primaries = 1;
-                color.transfer = 13;
+            // (the threads started by the size the item says it has, so they load while it's decoded)
+            const ispe = property(it, 'ispe'), view = new DataView(d.buffer, d.byteOffset, d.byteLength);
+            const pixels = ispe && ispe.end - ispe.start >= 12 ? view.getUint32(ispe.start + 4) * view.getUint32(ispe.start + 8) : 0;
+            const n = Math.min(threads, Math.floor(pixels / PIXELS_PER_THREAD));
+            const pool = n > 1 && pixels >= MIN_THREADED_PIXELS && pixels <= maxPixels ? startThreads(n) : null;
+            try {
+                return await decodeImage(d, it, items, idat, alphaItem, alphaOf, maxPixels, toneMapping, pool);
+            } finally {
+                if (pool) for (const t of pool) t.terminate();
             }
-            let alpha = alphaItem ? decodeItem(d, alphaItem, items, idat, maxPixels) : null;
-            if (!alphaItem && it.type === 'grid') {
-                // or each of a grid's tiles has an alpha item, arranged like them
-                const tiles = (it.refs.get('dimg') ?? []).map(alphaOf);
-                if (tiles.length && tiles.every(t => t)) alpha = decodeGrid(d, it, items, idat, maxPixels, tiles.map(t => (t as Item).id));
-            }
-            let pixels = toRgba(color, alpha, toneMapping, alphaItem && (it.refs.get('prem') ?? []).includes(alphaItem.id));
-            let { width, height } = color;
-            // the transformations, in the order of their properties
-            for (const { box } of it.props) {
-                if (box.type === 'clap') ({ width, height, pixels } = clap(d, box, width, height, pixels));
-                else if (box.type === 'irot') ({ width, height, pixels } = rotate(pixels, width, height, d[box.start] & 3));
-                else if (box.type === 'imir') pixels = mirror(pixels, width, height, d[box.start] & 1);
-            }
-            return { width, height, pixels, icc };
         }
     }
     if (moov) return decodeSequence(d, moov, maxPixels, toneMapping);
     throw new Error('AVIF: no image');
+}
+
+/** Decodes an image item (with its alpha item) and converts it to RGBA, in the threads if there are */
+async function decodeImage(d: Uint8Array, it: Item, items: Map<number, Item>, idat: Box | undefined, alphaItem: Item | undefined, alphaOf: (id: number) => Item | undefined, maxPixels: number, toneMapping: ToneMapping, threads: Thread[] | null): Promise<{ width: number, height: number, pixels: Uint8Array, icc?: Uint8Array }> {
+    const color = await decodeItem(d, it, items, idat, maxPixels, threads);
+    applyColr(d, it, color);
+    // an ICC profile describes the RGB values (rather than the primaries and transfer of the nclx box or the
+    // sequence header), if it can be applied
+    const icc = iccOf(d, it);
+    if (icc && parseProfile(icc)) {
+        color.primaries = 1;
+        color.transfer = 13;
+    }
+    let alpha = alphaItem ? await decodeItem(d, alphaItem, items, idat, maxPixels, threads) : null;
+    if (!alphaItem && it.type === 'grid') {
+        // or each of a grid's tiles has an alpha item, arranged like them
+        const tiles = (it.refs.get('dimg') ?? []).map(alphaOf);
+        if (tiles.length && tiles.every(t => t)) alpha = await decodeGrid(d, it, items, idat, maxPixels, threads, tiles.map(t => (t as Item).id));
+    }
+    let pixels = await toRgba(color, alpha, toneMapping, alphaItem && (it.refs.get('prem') ?? []).includes(alphaItem.id), threads);
+    let { width, height } = color;
+    // the transformations, in the order of their properties
+    for (const { box } of it.props) {
+        if (box.type === 'clap') ({ width, height, pixels } = clap(d, box, width, height, pixels));
+        else if (box.type === 'irot') ({ width, height, pixels } = rotate(pixels, width, height, d[box.start] & 3));
+        else if (box.type === 'imir') pixels = mirror(pixels, width, height, d[box.start] & 1);
+    }
+    return { width, height, pixels, icc };
 }
 
 // the ICC profile of a colr box (prof or rICC)
@@ -592,7 +701,7 @@ function mirror(pixels: Uint8Array, width: number, height: number, axis: number)
 }
 
 // the first frame of an image sequence (the color track, and the alpha track that refers to it)
-function decodeSequence(d: Uint8Array, moov: Box, maxPixels: number, toneMapping: ToneMapping): { width: number, height: number, pixels: Uint8Array } {
+async function decodeSequence(d: Uint8Array, moov: Box, maxPixels: number, toneMapping: ToneMapping): Promise<{ width: number, height: number, pixels: Uint8Array }> {
     const view = new DataView(d.buffer, d.byteOffset, d.byteLength);
     const tracks: Array<{ id: number, handler: string, auxl: number[], sample: Uint8Array, config: Uint8Array | null }> = [];
     for (const trak of boxes(d, moov.start, moov.end)) {
@@ -635,5 +744,5 @@ function decodeSequence(d: Uint8Array, moov: Box, maxPixels: number, toneMapping
         return fromFrame(decodeAV1(data, 0, data.length, { maxPixels }));
     };
     const color = frame(colorTrack);
-    return { width: color.width, height: color.height, pixels: toRgba(color, alphaTrack ? frame(alphaTrack) : null, toneMapping) };
+    return { width: color.width, height: color.height, pixels: await toRgba(color, alphaTrack ? frame(alphaTrack) : null, toneMapping) };
 }

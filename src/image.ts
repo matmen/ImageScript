@@ -213,8 +213,9 @@ export interface DecodeOptions {
      */
     toneMapping?: ToneMapping;
     /**
-     * At most this many worker threads decode in parallel (JPEG XLs, from 4 megapixels on: one per 2 megapixels at
-     * most), `1` for none. Default: the processors available, at most 8 (1 where workers can't share memory)
+     * At most this many worker threads decode in parallel (JPEG XLs from 4 megapixels on: one per 2 megapixels at
+     * most; AVIFs from 4 megapixels on: the conversion to RGB, one per megapixel, and the tiles of grids), `1` for
+     * none. Default: the processors available, at most 8 (1 where workers can't share memory)
      */
     threads?: number;
 }
@@ -2262,7 +2263,7 @@ export class Image {
                 const { width, height, pixels } = decoded.embedded === 'png' ? await png.decode(decoded.data, maxPixels) : jpeg.decode(decoded.data, { maxPixels });
                 return { width, height, pixels };
             };
-            if (ImageType.isAVIF(dataView)) return avif.decode(data, maxPixels, toneMapping);
+            if (ImageType.isAVIF(dataView)) return avif.decode(data, maxPixels, toneMapping, threads);
             if (ImageType.isJXL(dataView)) return jxl.decode(data, maxPixels, toneMapping, threads);
             if (ImageType.isBMP(dataView)) return bitmap(bmp.decode(data, maxPixels));
             if (ImageType.isICO(dataView)) return bitmap(ico.decode(data, maxPixels));

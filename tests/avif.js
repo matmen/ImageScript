@@ -29,6 +29,9 @@ const references = {
     'alpha': '75997458251525c3c06ec8ef2149a90e32726831f1a599b1356c658d98bc849d',
     'alpha-premultiplied': 'ad09ce797bed32479ad72523ab188a39441ebc85976a284ab3da121702b19b46',
     'grid': 'b6f5c3be81ac52daabe55e9b0f5a4f6e9a5f1b4adcf82c013cdcc2588d542f74',
+    // (4 megapixels: in threads, if the runtime has them)
+    'threads': '5a93b00f715ca686bd765c8cf1d428ff76eebc34a1b26c2462bceb43d9a0e770',
+    'threads-grid': 'eb3acc450fae0a30f888b0e1fbe43d5b15a4eec9d6a3494d2e9c98c7897fc56a',
     'transforms': '38a9ade925431f685369468071feed32b90e3e2f5c855ea8040142ef1e0051cc',
     'sequence': '1b62b5829e6d56d35ff7f0cfa6b7fef6da9c5f85e58799ea5b679f2864eef125',
 };
