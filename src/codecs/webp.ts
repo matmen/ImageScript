@@ -10,6 +10,7 @@ import { encodeVP8, encodeAlpha } from './vp8-enc.ts';
 import { rgbaToYUV } from './vp8-enc-dsp.ts';
 import { orientation as exifOrientation } from './exif.ts';
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
+import { finite } from '../util/options.ts';
 
 const fourCC = (s: string): number => s.charCodeAt(0) | s.charCodeAt(1) << 8 | s.charCodeAt(2) << 16 | s.charCodeAt(3) << 24;
 const RIFF = fourCC('RIFF'), WEBP = fourCC('WEBP');
@@ -333,15 +334,38 @@ export function encode(rgba: Uint8Array, width: number, height: number, exif?: U
     return riff([riffChunk('VP8X', vp8x), bitstream, riffChunk('EXIF', exif)]);
 }
 
+/** How lossy images and frames are encoded */
+export interface LossyOptions {
+    /** 0-100 */
+    quality: number;
+    /** libwebp's method (0-6: faster to smaller) */
+    method: number;
+    /** libwebp's sharp YUV conversion */
+    sharp: boolean;
+    /** 0-100: the alpha plane's levels are reduced below 100 */
+    alphaQuality: number;
+}
+
 /**
- * Encodes RGBA pixels into a lossy WebP like libwebp does with its default settings (VP8, with a losslessly
- * compressed alpha plane if the image isn't opaque)
- * @param quality 0-100
- * @param exif Exif data (a TIFF header and IFDs), needs the extended format (VP8X)
- * @param method libwebp's method (0-6: faster to smaller)
+ * Checks the options of lossy images and frames (quality and alpha quality 0-100, effort 0-6)
+ * @returns undefined without a quality: lossless
  */
-export function encodeLossy(rgba: Uint8Array, width: number, height: number, quality: number, exif?: Uint8Array, method = 4, sharp = false): Uint8Array {
-    const { alpha, chunks } = lossyChunks(rgba, width, height, quality, method, sharp);
+export function lossyOptions(quality: number | undefined, effort: number, sharp: boolean, alphaQuality: number): LossyOptions | undefined {
+    if (quality === undefined) return undefined;
+    const q = finite(quality, 'quality'), a = finite(alphaQuality, 'alphaQuality');
+    if (q < 0 || q > 100) throw new RangeError(`quality must be 0-100, not ${q}`);
+    if (a < 0 || a > 100) throw new RangeError(`alphaQuality must be 0-100, not ${a}`);
+    if (!Number.isInteger(effort) || effort < 0 || effort > 6) throw new RangeError(`effort must be an integer 0-6, not ${effort}`);
+    return { quality: q, method: effort, sharp, alphaQuality: Math.round(a) };
+}
+
+/**
+ * Encodes RGBA pixels into a lossy WebP like libwebp does (VP8, with a losslessly compressed alpha plane if the image
+ * isn't opaque)
+ * @param exif Exif data (a TIFF header and IFDs), needs the extended format (VP8X)
+ */
+export function encodeLossy(rgba: Uint8Array, width: number, height: number, lossy: LossyOptions, exif?: Uint8Array): Uint8Array {
+    const { alpha, chunks } = lossyChunks(rgba, width, height, lossy);
     if (!alpha && !exif) return riff(chunks);
 
     const vp8x = new Uint8Array(10);
@@ -352,7 +376,7 @@ export function encodeLossy(rgba: Uint8Array, width: number, height: number, qua
 }
 
 // the ALPH (if not opaque) and VP8 chunks of a lossy image
-function lossyChunks(rgba: Uint8Array, width: number, height: number, quality: number, method: number, sharp = false): { alpha: boolean, chunks: Uint8Array[] } {
+function lossyChunks(rgba: Uint8Array, width: number, height: number, { quality, method, sharp, alphaQuality }: LossyOptions): { alpha: boolean, chunks: Uint8Array[] } {
     if (width > 16383 || height > 16383) throw new RangeError('WebP: lossy images can be at most 16383 pixels wide and high');
     const picture = rgbaToYUV(rgba, width, height, sharp);
     const frame = encodeVP8(picture, quality, method);
@@ -360,7 +384,7 @@ function lossyChunks(rgba: Uint8Array, width: number, height: number, quality: n
     const padded = new Uint8Array(frame.length + (frame.length & 1));
     padded.set(frame);
     const chunks = [riffChunk('VP8 ', padded)];
-    if (picture.a) chunks.unshift(riffChunk('ALPH', encodeAlpha(picture.a, width, height, method)));
+    if (picture.a) chunks.unshift(riffChunk('ALPH', encodeAlpha(picture.a, width, height, method, alphaQuality)));
     return { alpha: !!picture.a, chunks };
 }
 
@@ -394,16 +418,15 @@ export function lossyTolerance(quality: number): number {
  * stores them halved)
  * @param plays How often to play the animation, 0 = forever
  * @param exif Exif data (a TIFF header and IFDs)
- * @param quality 0-100 for lossy frames
- * @param method libwebp's method for lossy frames (0-6: faster to smaller)
+ * @param lossy For lossy frames
  */
-export function encodeAnimation(frames: WebPEncodeFrame[], width: number, height: number, plays: number, exif?: Uint8Array, quality?: number, method = 4, sharp = false): Uint8Array {
+export function encodeAnimation(frames: WebPEncodeFrame[], width: number, height: number, plays: number, exif?: Uint8Array, lossy?: LossyOptions): Uint8Array {
     if (!frames.length) throw new Error('WebP: an animation needs at least one frame');
     if (width > 1 << 24 || height > 1 << 24) throw new RangeError('WebP: canvas too large');
 
     let alpha = false;
     for (const [i, f] of frames.entries()) alpha ||= needsAlpha(f, i === 0, width, height);
-    return animationFile(frames.map(f => frameChunk(f, quality, method, sharp)), width, height, plays, alpha, exif);
+    return animationFile(frames.map(f => frameChunk(f, lossy)), width, height, plays, alpha, exif);
 }
 
 /**
@@ -415,10 +438,10 @@ export function needsAlpha(f: WebPEncodeFrame, first: boolean, width: number, he
 }
 
 /** A frame of an animation as its ANMF chunk */
-export function frameChunk(f: WebPEncodeFrame, quality?: number, method = 4, sharp = false): Uint8Array {
+export function frameChunk(f: WebPEncodeFrame, lossy?: LossyOptions): Uint8Array {
     if (f.x & 1 || f.y & 1) throw new RangeError('WebP: frame offsets have to be even');
-    const bitstream = quality === undefined ? riffChunk('VP8L', vp8l.encode(toARGB(f.pixels, f.width * f.height), f.width, f.height))
-        : concat(lossyChunks(f.pixels, f.width, f.height, quality, method, sharp).chunks);
+    const bitstream = !lossy ? riffChunk('VP8L', vp8l.encode(toARGB(f.pixels, f.width * f.height), f.width, f.height))
+        : concat(lossyChunks(f.pixels, f.width, f.height, lossy).chunks);
     const header = new Uint8Array(16);
     set24(header, 0, f.x >> 1);
     set24(header, 3, f.y >> 1);

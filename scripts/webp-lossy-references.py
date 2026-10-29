@@ -1,5 +1,6 @@
 # Prints the sha256 of the VP8 chunks cwebp (libwebp) writes for some of tests/targets, with its default settings and
-# a quality (and some with other methods, ImageScript's efforts, or -sharp_yuv), for tests/webp-lossy.js (ImageScript's lossy encoder writes the same). The images are passed as PPM/PAM,
+# a quality (and some with other methods, ImageScript's efforts, or -sharp_yuv), for tests/webp-lossy.js (ImageScript's lossy encoder writes the same),
+# and of the alpha planes its files decode to with -alpha_q (ImageScript's alpha planes reduce to the same levels). The images are passed as PPM/PAM,
 # which cwebp reads without libpng:
 #   CWEBP=path/to/cwebp python scripts/webp-lossy-references.py
 import hashlib, os, struct, subprocess, tempfile
@@ -16,6 +17,8 @@ method_images = ['external.png', 'potato.png', 'font-4.png']
 methods = [0, 1, 2, 3, 5, 6]
 # -sharp_yuv (at quality 75, methods 4 and 2)
 sharp_images = ['external.png', 'potato.png', 'font-4.png']
+# -alpha_q (at quality 75), of the images with alpha
+alpha_qualities = [0, 30, 70, 90]
 
 
 def vp8_chunk(data):
@@ -41,3 +44,8 @@ for name in images:
         subprocess.run([CWEBP, '-quiet', '-q', str(q), '-m', str(m), *(['-sharp_yuv'] if sharp else []), str(src), '-o', str(tmp / 'out.webp')], check=True)
         key = f'{name} {q} {m} sharp' if sharp else f'{name} {q}' if m == 4 else f'{name} {q} {m}'
         print(f"    '{key}': '{hashlib.sha256(vp8_chunk((tmp / 'out.webp').read_bytes())).hexdigest()}',")
+    if alpha:
+        for aq in alpha_qualities:
+            subprocess.run([CWEBP, '-quiet', '-q', '75', '-alpha_q', str(aq), str(src), '-o', str(tmp / 'out.webp')], check=True)
+            plane = Image.open(tmp / 'out.webp').convert('RGBA').getchannel('A').tobytes()
+            print(f"    '{name} alpha {aq}': '{hashlib.sha256(plane).hexdigest()}',")

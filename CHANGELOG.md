@@ -17,6 +17,10 @@
   resvg's 16 tests pass, up from 2.
 - `Image.renderSVG()` draws shapes without antialiasing for `shape-rendering: crispEdges` and `optimizeSpeed`, and fills
   the root's viewBox with its `background-color` (in CSS).
+- `WebPEncodeOptions.alphaQuality` (0-100, default 100, also for lossy animations and `Animation.webpEncoder()`):
+  below 100 the alpha plane of lossy images keeps fewer levels (2-16 up to 70, 16-256 above), like cwebp's `-alpha_q`
+  (the same alpha values), so it compresses better: potato.png's alpha plane takes 1.3 kB at 50 instead of 1.9 kB,
+  a gradient 4.3 kB instead of 16.7 kB.
 
 ### Fixes
 

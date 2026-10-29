@@ -123,6 +123,12 @@ export interface WebPEncodeOptions {
      * hard color edges a lot larger (1200x800 red and blue squares: 2.7 times). Default: `false`
      */
     sharpYuv?: boolean;
+    /**
+     * For lossy compression, the alpha plane's quality (0-100, like cwebp's `-alpha_q`): below 100 its levels are
+     * reduced (to 2-16 up to 70, 16-256 above), which makes it compress better; the alpha plane is lossless otherwise.
+     * Default: `100`
+     */
+    alphaQuality?: number;
     /** Metadata to include, see {@link Metadata} */
     metadata?: Metadata;
 }
@@ -2108,13 +2114,11 @@ export class Image {
      * quality
      * @param options See {@link WebPEncodeOptions}
      */
-    async encodeWebP({ quality, effort = 2, sharpYuv = false, metadata = {} }: WebPEncodeOptions = {}): Promise<Uint8Array> {
+    async encodeWebP({ quality, effort = 2, sharpYuv = false, alphaQuality = 100, metadata = {} }: WebPEncodeOptions = {}): Promise<Uint8Array> {
         const exif = exifData(resolveMetadata(metadata));
-        if (quality === undefined) return webp.encode(this.__bytes__(), this.width, this.height, exif);
-        const q = finite(quality, 'quality');
-        if (q < 0 || q > 100) throw new RangeError(`quality must be 0-100, not ${q}`);
-        if (!Number.isInteger(effort) || effort < 0 || effort > 6) throw new RangeError(`effort must be an integer 0-6, not ${effort}`);
-        return webp.encodeLossy(this.__bytes__(), this.width, this.height, q, exif, effort, sharpYuv);
+        const lossy = webp.lossyOptions(quality, effort, sharpYuv, alphaQuality);
+        if (!lossy) return webp.encode(this.__bytes__(), this.width, this.height, exif);
+        return webp.encodeLossy(this.__bytes__(), this.width, this.height, lossy, exif);
     }
 
     /**

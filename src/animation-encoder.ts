@@ -32,6 +32,8 @@ export interface WebPAnimationEncoderOptions extends AnimationEncoderOptions {
     effort?: number;
     /** Lossy frames: libwebp's sharp YUV conversion, see {@link WebPEncodeOptions.sharpYuv}. Default: `false` */
     sharpYuv?: boolean;
+    /** Lossy frames: the alpha planes' quality (0-100), see {@link WebPEncodeOptions.alphaQuality}. Default: `100` */
+    alphaQuality?: number;
 }
 
 /** Options of {@link Animation.gifEncoder} */
@@ -120,14 +122,10 @@ export class AnimationEncoder {
     }
 
     /** @internal */
-    static __webp__(width: number, height: number, { loopCount = -1, metadata = {}, optimize = true, quality, effort = 2, sharpYuv = false }: WebPAnimationEncoderOptions): AnimationEncoder {
+    static __webp__(width: number, height: number, { loopCount = -1, metadata = {}, optimize = true, quality, effort = 2, sharpYuv = false, alphaQuality = 100 }: WebPAnimationEncoderOptions): AnimationEncoder {
         canvas(width, height, loopCount);
         if (width > 1 << 24 || height > 1 << 24) throw new RangeError('WebP: canvas too large');
-        if (quality !== undefined) {
-            const q = finite(quality, 'quality');
-            if (q < 0 || q > 100) throw new RangeError(`quality must be 0-100, not ${q}`);
-            if (!Number.isInteger(effort) || effort < 0 || effort > 6) throw new RangeError(`effort must be an integer 0-6, not ${effort}`);
-        }
+        const lossy = webp.lossyOptions(quality, effort, sharpYuv, alphaQuality);
         const resolved = resolveMetadata(metadata), chunks: Uint8Array[] = [];
         let alpha = false;
         // without optimizing: frames WebP can't store (disposed to the previous frame, or disposed with odd offsets) are
@@ -136,10 +134,10 @@ export class AnimationEncoder {
         let full = false;
         const add = (f: webp.WebPEncodeFrame): void => {
             alpha ||= webp.needsAlpha(f, !chunks.length, width, height);
-            chunks.push(webp.frameChunk(f, quality, effort, sharpYuv));
+            chunks.push(webp.frameChunk(f, lossy));
         };
         return new AnimationEncoder(width, height, {
-            optimize: { replace: true, even: true, alpha: 'frame', tolerance: quality === undefined ? undefined : webp.lossyTolerance(quality) },
+            optimize: { replace: true, even: true, alpha: 'frame', tolerance: lossy ? webp.lossyTolerance(lossy.quality) : undefined },
             async frame(f, optimized) {
                 if (optimized) return add(f as OptimizedFrame);
                 const input = f as InputFrame & { disposal: number };

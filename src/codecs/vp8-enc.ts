@@ -1,7 +1,7 @@
 /*!
  * Lossy WebP (VP8) encoding, ported from libwebp's encoder (src/enc: analysis_enc.c, quant_enc.c, frame_enc.c,
  * iterator_enc.c, cost_enc.c, token_enc.c, tree_enc.c, syntax_enc.c, filter_enc.c, alpha_enc.c; src/utils:
- * bit_writer_utils.c, filters_utils.c) with its default settings and any method (effort: 0-2 decide modes by
+ * bit_writer_utils.c, filters_utils.c, quant_levels_utils.c) with its default settings and any method (effort: 0-2 decide modes by
  * distortion, 3-6 by rate and distortion, 5-6 with trellis quantization), so the output is the same as cwebp's.
  * Copyright (c) 2010 Google Inc., BSD-3-Clause License (see THIRD_PARTY_NOTICES.md)
  */
@@ -1927,7 +1927,55 @@ function partition0(enc: Encoder): Uint8Array {
     return bw.finish();
 }
 
-// ---- alpha (alpha_enc.c): losslessly compressed, predicted by the filter that seems best
+// ---- alpha (alpha_enc.c): losslessly compressed, predicted by the filter that seems best, its levels reduced below
+// quality 100
+
+// reduces the alpha values to as many levels (quant_levels_utils.c's QuantizeLevels): k-means from uniformly spread
+// levels, the lowest and highest values staying
+function quantizeLevels(a: Uint8Array, levels: number): void {
+    const freq = new Int32Array(256), qLevel = new Int32Array(256), invQLevel = new Float64Array(256);
+    let minS = 255, maxS = 0, levelsIn = 0;
+    for (let n = 0; n < a.length; n++) {
+        const v = a[n];
+        if (!freq[v]) levelsIn++;
+        if (v < minS) minS = v;
+        if (v > maxS) maxS = v;
+        freq[v]++;
+    }
+    if (levelsIn <= levels) return;
+
+    for (let i = 0; i < levels; i++) invQLevel[i] = minS + (maxS - minS) * i / (levels - 1);
+    qLevel[maxS] = levels - 1;
+
+    const threshold = 1e-4 * a.length;
+    const qSum = new Float64Array(256), qCount = new Float64Array(256);
+    let lastErr = 1e38;
+    for (let iter = 0; iter < 6; iter++) {
+        qSum.fill(0);
+        qCount.fill(0);
+        for (let s = minS, slot = 0; s <= maxS; s++) {
+            while (slot < levels - 1 && 2 * s > invQLevel[slot] + invQLevel[slot + 1]) slot++;
+            if (freq[s] > 0) {
+                qSum[slot] += s * freq[s];
+                qCount[slot] += freq[s];
+            }
+            qLevel[s] = slot;
+        }
+        for (let slot = 1; slot < levels - 1; slot++) if (qCount[slot] > 0) invQLevel[slot] = qSum[slot] / qCount[slot];
+
+        let err = 0;
+        for (let s = minS; s <= maxS; s++) {
+            const e = s - invQLevel[qLevel[s]];
+            err += freq[s] * e * e;
+        }
+        if (lastErr - err < threshold) break;
+        lastErr = err;
+    }
+
+    const map = new Uint8Array(256);
+    for (let s = minS; s <= maxS; s++) map[s] = Math.trunc(invQLevel[qLevel[s]] + 0.5);
+    for (let n = 0; n < a.length; n++) a[n] = map[a[n]];
+}
 
 // predicts each sample (filter 1: from the left one, 2: from the one above, 3: from the gradient), the residues
 function filterAlpha(a: Uint8Array, width: number, height: number, filter: number): Uint8Array {
@@ -1975,8 +2023,16 @@ function estimateBestFilter(a: Uint8Array, width: number, height: number): numbe
     return best;
 }
 
-/** The ALPH chunk's payload: the alpha plane, losslessly compressed (or not, if that's smaller) */
-export function encodeAlpha(a: Uint8Array, width: number, height: number, method = 4): Uint8Array {
+/**
+ * The ALPH chunk's payload: the alpha plane, losslessly compressed (or not, if that's smaller), with fewer levels below
+ * quality 100 (libwebp's alpha_quality: 2-16 levels up to 70, 16-256 above)
+ */
+export function encodeAlpha(a: Uint8Array, width: number, height: number, method = 4, quality = 100): Uint8Array {
+    const reduce = quality < 100;
+    if (reduce) {
+        a = a.slice();
+        quantizeLevels(a, quality <= 70 ? 2 + Math.trunc(quality / 5) : 16 + (quality - 70) * 8);
+    }
     let colors = 0;
     const seen = new Uint8Array(256);
     for (let i = 0; i < a.length; i++) if (!seen[a[i]]) { seen[a[i]] = 1; colors++; }
@@ -1995,7 +2051,8 @@ export function encodeAlpha(a: Uint8Array, width: number, height: number, method
             method = 0;
         }
         const out = new Uint8Array(1 + stream.length);
-        out[0] = method | filter << 2;
+        // (and whether the levels were reduced: decoders may smooth them)
+        out[0] = method | filter << 2 | (reduce ? 1 << 4 : 0);
         out.set(stream, 1);
         if (!best || out.length < best.length) best = out;
     }

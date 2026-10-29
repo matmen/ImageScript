@@ -64,6 +64,19 @@ const references = {
     'font-4.png 75 2 sharp': 'b0634fd71fe2a1e9358954363a9c923374314823bf4c46d4ec07d8b02f7d2136',
 };
 
+// the alpha planes of cwebp's files with -alpha_q (at quality 75, scripts/webp-lossy-references.py): alphaQuality
+// reduces the levels to the same values
+const alphaReferences = {
+    'potato.png alpha 0': '9bfd0225c5cf2b10c1cd655e2faf55b8eac9f5aaa3f0730d99cb068ca9f46afa',
+    'potato.png alpha 30': '74016b8d07a95768da0de928dbfd236718c3612971d6a691aca6f30942ea446b',
+    'potato.png alpha 70': '627b3304829190b2c877840eb8b156b5ed827bcfd4d55f6ef0109cf946b423de',
+    'potato.png alpha 90': '0ab9d442f426f33c9496d8cdc9ac582cf3d5035f238608adfde747f914e57f2e',
+    'font-4.png alpha 0': '3cf8b15dd90f0d2c309ab16c6beb2efccbee967a0231d395860b8429ccfdd9f5',
+    'font-4.png alpha 30': '8e61c330255abc7b81b55bbdf947e5a4fe531f2678528ad2723ac93d41e0b452',
+    'font-4.png alpha 70': '1e02666c2d51f2003e24a8e6fb4f93c2322841b4ca477c0671e231bda19a9479',
+    'font-4.png alpha 90': 'fde0979974df4af6c9947ae1ba0043eb4e24e96459ea56d03431cdd6ecdb07b4',
+};
+
 (async () => {
     for (const [key, reference] of Object.entries(references)) {
         const [name, quality, effort = '4', sharp] = key.split(' ');
@@ -82,6 +95,26 @@ const references = {
         if (alpha) panic(`${key}: alpha differs by ${alpha}`);
         if (!!c.ALPH !== image.bitmap.some((v, i) => (i & 3) === 3 && v !== 255)) panic(`${key}: ALPH chunk only for transparent images`);
         if (Number(quality) === 95 && color / (image.width * image.height * 2) > 6) panic(`${key}: decodes too different from the image`);
+    }
+
+    for (const [key, reference] of Object.entries(alphaReferences)) {
+        const [name, , alphaQuality] = key.split(' ');
+        const image = await Image.decode(await fs.readFile(`./tests/targets/${name}`));
+        const webp = await image.encodeWebP({quality: 75, alphaQuality: Number(alphaQuality)});
+        const back = await Image.decode(webp);
+        const plane = new Uint8Array(back.width * back.height);
+        for (let i = 0; i < plane.length; i++) plane[i] = back.bitmap[i * 4 + 3];
+        if (sha256(plane) !== reference) panic(`${key}: the alpha plane differs from cwebp's`);
+        // (marked as preprocessed)
+        if (!(chunks(webp).ALPH[0] & 16)) panic(`${key}: the ALPH chunk should say its levels were reduced`);
+    }
+    {
+        const image = await Image.decode(await fs.readFile('./tests/targets/potato.png'));
+        const sizes = await Promise.all([100, 50].map(async alphaQuality => chunks(await image.encodeWebP({quality: 75, alphaQuality})).ALPH.length));
+        if (!(sizes[1] < sizes[0])) panic(`alphaQuality 50 should make a smaller alpha plane: ${sizes}`);
+        for (const alphaQuality of [-1, 101, NaN]) {
+            if (!await image.encodeWebP({quality: 75, alphaQuality}).then(() => false, e => e instanceof RangeError)) panic(`alphaQuality ${alphaQuality} should throw`);
+        }
     }
 
     // noisy alpha: stored uncompressed (smaller than compressed), still lossless
@@ -122,4 +155,17 @@ const references = {
         if (Math.abs(r - er) + Math.abs(g - eg) + Math.abs(b - eb) > 12 || a !== ea) panic(`lossy animation: frame ${f} decodes to ${[r, g, b, a]}`);
     }
     if (!await animation.encodeWebP({quality: 200}).then(() => false, e => e instanceof RangeError)) panic('animation quality 200 should throw');
+
+    // alphaQuality for animations, also encoded a frame at a time
+    const faded = new Animation([0, 1].map(i => Frame.from(new Image(40, 30).fill((x, y) => Image.rgbaToColor(200, 50 * i, 9, x * 6 + y)), 100)), 0);
+    const fadedWebp = await faded.encodeWebP({quality: 80, alphaQuality: 0, optimize: false});
+    const encoder = Animation.webpEncoder(40, 30, {loopCount: 0, quality: 80, alphaQuality: 0, optimize: false});
+    for (const frame of faded) await encoder.add(frame);
+    if (sha256(await encoder.finish()) !== sha256(fadedWebp)) panic('alphaQuality: the incremental encoder writes another file');
+    for (const frame of await Animation.decode(fadedWebp)) {
+        const levels = new Set();
+        for (let i = 3; i < frame.bitmap.length; i += 4) levels.add(frame.bitmap[i]);
+        if (levels.size > 2) panic(`alphaQuality 0: ${levels.size} alpha levels instead of 2`);
+    }
+    if (!await faded.encodeWebP({quality: 80, alphaQuality: 101}).then(() => false, e => e instanceof RangeError)) panic('animation alphaQuality 101 should throw');
 })();

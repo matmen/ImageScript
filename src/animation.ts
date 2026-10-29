@@ -68,6 +68,8 @@ export interface WebPAnimationEncodeOptions extends AnimationEncodeOptions {
     effort?: number;
     /** Lossy frames: libwebp's sharp YUV conversion, see {@link WebPEncodeOptions.sharpYuv}. Default: `false` */
     sharpYuv?: boolean;
+    /** Lossy frames: the alpha planes' quality (0-100), see {@link WebPEncodeOptions.alphaQuality}. Default: `100` */
+    alphaQuality?: number;
 }
 
 /** Options of {@link Animation.encodeGIF} */
@@ -291,18 +293,14 @@ export class Animation extends Array<Frame> {
      * shows the same animation, but doesn't necessarily decode to the same frames
      * @param options See {@link WebPAnimationEncodeOptions}
      */
-    async encodeWebP({ metadata = {}, optimize = true, quality, effort = 2, sharpYuv = false }: WebPAnimationEncodeOptions = {}): Promise<Uint8Array> {
+    async encodeWebP({ metadata = {}, optimize = true, quality, effort = 2, sharpYuv = false, alphaQuality = 100 }: WebPAnimationEncodeOptions = {}): Promise<Uint8Array> {
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
-        if (quality !== undefined) {
-            const q = finite(quality, 'quality');
-            if (q < 0 || q > 100) throw new RangeError(`quality must be 0-100, not ${q}`);
-            if (!Number.isInteger(effort) || effort < 0 || effort > 6) throw new RangeError(`effort must be an integer 0-6, not ${effort}`);
-        }
+        const lossy = webp.lossyOptions(quality, effort, sharpYuv, alphaQuality);
 
-        const tolerance = quality === undefined ? undefined : webp.lossyTolerance(quality);
+        const tolerance = lossy ? webp.lossyTolerance(lossy.quality) : undefined;
         const frames = optimize ? this.__optimized__({ replace: true, even: true, alpha: 'frame', tolerance }) : this.__webpFrames__();
-        return webp.encodeAnimation(frames, this.width, this.height, toPlays(this.loopCount), exifData(resolveMetadata(metadata)), quality, effort, sharpYuv);
+        return webp.encodeAnimation(frames, this.width, this.height, toPlays(this.loopCount), exifData(resolveMetadata(metadata)), lossy);
     }
 
     /**
