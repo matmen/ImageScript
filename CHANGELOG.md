@@ -21,6 +21,10 @@
   its other tests that have text; the others need variable fonts (14), resvg's default font size of 12 pixels (instead
   of 16), its cursive and fantasy fonts, or render as resvg doesn't (in ways browsers don't either, like conjuncts
   broken at a font change).
+- `encodeJXL({ quality, effort: 2 })` stores text-like features that repeat (glyphs on the flat backgrounds of
+  screenshots) once, in a reference frame, and adds them where they occur, like libjxl's patches (`cjxl -e 7`, ported
+  from it): a page of text takes 62% fewer bytes (143x91 pixels: 1698 instead of 4458), screenshots 1-2% fewer, like
+  with cjxl. Images without such features stay as they are; finding them takes about 0.3 s per megapixel.
 - Decoding converts images with embedded ICC color profiles to sRGB, like browsers show them (`DecodeOptions.applyColorProfile`,
   default `true`, also for `Animation.decode()`): PNGs (iCCP, unless an sRGB chunk is there too), JPEGs (APP2), WebPs
   (ICCP, also animated), AVIFs (colr prof/rICC, which then describe the RGB values instead of the nclx box) and TIFFs.

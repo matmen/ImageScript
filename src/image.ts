@@ -216,7 +216,8 @@ export interface JXLEncodeOptions {
     quality?: number;
     /**
      * How hard lossy compression searches for the best transforms: 0-2, faster to smaller. 0 uses 8x8 DCTs only (like
-     * `cjxl -e 3`), 1 and 2 search their sizes like `cjxl -e 5` (2 tries more of the small ones). Default: `1`
+     * `cjxl -e 3`), 1 and 2 search their sizes like `cjxl -e 5` (2 tries more of the small ones), and 2 also stores
+     * text-like features that repeat (the glyphs of screenshots) once, as patches like `cjxl -e 7`. Default: `1`
      */
     effort?: number;
     /** Metadata to include, see {@link Metadata} */

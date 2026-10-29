@@ -113,6 +113,18 @@ const codestream = jxl => {
         else if (jxl.length > effort0 * 1.02) panic(`effort ${effort}: ${jxl.length} B, effort 0 ${effort0} B`);
     }
     for (const effort of [-1, 3, 1.5]) if (!await shot.encodeJXL({quality: 90, effort}).then(() => false, e => e instanceof RangeError)) panic(`effort ${effort} should throw`);
+    // patches (effort 2): repeated glyphs of text on a flat background are found, stored in a reference frame and
+    // added back
+    {
+        const text = await Image.renderText(await fs.readFile('./tests/fonts/opensans bold.ttf'), 18, 'abba cabbage\nbeach bag cab\nabba cabbage', 0x202020ff);
+        const page = new Image(text.width + 16, text.height + 16).fill(0xf4f4f4ff).composite(text, 8, 8);
+        const {findPatches} = await import('../dist/codecs/jxl/patches-enc.js');
+        const w = page.width, h = page.height, planes = [0, 1, 2].map(c => Float32Array.from({length: w * h}, (_, i) => page.bitmap[i * 4 + c] / 255));
+        if (!findPatches(planes, w, w, h, 1, 0)) panic('patches: none found in text');
+        const jxl = await page.encodeJXL({quality: 90, effort: 2});
+        const p = psnr(page, await Image.decode(jxl));
+        if (p < 35) panic(`patches: ${p.toFixed(2)} dB`);
+    }
     const pixel = await Image.decode(await new Image(1, 1).fill(0x336699ff).encodeJXL({quality: 90}));
     if (pixel.width !== 1 || Math.abs((pixel.getPixelAt(0, 0) >>> 24) - 0x33) > 2) panic('1x1 lossy');
     const lossless = await Image.decode(await photo.encodeJXL({quality: 100}));

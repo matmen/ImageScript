@@ -5,6 +5,7 @@
  * contexts, chroma from luma per tile (libjxl's fast search), the edge preserving filter. Copyright (c) the JPEG XL
  * Project Authors, BSD-3-Clause License (see THIRD_PARTY_NOTICES.md)
  */
+import { findPatches } from './patches-enc.ts';
 import { BitWriter } from './bit-writer.ts';
 import { imageHeader, u32 } from './headers-enc.ts';
 import { EntropyCode, Tokens, packSigned } from './entropy-enc.ts';
@@ -188,6 +189,8 @@ export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { 
     // the varblocks: a type at each one's first block (-1 elsewhere; 8x8 DCTs at effort 0, else by libjxl's search,
     // with the masking of its quantization field: of 0.62 times the distance, like libjxl's without Gaborish), their
     // HF multipliers
+    // patches at effort 2: text-like features of screenshots stored once (subtracted from the planes here)
+    const patches = effort >= 2 ? findPatches(planes, pw, width, height, distance, alpha ? 1 : 0) : null;
     const types = effort ? chooseVarblocks(planes, pw, bw, bh, initialQuantField(distance * 0.62, planes, pw, bh * 8, 0.725 / (distance * 0.62)), distance, effort === 1 ? 5 : 4) : new Int8Array(bw * bh);
     const muls = new Int32Array(bw * bh).fill(mul);
 
@@ -348,6 +351,7 @@ export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { 
     const sections: BitWriter[] = [];
     {
         const w = new BitWriter();
+        patches?.writeDictionary(w);
         // default LF dequantization, the quantizer, the default block contexts and chroma from luma
         w.write(1, 1);
         u32(w, globalScale, [[11, 1], [11, 2049], [12, 4097], [16, 8193]]);
@@ -398,7 +402,8 @@ export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { 
     // the image header, the frame header, the TOC, the sections
     const out = new BitWriter();
     imageHeader(out, width, height, alpha ? 4 : 3, true);
-    frameHeader(out, xqmScale, bqmScale, epfIters, alpha !== null);
+    if (patches) out.append(patches.frame);
+    frameHeader(out, xqmScale, bqmScale, epfIters, alpha !== null, !!patches);
     if (numGroups === 1) {
         // (a single section: all of them one after the other)
         const all = new BitWriter();
@@ -422,11 +427,15 @@ export function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { 
 }
 
 // a regular VarDCT frame: no flags, one pass, replacing (alpha too), the last one; no Gaborish, EPF iterations
-function frameHeader(w: BitWriter, xqmScale: number, bqmScale: number, epfIters: number, alpha: boolean): void {
+function frameHeader(w: BitWriter, xqmScale: number, bqmScale: number, epfIters: number, alpha: boolean, patches: boolean): void {
     w.write(1, 0);
     w.write(2, 0);
     w.write(1, 0);
-    w.write(2, 0);
+    // (the flags: patches is 2)
+    if (patches) {
+        w.write(2, 1);
+        w.write(4, 1);
+    } else w.write(2, 0);
     w.write(2, 0);
     if (alpha) w.write(2, 0);
     w.write(3, xqmScale);
