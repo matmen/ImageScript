@@ -52,6 +52,7 @@
   masks, gradients and filters in `objectBoundingBox` units).
 - `Image.renderSVG()`: `overflow="inherit"` on markers and nested viewports takes the parent's value.
 - `Image.renderSVG()`: path data ends at the first character that isn't part of it, instead of skipping it.
+- `Image.renderSVG()`: line ends (CR LF, CR) read as line feeds, like XML parsers read them.
 
 ## 3.8.1
 

@@ -321,6 +321,8 @@ export function embeddedImages(source: string | Uint8Array): Array<{ href: strin
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 function parseXML(text: string): XNode {
+    // (line ends are normalized to line feeds, like XML parsers do: files checked out with CR LF read the same)
+    text = text.replace(/\r\n?/g, '\n');
     const root: XNode = { name: '#root', attrs: {}, children: [], text: '', svg: false };
     const stack: XNode[] = [root];
     const namespaces: Array<Record<string, string>> = [{ '': SVG_NS }];
