@@ -221,8 +221,9 @@ export interface DecodeOptions {
     toneMapping?: ToneMapping;
     /**
      * At most this many worker threads decode in parallel (lossy JPEG XLs from 4 megapixels on, one per 2 megapixels
-     * at most, lossless ones from 1.5 megapixels on; AVIFs from 4 megapixels on: the conversion to RGB, one per
-     * megapixel, and the tiles of grids), `1` for none. Default: the processors available, at most 8 (1 where workers can't share memory)
+     * at most, lossless ones from 1.5 megapixels and 512 KiB on; AVIFs from 4 megapixels on: the conversion to RGB,
+     * one per megapixel, and the tiles of grids), `1` for none. Default: the processors available, at most 8 (1 where
+     * workers can't share memory)
      */
     threads?: number;
 }

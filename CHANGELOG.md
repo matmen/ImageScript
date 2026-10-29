@@ -32,7 +32,8 @@
   references stay on one thread.
 - The thresholds for threads were measured with 1 to 8 threads on 0.25 to 8 megapixels: lossy JPEG XL encoding at
   efforts 1 and 2 and AVIF encoding use 4 threads up to about 1-2 megapixels (more were slower there), JPEG XL at
-  effort 0 starts at 1.5 megapixels, lossless JPEG XL decoding at 1.5 instead of 4.
+  effort 0 starts at 1.5 megapixels, lossless JPEG XL decoding at 1.5 instead of 4 (and 512 KiB: smaller files, like
+  ones of few colors, decode faster than threads start). Checked on screenshots, few colors and alpha too.
 - AVIF decoding uses worker threads (`DecodeOptions.threads`) from 4 megapixels on: the conversion to RGB runs in
   bands of rows (started at the beginning, the threads load while the AV1 image is decoded) and the tiles of grids are
   decoded in parallel, with the same pixels. A 3840x2160 4:2:0 image decodes in 355 ms instead of 466 ms, a 6400x2880
