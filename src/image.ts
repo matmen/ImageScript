@@ -137,6 +137,13 @@ export interface WebPEncodeOptions {
      * Default: `100`
      */
     alphaQuality?: number;
+    /**
+     * For lossless compression, at most this many worker threads search the predictors and prefix codes in parallel
+     * (the same file, faster), `1` for none. Images under about 1.5 megapixels, and runtimes whose workers can't share
+     * memory (browsers without cross-origin isolation), encode without them. Default: the processors available, at
+     * most 8
+     */
+    threads?: number;
     /** Metadata to include, see {@link Metadata} */
     metadata?: Metadata;
 }
@@ -213,9 +220,9 @@ export interface DecodeOptions {
      */
     toneMapping?: ToneMapping;
     /**
-     * At most this many worker threads decode in parallel (JPEG XLs from 4 megapixels on: one per 2 megapixels at
-     * most; AVIFs from 4 megapixels on: the conversion to RGB, one per megapixel, and the tiles of grids), `1` for
-     * none. Default: the processors available, at most 8 (1 where workers can't share memory)
+     * At most this many worker threads decode in parallel (lossy JPEG XLs from 4 megapixels on, one per 2 megapixels
+     * at most, lossless ones from 1.5 megapixels on; AVIFs from 4 megapixels on: the conversion to RGB, one per
+     * megapixel, and the tiles of grids), `1` for none. Default: the processors available, at most 8 (1 where workers can't share memory)
      */
     threads?: number;
 }
@@ -235,8 +242,8 @@ export interface JXLEncodeOptions {
     effort?: number;
     /**
      * At most this many worker threads compress lossily in parallel (the same file, faster: 2.6 times with 8 on a
-     * 1920x1080 photo at effort 1, 4.2 times on 3840x2160), `1` for none. Small images (under about 1024x1024 pixels at
-     * effort 0, 512x512 at 1, 384x384 at 2), and runtimes whose workers can't share memory (browsers without
+     * 1920x1080 photo at effort 1, 4.2 times on 3840x2160), `1` for none. Small images (under about 1.5 megapixels at
+     * effort 0, 512x512 pixels at 1, 384x384 at 2), and runtimes whose workers can't share memory (browsers without
      * cross-origin isolation) encode without them.
      * Default: the processors available, at most 8
      */
@@ -2161,10 +2168,11 @@ export class Image {
      * quality
      * @param options See {@link WebPEncodeOptions}
      */
-    async encodeWebP({ quality, effort = 2, sharpYuv = false, alphaQuality = 100, metadata = {} }: WebPEncodeOptions = {}): Promise<Uint8Array> {
+    async encodeWebP({ quality, effort = 2, sharpYuv = false, alphaQuality = 100, threads = defaultThreads(), metadata = {} }: WebPEncodeOptions = {}): Promise<Uint8Array> {
+        checkThreads(threads);
         const exif = exifData(resolveMetadata(metadata));
         const lossy = webp.lossyOptions(quality, effort, sharpYuv, alphaQuality);
-        if (!lossy) return webp.encode(this.__bytes__(), this.width, this.height, exif);
+        if (!lossy) return webp.encode(this.__bytes__(), this.width, this.height, exif, threads);
         return webp.encodeLossy(this.__bytes__(), this.width, this.height, lossy, exif);
     }
 

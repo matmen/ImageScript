@@ -16,16 +16,23 @@
   field, the varblock search (rows of 64x64 areas, like libjxl's), the coefficients and their tokens run in parallel,
   writing the same files. A 1920x1080 photo takes 0.20 s instead of 0.28 s at effort 0, 0.86 s instead of 2.2 s at
   effort 1 and 1.7 s instead of 4.9 s at effort 2, a 3840x2160 one 0.42 s instead of 0.89 s, 2.0 s instead of 8.5 s
-  and 4.8 s instead of 19.2 s (8 threads). Images under about 1024x1024 pixels at effort 0, 512x512 at 1 and 384x384
-  at 2 encode without threads.
+  and 4.8 s instead of 19.2 s (8 threads). Images under about 1.5 megapixels at effort 0, 512x512 pixels at 1 and
+  384x384 at 2 encode without threads.
 - JPEG XL decoding uses worker threads (`DecodeOptions.threads` and `AnimationDecodeOptions.threads`, the same
-  default), from 4 megapixels on (one thread per 2 megapixels at most): the groups (with all their passes), Gaborish, the
+  default), lossy images from 4 megapixels on (one thread per 2 megapixels at most), lossless ones from 1.5: the groups (with all their passes), Gaborish, the
   EPF's strips and the conversion to sRGB run in parallel, with the same pixels. A 3840x2160 image decodes in 395 ms
   instead of 640 ms lossy and 328 ms instead of 671 ms lossless, a 5120x2880 one in 568 ms instead of 1121 ms and
   487 ms instead of 1122 ms. Lossy frames no longer keep the coefficients of the whole frame (about 100 MB at 4K): each
   group is rendered once its passes are read.
 - `encodeJXL({ quality, effort: 2 })` searches patches about 30% faster (the connected components with a typed stack of
   pixel indices instead of an array of coordinates, in the same order): the same files.
+- Lossless `encodeWebP()` searches the predictors and the prefix groups (the k-means of the blocks' histograms) in
+  worker threads (`WebPEncodeOptions.threads`, the same default), from 1.5 megapixels on: the same files. A 2731x1536
+  photo takes 1.07 s instead of 1.39 s, a 3862x2172 one 1.62 s instead of 2.34 s (8 threads); the backward
+  references stay on one thread.
+- The thresholds for threads were measured with 1 to 8 threads on 0.25 to 8 megapixels: lossy JPEG XL encoding at
+  efforts 1 and 2 and AVIF encoding use 4 threads up to about 1-2 megapixels (more were slower there), JPEG XL at
+  effort 0 starts at 1.5 megapixels, lossless JPEG XL decoding at 1.5 instead of 4.
 - AVIF decoding uses worker threads (`DecodeOptions.threads`) from 4 megapixels on: the conversion to RGB runs in
   bands of rows (started at the beginning, the threads load while the AV1 image is decoded) and the tiles of grids are
   decoded in parallel, with the same pixels. A 3840x2160 4:2:0 image decodes in 355 ms instead of 466 ms, a 6400x2880

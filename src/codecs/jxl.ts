@@ -91,9 +91,11 @@ export async function* frames(data: Uint8Array, maxPixels = MAX_PIXELS, toneMapp
         lfFrames: [null, null, null, null], visible: 0, invisible: 0
     };
     const a = image.animation, tick = a ? 1000 * a.tpsDenominator / a.tpsNumerator : 0;
-    // (threads for the frames' groups and filters, see decodeFrame: at most one per 2 megapixels, fewer take less time to
-    // start and warm up than they save)
-    const n = Math.min(threads, Math.floor(image.width * image.height / (2 << 20)));
+    // (threads for the frames' groups and filters, see decodeFrame: at most one per 2 megapixels for XYB images (lossy),
+    // from 1.5 megapixels on one per 512K pixels for others (lossless), more take longer to start and warm up than they
+    // save; measured with 1-8 threads on 0.25-8 megapixels)
+    const pixels = image.width * image.height;
+    const n = Math.min(threads, image.xybEncoded ? Math.floor(pixels / (2 << 20)) : pixels >= 1536 << 10 ? Math.floor(pixels / (512 << 10)) : 1);
     const pool: FrameThreads = { threads: n > 1 ? startThreads(n) : null, data: null };
     try {
         let shown = 0;

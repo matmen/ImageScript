@@ -28,9 +28,9 @@ export interface VarDCTOptions {
 }
 
 // (images below this many pixels encode faster without threads, which take about 0.1 s to start, and the pixels per
-// thread: more take longer to start than they save; by effort, effort 0 without the varblock search has less to run in
-// them)
-const MIN_THREADED_PIXELS = [1024 * 1024, 512 * 512, 384 * 384], PIXELS_PER_THREAD = [1024 * 512, 256 * 256, 256 * 256];
+// thread beyond 4: more take longer to start than they save; by effort, effort 0 without the varblock search has less
+// to run in them; measured with 1-8 threads on 0.25-8 megapixels)
+const MIN_THREADED_PIXELS = [1536 << 10, 512 * 512, 384 * 384], PIXELS_PER_THREAD = [1 << 20, 256 << 10, 256 << 10];
 
 // libjxl's opsin absorbance matrix and bias (lib/jxl/cms/opsin_params.h)
 const OPSIN = [
@@ -319,7 +319,7 @@ export async function encodeVarDCT(rgba: Uint8Array, width: number, height: numb
     if (width < 1 || height < 1) throw new RangeError('JPEG XL: dimensions must be at least 1');
     // threads for the XYB planes, the quantization field, the varblock search, the coefficients and their tokens, if
     // they start (the same files). Started first, they load while the work begins here
-    const n = Math.min(options.threads, Math.ceil(height / 64), Math.floor(width * height / PIXELS_PER_THREAD[options.effort]));
+    const n = Math.min(options.threads, Math.ceil(height / 64), Math.max(4, Math.floor(width * height / PIXELS_PER_THREAD[options.effort])));
     const pool = { threads: n > 1 && width * height >= MIN_THREADED_PIXELS[options.effort] ? startThreads(n) : null };
     try {
         return await encode(rgba, width, height, options, pool);

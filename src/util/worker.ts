@@ -1,6 +1,7 @@
 // the module worker threads run (see threads.ts): tasks posted to it, their results posted back
 import { searchRows, filterTrials, type SearchTask, type FilterTask } from '../codecs/av1/encode.ts';
 import { conversionChunks, tileChunks } from '../codecs/avif.ts';
+import { costChunks, predictorChunks } from '../codecs/vp8l.ts';
 import { varblockChunks } from '../codecs/jxl/acs-enc.ts';
 import { maskBlurChunks, maskingChunks } from '../codecs/jxl/aq-enc.ts';
 import { coefficientChunks, hfTokenChunks, xybChunks } from '../codecs/jxl/vardct-enc.ts';
@@ -11,6 +12,8 @@ import type { ChunkTask } from './threads.ts';
 const chunkTasks: Record<string, (task: never) => (chunk: number) => unknown> = {
     'avif-convert': conversionChunks,
     'avif-tiles': tileChunks,
+    'vp8l-predictor': predictorChunks,
+    'vp8l-costs': costChunks,
     'jxl-xyb': xybChunks,
     'jxl-masking': maskingChunks,
     'jxl-mask-blur': maskBlurChunks,

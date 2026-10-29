@@ -23,8 +23,9 @@ export interface AVIFOptions {
     threads: number;
 }
 
-// (images below this many pixels encode faster without threads, which take about 0.1 s to start: by effort)
-const MIN_THREADED_PIXELS = [640 * 640, 448 * 448, 320 * 320];
+// (images below this many pixels encode faster without threads, which take about 0.1 s to start, and the pixels per
+// thread beyond 4: more take longer to start than they save; by effort, measured with 1-8 threads on 0.25-4 megapixels)
+const MIN_THREADED_PIXELS = [640 * 640, 448 * 448, 320 * 320], PIXELS_PER_THREAD = [512 << 10, 256 << 10, 256 << 10];
 
 // libaom's quantizer_to_qindex (avifenc's quality: (100 - quality) * 63 / 100, rounded)
 const QINDEX = [
@@ -195,7 +196,7 @@ export async function encode(rgba: Uint8Array, width: number, height: number, { 
     // threads searching superblock rows in a wavefront (each two superblocks behind the one above, so at most half
     // the superblocks of a row at once) and running filter trials: the same files. Without them (or if they fail, like
     // workers whose module can't be loaded), the encoder runs here
-    const n = Math.min(maxThreads, height + 63 >> 6, Math.ceil((width + 63 >> 6) / 2));
+    const n = Math.min(maxThreads, height + 63 >> 6, Math.ceil((width + 63 >> 6) / 2), Math.max(4, Math.floor(width * height / PIXELS_PER_THREAD[effort])));
     let threads = n > 1 && width * height >= MIN_THREADED_PIXELS[effort] ? startThreads(n) : null;
     const stop = (): void => {
         if (threads) for (const t of threads) t.terminate();

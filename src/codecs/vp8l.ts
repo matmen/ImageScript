@@ -6,6 +6,7 @@
 
 import { ByteWriter } from '../util/bytes.ts';
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
+import { runChunks, shared, type ChunkTask, type Thread } from '../util/threads.ts';
 
 /** decoded VP8L image: ARGB pixels (0xAARRGGBB) */
 export interface VP8LImage {
@@ -995,7 +996,7 @@ function tokenSymbols(stream: Stream, k: number, out: Int32Array): void {
  * clusters' codes would take, from the blocks farthest apart); [groups of the blocks, their histograms], or null if a
  * single group is estimated to be no worse
  */
-function prefixGroups(stream: Stream, width: number, height: number, cacheBits: number, bits: number): [Int32Array, Int32Array[][], number] | null {
+async function prefixGroups(stream: Stream, width: number, height: number, cacheBits: number, bits: number, threads: Thread[] | null): Promise<[Int32Array, Int32Array[][], number] | null> {
     const bw = subSize(width, bits), bh = subSize(height, bits), nb = bw * bh;
     const greenSize = NUM_LITERAL_CODES + NUM_LENGTH_CODES + (cacheBits ? 1 << cacheBits : 0);
     const sizes = [greenSize, 256, 256, 256, NUM_DISTANCE_CODES], offsets = [0, greenSize, greenSize + 256, greenSize + 512, greenSize + 768];
@@ -1024,8 +1025,13 @@ function prefixGroups(stream: Stream, width: number, height: number, cacheBits: 
     }
     // (the last block with symbols and those after it end here)
     while (blk < nb) starts[++blk] = sparse.length;
+    // (the blocks' histograms in shared memory, for threads)
+    const array = <T>(Type: new (buffer: ArrayBufferLike) => T, bytes: number, length: number): T =>
+        new Type(threads ? new SharedArrayBuffer(bytes * length) : new ArrayBuffer(bytes * length));
+    const entries = array(Float64Array, 8, sparse.length);
+    entries.set(sparse);
+    const sharedStarts = threads ? shared(starts) : starts;
     // the bits of a block coded with a cluster's (smoothed) probabilities
-    const entries = Float64Array.from(sparse);
     const logs = (cl: Float64Array): Float64Array => {
         const t = totals(cl), out = new Float64Array(total);
         for (let c = 0; c < 5; c++) {
@@ -1033,11 +1039,6 @@ function prefixGroups(stream: Stream, width: number, height: number, cacheBits: 
             for (let s = 0; s < sizes[c]; s++) out[o + s] = -Math.log2((cl[o + s] + 0.5) / d);
         }
         return out;
-    };
-    const cost = (blk: number, log: Float64Array): number => {
-        let bitsSum = 0;
-        for (let e = starts[blk]; e < starts[blk + 1]; e += 2) bitsSum += entries[e + 1] * log[entries[e]];
-        return bitsSum;
     };
     const totals = (cl: Float64Array): Float64Array => Float64Array.from(offsets, (o, c) => {
         let t = 0;
@@ -1056,7 +1057,14 @@ function prefixGroups(stream: Stream, width: number, height: number, cacheBits: 
         }
         return b;
     };
-    const used = Array.from({ length: nb }, (_, i) => i).filter(i => starts[i + 1] > starts[i]);
+    const used = Int32Array.from(Array.from({ length: nb }, (_, i) => i).filter(i => starts[i + 1] > starts[i]));
+    const sharedUsed = threads ? shared(used) : used;
+    // the bits of the used blocks with a cluster's probabilities, or the nearest cluster of each (see costChunks)
+    const costs = array(Float64Array, 8, used.length), nearest = array(Int32Array, 4, used.length);
+    const blockCosts = async (logs: Float64Array[]): Promise<void> => {
+        const task: CostTask = { task: 'vp8l-costs', entries, starts: sharedStarts, used: sharedUsed, logs, costs, nearest };
+        await runChunks(threads, task, Math.ceil(used.length / COST_BLOCKS), costChunks(task));
+    };
     const single = new Float64Array(total);
     for (const blk of used) for (let e = starts[blk]; e < starts[blk + 1]; e += 2) single[entries[e]] += entries[e + 1];
     let bestBits = clusterBits(single), best: [Int32Array, Float64Array[]] | null = null;
@@ -1072,25 +1080,19 @@ function prefixGroups(stream: Stream, width: number, height: number, cacheBits: 
         const centers: Float64Array[] = [blockHistogram(used[0])];
         const dist = new Float64Array(nb).fill(Infinity);
         while (centers.length < k) {
-            const log = logs(centers[centers.length - 1]);
+            await blockCosts([logs(centers[centers.length - 1])]);
             let far = -1;
-            for (const blk of used) {
-                dist[blk] = Math.min(dist[blk], cost(blk, log));
+            for (let u = 0; u < used.length; u++) {
+                const blk = used[u];
+                dist[blk] = Math.min(dist[blk], costs[u]);
                 if (far < 0 || dist[blk] > dist[far]) far = blk;
             }
             centers.push(blockHistogram(far));
         }
         let clusters = centers;
         for (let iter = 0; iter < 3; iter++) {
-            const ls = clusters.map(logs);
-            for (const blk of used) {
-                let bc = 0, bv = Infinity;
-                for (let j = 0; j < ls.length; j++) {
-                    const v = cost(blk, ls[j]);
-                    if (v < bv) { bv = v; bc = j; }
-                }
-                assign[blk] = bc;
-            }
+            await blockCosts(clusters.map(logs));
+            for (let u = 0; u < used.length; u++) assign[used[u]] = nearest[u];
             clusters = clusters.map(() => new Float64Array(total));
             for (const blk of used) {
                 const cl = clusters[assign[blk]];
@@ -1113,11 +1115,51 @@ function prefixGroups(stream: Stream, width: number, height: number, cacheBits: 
     return [groups, kept.map(cl => sizes.map((size, c) => Int32Array.from(cl.subarray(offsets[c], offsets[c] + size)))), bestBits];
 }
 
+// (the used blocks of a chunk of the clusters' costs)
+const COST_BLOCKS = 1024;
+
+/** The bits of blocks with clusters' probabilities (see prefixGroups) */
+export interface CostTask extends ChunkTask {
+    /** the blocks' sparse histograms (symbol, count), each from starts[block] to starts[block + 1] */
+    entries: Float64Array;
+    starts: Int32Array;
+    used: Int32Array;
+    /** the clusters' bits per symbol */
+    logs: Float64Array[];
+    // the results: with one cluster each used block's bits, else its nearest cluster
+    costs: Float64Array;
+    nearest: Int32Array;
+}
+
+/** The costs of COST_BLOCKS used blocks (the chunk) */
+export function costChunks({ entries, starts, used, logs, costs, nearest }: CostTask): (chunk: number) => void {
+    const cost = (blk: number, log: Float64Array): number => {
+        let bitsSum = 0;
+        for (let e = starts[blk]; e < starts[blk + 1]; e += 2) bitsSum += entries[e + 1] * log[entries[e]];
+        return bitsSum;
+    };
+    return chunk => {
+        for (let u = chunk * COST_BLOCKS; u < Math.min(used.length, (chunk + 1) * COST_BLOCKS); u++) {
+            const blk = used[u];
+            if (logs.length === 1) {
+                costs[u] = cost(blk, logs[0]);
+                continue;
+            }
+            let bc = 0, bv = Infinity;
+            for (let j = 0; j < logs.length; j++) {
+                const v = cost(blk, logs[j]);
+                if (v < bv) { bv = v; bc = j; }
+            }
+            nearest[u] = bc;
+        }
+    };
+}
+
 /**
  * Writes an entropy coded image (main image with prefix groups per block, or a transform's sub-image with one): with
  * the color cache size (none, or 1-10 bits) and groups whose symbols are estimated to take the fewest bits
  */
-function writeImage(w: BitWriter, pixels: Uint32Array, width: number, isMain: boolean): void {
+async function writeImage(w: BitWriter, pixels: Uint32Array, width: number, isMain: boolean, threads: Thread[] | null = null): Promise<void> {
     const tokens = tokenize(pixels, width);
     const cacheBits = isMain ? bestCacheBits(tokens, pixels) : 0;
     const stream = withCache(tokens, pixels, cacheBits), counts = histograms(stream, cacheBits);
@@ -1126,7 +1168,7 @@ function writeImage(w: BitWriter, pixels: Uint32Array, width: number, isMain: bo
     // (the groups of blocks of 16 pixels)
     let groups: Int32Array | null = null, groupCounts: Int32Array[][] = [counts], prefixBits = 0;
     if (isMain && pixels.length > 4096) {
-        const r = prefixGroups(stream, width, height, cacheBits, 4);
+        const r = await prefixGroups(stream, width, height, cacheBits, 4, threads);
         if (r && r[2] < best) {
             [groups, groupCounts] = r;
             prefixBits = 4;
@@ -1142,7 +1184,7 @@ function writeImage(w: BitWriter, pixels: Uint32Array, width: number, isMain: bo
         w.write(groups ? 1 : 0, 1);
         if (groups) {
             w.write(prefixBits - 2, 3);
-            writeImage(w, Uint32Array.from(groups, g => g << 8), subSize(width, prefixBits), false);
+            await writeImage(w, Uint32Array.from(groups, g => g << 8), subSize(width, prefixBits), false);
         }
     }
 
@@ -1189,14 +1231,37 @@ const residualCost = (r: number): number => BYTE_COST[r & 255] + BYTE_COST[r >>>
  * Picks a predictor per block and replaces the pixels with their residuals
  * @return the sub-image of modes
  */
-function applyPredictor(p: Uint32Array, width: number, height: number, bits: number): Uint32Array {
+async function applyPredictor(p: Uint32Array, width: number, height: number, bits: number, threads: Thread[] | null): Promise<Uint32Array> {
     const blocksX = subSize(width, bits), blocksY = subSize(height, bits);
-    const modes = new Uint32Array(blocksX * blocksY);
-    const size = 1 << bits;
+    // predictions use the original pixels, so modes are chosen and residuals computed on a copy (in shared memory with
+    // p, for threads)
+    const task: PredictorTask = {
+        task: 'vp8l-predictor', p, src: threads ? shared(p) : p.slice(), width, height, bits,
+        modes: new Uint32Array(threads ? new SharedArrayBuffer(4 * blocksX * blocksY) : new ArrayBuffer(4 * blocksX * blocksY)),
+    };
+    await runChunks(threads, task, Math.ceil(blocksY / PREDICTOR_ROWS), predictorChunks(task));
+    return task.modes;
+}
 
-    // predictions use the original pixels, so modes are chosen and residuals computed on a copy. A block's rows are
-    // predicted into `predicted` (the first row from the left, the first column from the top, whatever the mode)
-    const src = p.slice(), predicted = new Uint32Array(size);
+// (the rows of blocks of a chunk of the predictor search)
+const PREDICTOR_ROWS = 4;
+
+/** The predictor search of rows of blocks (see applyPredictor) */
+export interface PredictorTask extends ChunkTask {
+    p: Uint32Array;
+    src: Uint32Array;
+    modes: Uint32Array;
+    width: number;
+    height: number;
+    bits: number;
+}
+
+/** The predictors of PREDICTOR_ROWS rows of blocks (the chunk), the residuals of their pixels */
+export function predictorChunks({ p, src, modes, width, height, bits }: PredictorTask): (chunk: number) => void {
+    const blocksX = subSize(width, bits), blocksY = subSize(height, bits), size = 1 << bits;
+    // (a block's rows are predicted into `predicted`: the first row from the left, the first column from the top,
+    // whatever the mode)
+    const predicted = new Uint32Array(size);
     const predictRow = (mode: number, x0: number, x1: number, y: number): void => {
         const row = y * width;
         if (y === 0) {
@@ -1207,47 +1272,47 @@ function applyPredictor(p: Uint32Array, width: number, height: number, bits: num
         if (x === 0) predicted[x++] = src[row - width];
         predictRun(mode, src, row + x, x1 - x, width, predicted, x - x0);
     };
-
-    for (let by = 0; by < blocksY; by++)
-        for (let bx = 0; bx < blocksX; bx++) {
-            let best = 0, bestCost = Infinity;
-            const x0 = bx * size, y0 = by * size, x1 = Math.min(width, x0 + size), y1 = Math.min(height, y0 + size);
-            for (let mode = 0; mode < 14; mode++) {
-                let cost = 0;
-                for (let y = y0; y < y1 && cost < bestCost; y++) {
-                    predictRow(mode, x0, x1, y);
-                    for (let x = x0, i = y * width + x0; x < x1; x++, i++) cost += residualCost(subPixels(src[i], predicted[x - x0]));
+    return chunk => {
+        for (let by = chunk * PREDICTOR_ROWS; by < Math.min(blocksY, (chunk + 1) * PREDICTOR_ROWS); by++)
+            for (let bx = 0; bx < blocksX; bx++) {
+                let best = 0, bestCost = Infinity;
+                const x0 = bx * size, y0 = by * size, x1 = Math.min(width, x0 + size), y1 = Math.min(height, y0 + size);
+                for (let mode = 0; mode < 14; mode++) {
+                    let cost = 0;
+                    for (let y = y0; y < y1 && cost < bestCost; y++) {
+                        predictRow(mode, x0, x1, y);
+                        for (let x = x0, i = y * width + x0; x < x1; x++, i++) cost += residualCost(subPixels(src[i], predicted[x - x0]));
+                    }
+                    if (cost < bestCost) { bestCost = cost; best = mode; }
                 }
-                if (cost < bestCost) { bestCost = cost; best = mode; }
+                modes[by * blocksX + bx] = (0xff000000 | best << 8) >>> 0;
+                for (let y = y0; y < y1; y++) {
+                    predictRow(best, x0, x1, y);
+                    for (let x = x0, i = y * width + x0; x < x1; x++, i++) p[i] = subPixels(src[i], predicted[x - x0]);
+                }
             }
-            modes[by * blocksX + bx] = (0xff000000 | best << 8) >>> 0;
-            for (let y = y0; y < y1; y++) {
-                predictRow(best, x0, x1, y);
-                for (let x = x0, i = y * width + x0; x < x1; x++, i++) p[i] = subPixels(src[i], predicted[x - x0]);
-            }
-        }
-
-    return modes;
+    };
 }
 
 /**
  * Encodes ARGB pixels into a VP8L bitstream (the payload of a VP8L chunk): with a palette for up to 256 colors, unless
  * predicting them compresses better (smooth gradients, like alpha)
  */
-export function encode(argb: Uint32Array, width: number, height: number): Uint8Array {
+export async function encode(argb: Uint32Array, width: number, height: number, threads: Thread[] | null = null): Promise<Uint8Array> {
     if (width < 1 || height < 1 || width > 16384 || height > 16384) throw new RangeError('VP8L: dimensions must be 1-16384');
     const colors = new Map<number, number>();
     for (let i = 0; i < argb.length && colors.size <= 256; i++) if (!colors.has(argb[i])) colors.set(argb[i], colors.size);
-    if (colors.size > 256) return encodeWith(argb, width, height, null);
-    const indexed = encodeWith(argb, width, height, colors);
+    if (colors.size > 256) return encodeWith(argb, width, height, null, threads);
+    const indexed = await encodeWith(argb, width, height, colors, threads);
     // (few colors: their packed indices win)
     if (colors.size <= 16) return indexed;
-    const predicted = encodeWith(argb, width, height, null);
+    const predicted = await encodeWith(argb, width, height, null, threads);
     return predicted.length < indexed.length ? predicted : indexed;
 }
 
-// the bitstream with a palette (the colors' indices) or with the green subtracted and predicted
-function encodeWith(argb: Uint32Array, width: number, height: number, colors: Map<number, number> | null): Uint8Array {
+// the bitstream with a palette (the colors' indices) or with the green subtracted and predicted (the predictors and
+// prefix groups searched in threads, if there are)
+async function encodeWith(argb: Uint32Array, width: number, height: number, colors: Map<number, number> | null, threads: Thread[] | null): Promise<Uint8Array> {
     const w = new BitWriter();
     let hasAlpha = false;
     for (let i = 0; i < argb.length; i++) if (argb[i] >>> 24 !== 255) { hasAlpha = true; break; }
@@ -1269,7 +1334,7 @@ function encodeWith(argb: Uint32Array, width: number, height: number, colors: Ma
         w.write(palette.length - 1, 8);
         const deltas = palette.slice();
         for (let i = palette.length - 1; i > 0; i--) deltas[i] = subPixels(palette[i], palette[i - 1]);
-        writeImage(w, deltas, palette.length, false);
+        await writeImage(w, deltas, palette.length, false);
 
         codedWidth = subSize(width, bits);
         pixels = new Uint32Array(codedWidth * height);
@@ -1280,7 +1345,7 @@ function encodeWith(argb: Uint32Array, width: number, height: number, colors: Ma
                 pixels[o] = (pixels[o] | 0xff000000 | (colors.get(argb[y * width + x]) as number) << 8 + (x & (1 << bits) - 1) * perPixel) >>> 0;
             }
     } else {
-        pixels = argb.slice();
+        pixels = threads ? shared(argb) : argb.slice();
         // (subtracting green: not if red and blue are zero, like alpha planes', it would copy green into them)
         let redBlue = false;
         for (let i = 0; i < pixels.length && !redBlue; i++) if (pixels[i] & 0x00ff00ff) redBlue = true;
@@ -1298,11 +1363,11 @@ function encodeWith(argb: Uint32Array, width: number, height: number, colors: Ma
         w.write(1, 1);
         w.write(Transform.PREDICTOR, 2);
         w.write(bits - 2, 3);
-        const modes = applyPredictor(pixels, width, height, bits);
-        writeImage(w, modes, subSize(width, bits), false);
+        const modes = await applyPredictor(pixels, width, height, bits, threads);
+        await writeImage(w, modes, subSize(width, bits), false);
     }
 
     w.write(0, 1); // no more transforms
-    writeImage(w, pixels, codedWidth, true);
+    await writeImage(w, pixels, codedWidth, true, threads);
     return w.finish();
 }

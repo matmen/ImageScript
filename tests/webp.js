@@ -82,4 +82,12 @@ const animated = [
         if (back.width !== image.width || back.height !== image.height || !Buffer.from(back.bitmap).equals(Buffer.from(image.bitmap)))
             panic(`encodeWebP: ${image.width}x${image.height} didn't round trip`);
     }
+    // threads (the predictors and prefix groups searched in parallel, from 1.5 megapixels on): the same file as without
+    {
+        const big = new Image(1448, 1448).fill((x, y) => Image.rgbaToColor(x * 7 + y & 255, (x * x + y * 3) >> 4 & 255, (x ^ y) & 255, 255));
+        const metadata = {creationTime: 0};
+        const one = await big.encodeWebP({threads: 1, metadata}), four = await big.encodeWebP({threads: 4, metadata});
+        if (Buffer.compare(Buffer.from(one), Buffer.from(four))) panic('encodeWebP: threads changed the file');
+        for (const threads of [0, 1.5]) if (!await big.encodeWebP({threads}).then(() => false, e => e instanceof RangeError)) panic(`threads ${threads} should throw`);
+    }
 })();

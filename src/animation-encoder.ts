@@ -132,9 +132,9 @@ export class AnimationEncoder {
         // stored as the canvas they show, replacing it, and so are all after them
         const compositor = optimize ? null : new Compositor(width, height);
         let full = false;
-        const add = (f: webp.WebPEncodeFrame): void => {
+        const add = async (f: webp.WebPEncodeFrame): Promise<void> => {
             alpha ||= webp.needsAlpha(f, !chunks.length, width, height);
-            chunks.push(webp.frameChunk(f, lossy));
+            chunks.push(await webp.frameChunk(f, lossy));
         };
         return new AnimationEncoder(width, height, {
             optimize: { replace: true, even: true, alpha: 'frame', tolerance: lossy ? webp.lossyTolerance(lossy.quality) : undefined },
@@ -144,7 +144,7 @@ export class AnimationEncoder {
                 const shown = (compositor as Compositor).push(input);
                 full ||= input.dispose === 2 || (input.dispose === 1 && !!(input.x & 1 || input.y & 1));
                 if (full) return add({ x: 0, y: 0, width, height, duration: input.duration, dispose: true, blend: false, pixels: shown });
-                add(webpFrame(input));
+                await add(webpFrame(input));
             },
             file: () => webp.animationFile(chunks, width, height, toPlays(loopCount), alpha, exifData(resolved))
         }, optimize);

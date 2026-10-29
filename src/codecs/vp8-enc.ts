@@ -2027,7 +2027,7 @@ function estimateBestFilter(a: Uint8Array, width: number, height: number): numbe
  * The ALPH chunk's payload: the alpha plane, losslessly compressed (or not, if that's smaller), with fewer levels below
  * quality 100 (libwebp's alpha_quality: 2-16 levels up to 70, 16-256 above)
  */
-export function encodeAlpha(a: Uint8Array, width: number, height: number, method = 4, quality = 100): Uint8Array {
+export async function encodeAlpha(a: Uint8Array, width: number, height: number, method = 4, quality = 100): Promise<Uint8Array> {
     const reduce = quality < 100;
     if (reduce) {
         a = a.slice();
@@ -2045,7 +2045,7 @@ export function encodeAlpha(a: Uint8Array, width: number, height: number, method
         const argb = new Uint32Array(a.length);
         for (let i = 0; i < a.length; i++) argb[i] = data[i] << 8;
         // (the VP8L stream after its 5 byte header)
-        let stream = vp8l.encode(argb, width, height).subarray(5), method = 1;
+        let stream = (await vp8l.encode(argb, width, height)).subarray(5), method = 1;
         if (stream.length > a.length) {
             stream = data;
             method = 0;

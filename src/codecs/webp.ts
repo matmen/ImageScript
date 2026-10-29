@@ -11,6 +11,7 @@ import { rgbaToYUV } from './vp8-enc-dsp.ts';
 import { orientation as exifOrientation } from './exif.ts';
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { finite } from '../util/options.ts';
+import { startThreads } from '../util/threads.ts';
 
 const fourCC = (s: string): number => s.charCodeAt(0) | s.charCodeAt(1) << 8 | s.charCodeAt(2) << 16 | s.charCodeAt(3) << 24;
 const RIFF = fourCC('RIFF'), WEBP = fourCC('WEBP');
@@ -322,12 +323,28 @@ const hasAlpha = (rgba: Uint8Array): boolean => {
     return false;
 };
 
+// (images below this many pixels encode faster without threads, which take about 0.1 s to start, and the pixels per
+// thread; measured with 1-8 threads on 0.25-8 megapixels)
+const MIN_THREADED_PIXELS = 1536 << 10, PIXELS_PER_THREAD = 512 << 10;
+
 /**
- * Encodes RGBA pixels into a lossless WebP
+ * Encodes RGBA pixels into a lossless WebP, the predictors and prefix groups searched in up to threads worker threads
  * @param exif Exif data (a TIFF header and IFDs), needs the extended format (VP8X)
  */
-export function encode(rgba: Uint8Array, width: number, height: number, exif?: Uint8Array): Uint8Array {
-    const bitstream = riffChunk('VP8L', vp8l.encode(toARGB(rgba, width * height), width, height));
+export async function encode(rgba: Uint8Array, width: number, height: number, exif?: Uint8Array, threads = 1): Promise<Uint8Array> {
+    const n = Math.min(threads, Math.floor(width * height / PIXELS_PER_THREAD));
+    const pool = n > 1 && width * height >= MIN_THREADED_PIXELS ? startThreads(n) : null;
+    let stream: Uint8Array;
+    try {
+        stream = await vp8l.encode(toARGB(rgba, width * height), width, height, pool);
+    } catch (e) {
+        if (!pool) throw e;
+        // (threads that fail: here)
+        stream = await vp8l.encode(toARGB(rgba, width * height), width, height);
+    } finally {
+        if (pool) for (const t of pool) t.terminate();
+    }
+    const bitstream = riffChunk('VP8L', stream);
     if (!exif) return riff([bitstream]);
 
     const vp8x = new Uint8Array(10);
@@ -367,8 +384,8 @@ export function lossyOptions(quality: number | undefined, effort: number, sharp:
  * isn't opaque)
  * @param exif Exif data (a TIFF header and IFDs), needs the extended format (VP8X)
  */
-export function encodeLossy(rgba: Uint8Array, width: number, height: number, lossy: LossyOptions, exif?: Uint8Array): Uint8Array {
-    const { alpha, chunks } = lossyChunks(rgba, width, height, lossy);
+export async function encodeLossy(rgba: Uint8Array, width: number, height: number, lossy: LossyOptions, exif?: Uint8Array): Promise<Uint8Array> {
+    const { alpha, chunks } = await lossyChunks(rgba, width, height, lossy);
     if (!alpha && !exif) return riff(chunks);
 
     const vp8x = new Uint8Array(10);
@@ -379,7 +396,7 @@ export function encodeLossy(rgba: Uint8Array, width: number, height: number, los
 }
 
 // the ALPH (if not opaque) and VP8 chunks of a lossy image
-function lossyChunks(rgba: Uint8Array, width: number, height: number, { quality, method, sharp, alphaQuality }: LossyOptions): { alpha: boolean, chunks: Uint8Array[] } {
+async function lossyChunks(rgba: Uint8Array, width: number, height: number, { quality, method, sharp, alphaQuality }: LossyOptions): Promise<{ alpha: boolean, chunks: Uint8Array[] }> {
     if (width > 16383 || height > 16383) throw new RangeError('WebP: lossy images can be at most 16383 pixels wide and high');
     const picture = rgbaToYUV(rgba, width, height, sharp);
     const frame = encodeVP8(picture, quality, method);
@@ -387,7 +404,7 @@ function lossyChunks(rgba: Uint8Array, width: number, height: number, { quality,
     const padded = new Uint8Array(frame.length + (frame.length & 1));
     padded.set(frame);
     const chunks = [riffChunk('VP8 ', padded)];
-    if (picture.a) chunks.unshift(riffChunk('ALPH', encodeAlpha(picture.a, width, height, method, alphaQuality)));
+    if (picture.a) chunks.unshift(riffChunk('ALPH', await encodeAlpha(picture.a, width, height, method, alphaQuality)));
     return { alpha: !!picture.a, chunks };
 }
 
@@ -423,13 +440,15 @@ export function lossyTolerance(quality: number): number {
  * @param exif Exif data (a TIFF header and IFDs)
  * @param lossy For lossy frames
  */
-export function encodeAnimation(frames: WebPEncodeFrame[], width: number, height: number, plays: number, exif?: Uint8Array, lossy?: LossyOptions): Uint8Array {
+export async function encodeAnimation(frames: WebPEncodeFrame[], width: number, height: number, plays: number, exif?: Uint8Array, lossy?: LossyOptions): Promise<Uint8Array> {
     if (!frames.length) throw new Error('WebP: an animation needs at least one frame');
     if (width > 1 << 24 || height > 1 << 24) throw new RangeError('WebP: canvas too large');
 
     let alpha = false;
     for (const [i, f] of frames.entries()) alpha ||= needsAlpha(f, i === 0, width, height);
-    return animationFile(frames.map(f => frameChunk(f, lossy)), width, height, plays, alpha, exif);
+    const chunks: Uint8Array[] = [];
+    for (const f of frames) chunks.push(await frameChunk(f, lossy));
+    return animationFile(chunks, width, height, plays, alpha, exif);
 }
 
 /**
@@ -441,10 +460,10 @@ export function needsAlpha(f: WebPEncodeFrame, first: boolean, width: number, he
 }
 
 /** A frame of an animation as its ANMF chunk */
-export function frameChunk(f: WebPEncodeFrame, lossy?: LossyOptions): Uint8Array {
+export async function frameChunk(f: WebPEncodeFrame, lossy?: LossyOptions): Promise<Uint8Array> {
     if (f.x & 1 || f.y & 1) throw new RangeError('WebP: frame offsets have to be even');
-    const bitstream = !lossy ? riffChunk('VP8L', vp8l.encode(toARGB(f.pixels, f.width * f.height), f.width, f.height))
-        : concat(lossyChunks(f.pixels, f.width, f.height, lossy).chunks);
+    const bitstream = !lossy ? riffChunk('VP8L', await vp8l.encode(toARGB(f.pixels, f.width * f.height), f.width, f.height))
+        : concat((await lossyChunks(f.pixels, f.width, f.height, lossy)).chunks);
     const header = new Uint8Array(16);
     set24(header, 0, f.x >> 1);
     set24(header, 3, f.y >> 1);
