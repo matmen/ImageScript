@@ -1,12 +1,19 @@
 // the module worker threads run (see threads.ts): tasks posted to it, their results posted back
 import { searchRows, filterTrials, type SearchTask, type FilterTask } from '../codecs/av1/encode.ts';
 import { varblockChunks } from '../codecs/jxl/acs-enc.ts';
+import { maskBlurChunks, maskingChunks } from '../codecs/jxl/aq-enc.ts';
+import { coefficientChunks, hfTokenChunks, xybChunks } from '../codecs/jxl/vardct-enc.ts';
 import { groupChunks, postChunks } from '../codecs/jxl/frame.ts';
 import type { ChunkTask } from './threads.ts';
 
 // the chunk tasks (see runChunks): a task's function of its chunks
 const chunkTasks: Record<string, (task: never) => (chunk: number) => unknown> = {
+    'jxl-xyb': xybChunks,
+    'jxl-masking': maskingChunks,
+    'jxl-mask-blur': maskBlurChunks,
     'jxl-varblocks': varblockChunks,
+    'jxl-coefficients': coefficientChunks,
+    'jxl-hf-tokens': hfTokenChunks,
     'jxl-groups': groupChunks,
     'jxl-post': postChunks,
 };

@@ -5,7 +5,7 @@
  * contexts, chroma from luma per tile (libjxl's fast search), the edge preserving filter. Copyright (c) the JPEG XL
  * Project Authors, BSD-3-Clause License (see THIRD_PARTY_NOTICES.md)
  */
-import { startThreads } from '../../util/threads.ts';
+import { runChunks, shared, startThreads, type ChunkTask, type Thread } from '../../util/threads.ts';
 import { findPatches } from './patches-enc.ts';
 import { BitWriter } from './bit-writer.ts';
 import { imageHeader, u32 } from './headers-enc.ts';
@@ -27,9 +27,10 @@ export interface VarDCTOptions {
     threads: number;
 }
 
-// (images below this many pixels encode faster without threads, which take about 0.1 s to start: by effort; effort 0
-// has no varblock search, what the threads run)
-const MIN_THREADED_PIXELS = [Infinity, 512 * 512, 384 * 384];
+// (images below this many pixels encode faster without threads, which take about 0.1 s to start, and the pixels per
+// thread: more take longer to start than they save; by effort, effort 0 without the varblock search has less to run in
+// them)
+const MIN_THREADED_PIXELS = [1024 * 1024, 512 * 512, 384 * 384], PIXELS_PER_THREAD = [1024 * 512, 256 * 256, 256 * 256];
 
 // libjxl's opsin absorbance matrix and bias (lib/jxl/cms/opsin_params.h)
 const OPSIN = [
@@ -45,10 +46,9 @@ const LINEAR = Float64Array.from({ length: 256 }, (_, i) => {
     return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
 });
 
-/** RGBA to the XYB planes, padded to whole blocks (by repeating the last column and row) */
-function toXYB(rgba: Uint8Array, width: number, height: number, pw: number, ph: number): Float32Array[] {
-    const x = new Float32Array(pw * ph), y = new Float32Array(pw * ph), b = new Float32Array(pw * ph);
-    for (let py = 0; py < ph; py++) {
+/** Rows y0 to y1 of the XYB planes of RGBA, padded to whole blocks (by repeating the last column and row) */
+function toXYB(rgba: Uint8Array, width: number, height: number, pw: number, [x, y, b]: Float32Array[], y0: number, y1: number): void {
+    for (let py = y0; py < y1; py++) {
         const sy = Math.min(py, height - 1);
         for (let px = 0; px < pw; px++) {
             const s = 4 * (sy * width + Math.min(px, width - 1));
@@ -62,7 +62,6 @@ function toXYB(rgba: Uint8Array, width: number, height: number, pw: number, ph: 
             b[i] = s3;
         }
     }
-    return [x, y, b];
 }
 
 // the quantization parameters of a distance (libjxl's InitialQuantDC, ComputeGlobalScaleAndQuant, SetQuantField for
@@ -129,55 +128,230 @@ function inverseMatrices(type: number): Float32Array[] {
 }
 
 /**
- * libjxl's chroma from luma of each tile of 8x8 blocks (lib/jxl/enc_chroma_from_luma.cc, its fast search): the
- * multipliers of Y for X and B (in 1/84) by least squares on the HF coefficients, weighted by the quantization, a bit
- * towards zero
+ * libjxl's chroma from luma of each tile of 8x8 blocks in the row of tiles at block row ty (lib/jxl/enc_chroma_from_luma.cc,
+ * its fast search): the multipliers of Y for X and B (in 1/84) by least squares on the HF coefficients (of the row's
+ * blocks), weighted by the quantization, a bit towards zero
  */
-function chromaFromLuma(raw: Float32Array[], types: Int8Array, muls: Int32Array, pw: number, bw: number, bh: number, globalScale: number, xFromY: Int32Array, bFromY: Int32Array): void {
+function chromaFromLuma(raw: Float32Array[], types: Int8Array, muls: Int32Array, pw: number, bw: number, bh: number, globalScale: number, xFromY: Int32Array, bFromY: Int32Array, ty: number): void {
     const tilesPerRow = Math.ceil(bw / 8);
-    for (let ty = 0; ty < bh; ty += 8) {
-        for (let tx = 0; tx < bw; tx += 8) {
-            const sums = [0, 0, 0, 0];
-            let num = 0;
-            for (let by = ty; by < Math.min(ty + 8, bh); by++) {
-                for (let bx = tx; bx < Math.min(tx + 8, bw); bx++) {
-                    const type = types[by * bw + bx];
-                    if (type < 0) continue;
-                    const w8 = SIZES[2 * type], h8 = SIZES[2 * type + 1], w = w8 * 8, h = h8 * 8, o = by * 8 * pw + bx * 8, one = single(type);
-                    const inv = inverseMatrices(type), q = globalScale / 65536 * 128 * muls[by * bw + bx];
-                    num += w * h;
+    for (let tx = 0; tx < bw; tx += 8) {
+        const sums = [0, 0, 0, 0];
+        let num = 0;
+        for (let by = ty; by < Math.min(ty + 8, bh); by++) {
+            for (let bx = tx; bx < Math.min(tx + 8, bw); bx++) {
+                const type = types[by * bw + bx];
+                if (type < 0) continue;
+                const w8 = SIZES[2 * type], h8 = SIZES[2 * type + 1], w = w8 * 8, h = h8 * 8, o = (by - ty) * 8 * pw + bx * 8, one = single(type);
+                const inv = inverseMatrices(type), q = globalScale / 65536 * 128 * muls[by * bw + bx];
+                num += w * h;
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        if (one ? x === 0 && y === 0 : x < w8 && y < h8) continue;
+                        const k = y * w + x, yv = raw[1][o + y * pw + x];
+                        for (let c = 0; c < 2; c++) {
+                            const ch = c ? 2 : 0, qm = q * inv[ch][k], base = c;
+                            const a = yv * qm / 84, b = base * yv * qm - raw[ch][o + y * pw + x] * qm;
+                            sums[2 * c] += a * a;
+                            sums[2 * c + 1] += a * b;
+                        }
+                    }
+                }
+            }
+        }
+        const factor = (aa: number, ab: number): number => {
+            if (!num) return 0;
+            let x = -ab / (aa + num * 1e-9 * 0.5);
+            x = x >= 2.6 ? x - 2.6 : x <= -2.6 ? x + 2.6 : 0;
+            return Math.max(-128, Math.min(127, Math.round(x)));
+        };
+        const t = (ty >> 3) * tilesPerRow + (tx >> 3);
+        xFromY[t] = factor(sums[0], sums[1]);
+        bFromY[t] = factor(sums[2], sums[3]);
+    }
+}
+
+/** The XYB planes of bands of 64 rows of RGBA (see toXYB) */
+export interface XYBTask extends ChunkTask {
+    rgba: Uint8Array;
+    width: number;
+    height: number;
+    pw: number;
+    planes: Float32Array[];
+}
+
+/** The XYB planes of a band of 64 rows (the chunk) */
+export function xybChunks({ rgba, width, height, pw, planes }: XYBTask): (chunk: number) => void {
+    const ph = planes[0].length / pw;
+    return band => toXYB(rgba, width, height, pw, planes, band * 64, Math.min(ph, band * 64 + 64));
+}
+
+/** The coefficients of rows of 64x64 areas, which hold whole varblocks (see encodeVarDCT) */
+export interface CoefficientTask extends ChunkTask {
+    planes: Float32Array[];
+    pw: number;
+    bw: number;
+    bh: number;
+    types: Int8Array;
+    muls: Int32Array;
+    globalScale: number;
+    qmMul: number[];
+    /** whether to search chroma from luma (else X 0, B 1) */
+    cfl: boolean;
+    // the results: the LF of the blocks (X, Y, B), the CfL tiles' multipliers, the quantized HF coefficients (in the
+    // planes' layout)
+    lfValues: Float32Array[];
+    xFromY: Int32Array;
+    bFromY: Int32Array;
+    hf: Int32Array[];
+}
+
+/**
+ * The coefficients of a row of 64x64 areas (the chunk): the varblocks' transforms, chroma from luma per tile, the HF
+ * coefficients quantized (Y, then X and B less the dequantized Y by the tile's factors)
+ */
+export function coefficientChunks({ planes, pw, bw, bh, types, muls, globalScale, qmMul, cfl, lfValues, xFromY, bFromY, hf }: CoefficientTask): (chunk: number) => void {
+    const tilesPerRow = Math.ceil(bw / 8);
+    // (the row's coefficients, in the planes' layout)
+    const raw = [0, 1, 2].map(() => new Float32Array(pw * 64));
+    const coeffs = new Float32Array(MAX_COEFFS), lfBlock = new Float32Array(MAX_COEFFS / 64), yDequant = new Float32Array(MAX_COEFFS);
+    return row => {
+        const ty = row * 8, rows = Math.min(8, bh - ty);
+        for (let by = ty; by < ty + rows; by++) {
+            for (let bx = 0; bx < bw; bx++) {
+                const type = types[by * bw + bx];
+                if (type < 0) continue;
+                const w8 = SIZES[2 * type], h8 = SIZES[2 * type + 1], w = w8 * 8, h = h8 * 8, o = (by - ty) * 8 * pw + bx * 8;
+                for (let c = 0; c < 3; c++) {
+                    forwardTransform(type, planes[c], by * 8 * pw + bx * 8, pw, coeffs, lfBlock);
+                    for (let y = 0; y < h; y++) raw[c].set(coeffs.subarray(y * w, (y + 1) * w), o + y * pw);
+                    for (let y = 0; y < h8; y++) for (let x = 0; x < w8; x++) lfValues[c][(by + y) * bw + bx + x] = lfBlock[y * w8 + x];
+                }
+            }
+        }
+        if (cfl) chromaFromLuma(raw, types, muls, pw, bw, bh, globalScale, xFromY, bFromY, ty);
+
+        for (let by = ty; by < ty + rows; by++) {
+            for (let bx = 0; bx < bw; bx++) {
+                const bi = by * bw + bx, type = types[bi];
+                if (type < 0) continue;
+                const w8 = SIZES[2 * type], h8 = SIZES[2 * type + 1], w = w8 * 8, h = h8 * 8, o = (by - ty) * 8 * pw + bx * 8, go = by * 8 * pw + bx * 8;
+                const tile = row * tilesPerRow + (bx >> 3), k0s = [xFromY[tile] / 84, 0, 1 + bFromY[tile] / 84];
+                const [m0, m1] = defaultDequant(MATRIX_INDEX[type]), matrices = transposed(type) ? m1 : m0;
+                const hfStep = 65536 / (globalScale * muls[bi]), one = single(type);
+                for (const c of [1, 0, 2]) {
+                    const src = raw[c], m = matrices[c], out = hf[c], k0 = k0s[c];
+                    const thresholds = c === 1 ? [0.56, 0.62, 0.62, 0.62] : [0.58, 0.62, 0.62, 0.62];
+                    if (c !== 1 && w8 * h8 >= 4) for (let i = 0; i < 4; i++) thresholds[i] = Math.max(0.5, thresholds[i] - 0.00744 * w8 * h8);
+                    const scale = qmMul[c] / hfStep;
                     for (let y = 0; y < h; y++) {
                         for (let x = 0; x < w; x++) {
-                            if (one ? x === 0 && y === 0 : x < w8 && y < h8) continue;
-                            const k = y * w + x, yv = raw[1][o + y * pw + x];
-                            for (let c = 0; c < 2; c++) {
-                                const ch = c ? 2 : 0, qm = q * inv[ch][k], base = c;
-                                const a = yv * qm / 84, b = base * yv * qm - raw[ch][o + y * pw + x] * qm;
-                                sums[2 * c] += a * a;
-                                sums[2 * c + 1] += a * b;
+                            const k = y * w + x;
+                            // (not the lowest frequencies: the LF)
+                            if (one ? k === 0 : x < w8 && y < h8) continue;
+                            const v = (c === 1 ? src[o + y * pw + x] : src[o + y * pw + x] - k0 * yDequant[k]) / m[k] * scale;
+                            const q = Math.abs(v) >= thresholds[(y >= h / 2 ? 2 : 0) + (x >= w / 2 ? 1 : 0)] ? Math.round(v) : 0;
+                            out[go + y * pw + x] = q;
+                            if (c === 1) {
+                                const d = q === 0 ? 0 : Math.abs(q) <= 1 ? q * QUANT_BIAS[1] : q - QUANT_BIAS_NUMERATOR / q;
+                                yDequant[k] = d * m[k] * hfStep;
                             }
                         }
                     }
                 }
             }
-            const factor = (aa: number, ab: number): number => {
-                if (!num) return 0;
-                let x = -ab / (aa + num * 1e-9 * 0.5);
-                x = x >= 2.6 ? x - 2.6 : x <= -2.6 ? x + 2.6 : 0;
-                return Math.max(-128, Math.min(127, Math.round(x)));
-            };
-            const t = (ty >> 3) * tilesPerRow + (tx >> 3);
-            xFromY[t] = factor(sums[0], sums[1]);
-            bFromY[t] = factor(sums[2], sums[3]);
         }
-    }
+    };
+}
+
+/** The tokens of the pass groups' HF coefficients (see encodeVarDCT) */
+export interface HFTokenTask extends ChunkTask {
+    types: Int8Array;
+    hf: Int32Array[];
+    pw: number;
+    bw: number;
+    bh: number;
+    groupsPerRow: number;
+}
+
+/**
+ * The tokens of a pass group's HF coefficients (the chunk): per varblock and channel the non-zero count (predicted by
+ * the blocks above and left), then the coefficients in their order up to the last non-zero one
+ */
+export function hfTokenChunks({ types, hf, pw, bw, bh, groupsPerRow }: HFTokenTask): (chunk: number) => Pick<Tokens, 'ctx' | 'value' | 'length'> {
+    return g => {
+        const bx0 = (g % groupsPerRow) * 32, by0 = Math.floor(g / groupsPerRow) * 32;
+        const gw = Math.min(32, bw - bx0), gh = Math.min(32, bh - by0), t = new Tokens();
+        const nonZeros = [0, 1, 2].map(() => new Uint32Array(gw));
+        for (let y = 0; y < gh; y++) {
+            for (let x = 0; x < gw; x++) {
+                const type = types[(by0 + y) * bw + bx0 + x];
+                if (type < 0) continue;
+                const w8 = SIZES[2 * type], numBlocks = w8 * SIZES[2 * type + 1], log = 31 - Math.clz32(numBlocks);
+                const orderId = ORDER_ID[type], order = naturalOrder(orderId), n = order.length / 2, tr = transposed(type);
+                const o = (by0 + y) * 8 * pw + (bx0 + x) * 8;
+                const at = (i: number): number => tr ? o + order[2 * i] * pw + order[2 * i + 1] : o + order[2 * i + 1] * pw + order[2 * i];
+                for (let k = 0; k < 3; k++) {
+                    const c = [1, 0, 2][k], q = hf[c], nz = nonZeros[c], blockCtx = DEFAULT_CTX_MAP[k * 13 + orderId];
+                    let count = 0;
+                    for (let i = numBlocks; i < n; i++) if (q[at(i)]) count++;
+                    const predicted = y === 0 ? (x === 0 ? 32 : nz[x - 1]) : x === 0 ? nz[x] : (nz[x] + nz[x - 1] + 1) >> 1;
+                    t.push(blockCtx + (predicted >= 8 ? 4 + (predicted >> 1) : predicted) * NUM_BLOCK_CTX, count);
+                    const value = (count + numBlocks - 1) >> log;
+                    for (let dx = 0; dx < w8; dx++) nz[x + dx] = value;
+                    let prevNonZero = count <= numBlocks * 4 ? 1 : 0;
+                    const ctxBase = blockCtx * 458 + 37 * NUM_BLOCK_CTX;
+                    for (let i = numBlocks; i < n && count > 0; i++) {
+                        const v = q[at(i)];
+                        t.push(ctxBase + (NUM_NONZERO_CONTEXT[(count - 1) >> log] + FREQ_CONTEXT[(i - numBlocks) >> log]) * 2 + prevNonZero, packSigned(v));
+                        prevNonZero = v ? 1 : 0;
+                        if (v) count--;
+                    }
+                }
+            }
+        }
+        // (just the tokens: a thread posts them)
+        return { ctx: t.ctx.slice(0, t.length), value: t.value.slice(0, t.length), length: t.length };
+    };
 }
 
 /** Encodes RGBA pixels as a lossy JPEG XL codestream, alpha (if the image has transparency) losslessly */
-export async function encodeVarDCT(rgba: Uint8Array, width: number, height: number, { distance, effort, threads: maxThreads }: VarDCTOptions): Promise<Uint8Array> {
+export async function encodeVarDCT(rgba: Uint8Array, width: number, height: number, options: VarDCTOptions): Promise<Uint8Array> {
     if (width < 1 || height < 1) throw new RangeError('JPEG XL: dimensions must be at least 1');
+    // threads for the XYB planes, the quantization field, the varblock search, the coefficients and their tokens, if
+    // they start (the same files). Started first, they load while the work begins here
+    const n = Math.min(options.threads, Math.ceil(height / 64), Math.floor(width * height / PIXELS_PER_THREAD[options.effort]));
+    const pool = { threads: n > 1 && width * height >= MIN_THREADED_PIXELS[options.effort] ? startThreads(n) : null };
+    try {
+        return await encode(rgba, width, height, options, pool);
+    } finally {
+        if (pool.threads) for (const t of pool.threads) t.terminate();
+    }
+}
+
+async function encode(rgba: Uint8Array, width: number, height: number, { distance, effort }: VarDCTOptions, pool: { threads: Thread[] | null }): Promise<Uint8Array> {
     const bw = Math.ceil(width / 8), bh = Math.ceil(height / 8), pw = bw * 8;
-    const planes = toXYB(rgba, width, height, pw, bh * 8);
+    // (a stage in the threads; if they fail, like workers whose module can't be loaded, it and the rest run here)
+    const parallel = async <R>(run: (threads: Thread[] | null) => Promise<R>): Promise<R> => {
+        if (pool.threads) {
+            try {
+                return await run(pool.threads);
+            } catch {
+                for (const t of pool.threads) t.terminate();
+                pool.threads = null;
+            }
+        }
+        return run(null);
+    };
+    // (arrays the threads write to: in shared memory)
+    const threaded = !!pool.threads;
+    const array = <T>(Type: new (buffer: ArrayBufferLike) => T, bytes: number, length: number): T =>
+        new Type(threaded ? new SharedArrayBuffer(bytes * length) : new ArrayBuffer(bytes * length));
+
+    const planes = [0, 1, 2].map(() => array(Float32Array, 4, pw * bh * 8));
+    {
+        const task: XYBTask = { task: 'jxl-xyb', rgba: threaded ? shared(rgba) : rgba, width, height, pw, planes };
+        await parallel(t => runChunks(t, task, bh + 7 >> 3, xybChunks(task)));
+    }
     let alpha: Int32Array | null = null;
     for (let i = 3; i < rgba.length; i += 4) {
         if (rgba[i] === 255) continue;
@@ -198,81 +372,24 @@ export async function encodeVarDCT(rgba: Uint8Array, width: number, height: numb
     // HF multipliers
     // patches at effort 2: text-like features of screenshots stored once (subtracted from the planes here)
     const patches = effort >= 2 ? findPatches(planes, pw, width, height, distance, alpha ? 1 : 0) : null;
-    // (the search in threads, if they start: the same types)
-    let types: Int8Array = new Int8Array(bw * bh);
+    let types: Int8Array = array(Int8Array, 1, bw * bh);
     if (effort) {
-        const field = initialQuantField(distance * 0.62, planes, pw, bh * 8, 0.725 / (distance * 0.62));
-        // (at most one per 256x256 pixels: more take longer to start than they save)
-        const n = Math.min(maxThreads, Math.ceil(bh / 8), Math.floor(width * height / 65536));
-        let threads = n > 1 && width * height >= MIN_THREADED_PIXELS[effort] ? startThreads(n) : null;
-        try {
-            types = await chooseVarblocks(planes, pw, bw, bh, field, distance, effort === 1 ? 5 : 4, threads);
-        } catch (e) {
-            if (!threads) throw e;
-            for (const t of threads) t.terminate();
-            threads = null;
-            types = await chooseVarblocks(planes, pw, bw, bh, field, distance, effort === 1 ? 5 : 4, null);
-        } finally {
-            if (threads) for (const t of threads) t.terminate();
-        }
+        const field = await parallel(t => initialQuantField(distance * 0.62, planes, pw, bh * 8, 0.725 / (distance * 0.62), t));
+        types = await parallel(t => chooseVarblocks(planes, pw, bw, bh, field, distance, effort === 1 ? 5 : 4, t));
     }
-    const muls = new Int32Array(bw * bh).fill(mul);
+    const muls = array(Int32Array, 4, bw * bh).fill(mul);
 
-    // the varblocks' coefficients (in the planes' layout) and the LF of their blocks
-    const lfValues = [0, 1, 2].map(() => new Float32Array(bw * bh));
-    const raw = [0, 1, 2].map(() => new Float32Array(pw * bh * 8));
-    const coeffs = new Float32Array(MAX_COEFFS), lfBlock = new Float32Array(MAX_COEFFS / 64);
-    for (let by = 0; by < bh; by++) {
-        for (let bx = 0; bx < bw; bx++) {
-            const type = types[by * bw + bx];
-            if (type < 0) continue;
-            const w8 = SIZES[2 * type], h8 = SIZES[2 * type + 1], w = w8 * 8, h = h8 * 8, o = by * 8 * pw + bx * 8;
-            for (let c = 0; c < 3; c++) {
-                forwardTransform(type, planes[c], o, pw, coeffs, lfBlock);
-                for (let y = 0; y < h; y++) raw[c].set(coeffs.subarray(y * w, (y + 1) * w), o + y * pw);
-                for (let y = 0; y < h8; y++) for (let x = 0; x < w8; x++) lfValues[c][(by + y) * bw + bx + x] = lfBlock[y * w8 + x];
-            }
-        }
-    }
-
-    // chroma from luma per tile of 8x8 blocks (at effort 0 X 0, B 1)
+    // the coefficients: the LF of the blocks, chroma from luma per tile of 8x8 blocks (at effort 0 X 0, B 1), the
+    // quantized HF
     const tilesPerRow = Math.ceil(bw / 8), tileRows = Math.ceil(bh / 8);
-    const xFromY = new Int32Array(tilesPerRow * tileRows), bFromY = new Int32Array(tilesPerRow * tileRows);
-    if (effort) chromaFromLuma(raw, types, muls, pw, bw, bh, globalScale, xFromY, bFromY);
-
-    // the HF coefficients quantized: Y, then X and B less the dequantized Y by the tile's factors
-    const hf = [0, 1, 2].map(() => new Int32Array(pw * bh * 8));
-    const yDequant = new Float32Array(MAX_COEFFS);
-    for (let by = 0; by < bh; by++) {
-        for (let bx = 0; bx < bw; bx++) {
-            const bi = by * bw + bx, type = types[bi];
-            if (type < 0) continue;
-            const w8 = SIZES[2 * type], h8 = SIZES[2 * type + 1], w = w8 * 8, h = h8 * 8, o = by * 8 * pw + bx * 8;
-            const tile = (by >> 3) * tilesPerRow + (bx >> 3), cfl = [xFromY[tile] / 84, 0, 1 + bFromY[tile] / 84];
-            const [m0, m1] = defaultDequant(MATRIX_INDEX[type]), matrices = transposed(type) ? m1 : m0;
-            const hfStep = 65536 / (globalScale * muls[bi]), one = single(type);
-            for (const c of [1, 0, 2]) {
-                const src = raw[c], m = matrices[c], out = hf[c], k0 = cfl[c];
-                const thresholds = c === 1 ? [0.56, 0.62, 0.62, 0.62] : [0.58, 0.62, 0.62, 0.62];
-                if (c !== 1 && w8 * h8 >= 4) for (let i = 0; i < 4; i++) thresholds[i] = Math.max(0.5, thresholds[i] - 0.00744 * w8 * h8);
-                const scale = qmMul[c] / hfStep;
-                for (let y = 0; y < h; y++) {
-                    for (let x = 0; x < w; x++) {
-                        const k = y * w + x;
-                        // (not the lowest frequencies: the LF)
-                        if (one ? k === 0 : x < w8 && y < h8) continue;
-                        const v = (c === 1 ? src[o + y * pw + x] : src[o + y * pw + x] - k0 * yDequant[k]) / m[k] * scale;
-                        const q = Math.abs(v) >= thresholds[(y >= h / 2 ? 2 : 0) + (x >= w / 2 ? 1 : 0)] ? Math.round(v) : 0;
-                        out[o + y * pw + x] = q;
-                        if (c === 1) {
-                            const d = q === 0 ? 0 : Math.abs(q) <= 1 ? q * QUANT_BIAS[1] : q - QUANT_BIAS_NUMERATOR / q;
-                            yDequant[k] = d * m[k] * hfStep;
-                        }
-                    }
-                }
-            }
-        }
-    }
+    const coefficients: CoefficientTask = {
+        task: 'jxl-coefficients', planes, pw, bw, bh, types, muls, globalScale, qmMul, cfl: effort > 0,
+        lfValues: [0, 1, 2].map(() => array(Float32Array, 4, bw * bh)),
+        xFromY: array(Int32Array, 4, tilesPerRow * tileRows), bFromY: array(Int32Array, 4, tilesPerRow * tileRows),
+        hf: [0, 1, 2].map(() => array(Int32Array, 4, pw * bh * 8)),
+    };
+    await parallel(t => runChunks(t, coefficients, tileRows, coefficientChunks(coefficients)));
+    const { lfValues, xFromY, bFromY, hf } = coefficients;
     const lf = [0, 1, 2].map(() => new Int32Array(bw * bh));
     for (let i = 0; i < bw * bh; i++) {
         const ly = Math.round(lfValues[1][i] / lfStep[1]);
@@ -333,42 +450,9 @@ export async function encodeVarDCT(rgba: Uint8Array, width: number, height: numb
     }
     const modularCode = new EntropyCode([...lfTokens, ...alphaTokens], tree.numLeaves);
 
-    // the pass groups' HF coefficients: per varblock and channel the non-zero count (predicted by the blocks above
-    // and left), then the coefficients in their order up to the last non-zero one
-    const hfTokens: Tokens[] = [];
-    for (let g = 0; g < numGroups; g++) {
-        const bx0 = (g % groupsPerRow) * 32, by0 = Math.floor(g / groupsPerRow) * 32;
-        const gw = Math.min(32, bw - bx0), gh = Math.min(32, bh - by0), t = new Tokens();
-        const nonZeros = [0, 1, 2].map(() => new Uint32Array(gw));
-        for (let y = 0; y < gh; y++) {
-            for (let x = 0; x < gw; x++) {
-                const type = types[(by0 + y) * bw + bx0 + x];
-                if (type < 0) continue;
-                const w8 = SIZES[2 * type], numBlocks = w8 * SIZES[2 * type + 1], log = 31 - Math.clz32(numBlocks);
-                const orderId = ORDER_ID[type], order = naturalOrder(orderId), n = order.length / 2, tr = transposed(type);
-                const o = (by0 + y) * 8 * pw + (bx0 + x) * 8;
-                const at = (i: number): number => tr ? o + order[2 * i] * pw + order[2 * i + 1] : o + order[2 * i + 1] * pw + order[2 * i];
-                for (let k = 0; k < 3; k++) {
-                    const c = [1, 0, 2][k], q = hf[c], nz = nonZeros[c], blockCtx = DEFAULT_CTX_MAP[k * 13 + orderId];
-                    let count = 0;
-                    for (let i = numBlocks; i < n; i++) if (q[at(i)]) count++;
-                    const predicted = y === 0 ? (x === 0 ? 32 : nz[x - 1]) : x === 0 ? nz[x] : (nz[x] + nz[x - 1] + 1) >> 1;
-                    t.push(blockCtx + (predicted >= 8 ? 4 + (predicted >> 1) : predicted) * NUM_BLOCK_CTX, count);
-                    const value = (count + numBlocks - 1) >> log;
-                    for (let dx = 0; dx < w8; dx++) nz[x + dx] = value;
-                    let prevNonZero = count <= numBlocks * 4 ? 1 : 0;
-                    const ctxBase = blockCtx * 458 + 37 * NUM_BLOCK_CTX;
-                    for (let i = numBlocks; i < n && count > 0; i++) {
-                        const v = q[at(i)];
-                        t.push(ctxBase + (NUM_NONZERO_CONTEXT[(count - 1) >> log] + FREQ_CONTEXT[(i - numBlocks) >> log]) * 2 + prevNonZero, packSigned(v));
-                        prevNonZero = v ? 1 : 0;
-                        if (v) count--;
-                    }
-                }
-            }
-        }
-        hfTokens.push(t);
-    }
+    // the pass groups' HF coefficients
+    const tokens: HFTokenTask = { task: 'jxl-hf-tokens', types, hf, pw, bw, bh, groupsPerRow };
+    const hfTokens = (await parallel(t => runChunks(t, tokens, numGroups, hfTokenChunks(tokens)))).map(r => Object.assign(new Tokens(), r));
     const hfCode = new EntropyCode(hfTokens, 495 * NUM_BLOCK_CTX);
 
     // the sections: LfGlobal, the LF groups, HfGlobal, the pass groups

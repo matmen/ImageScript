@@ -12,10 +12,12 @@
   Deno, Bun and browsers (Web Workers; bundlers like Vite pick up the worker's module). Small images (under about
   640x640 pixels at effort 0, 448x448 at 1, 320x320 at 2), browser pages without cross-origin isolation (no
   SharedArrayBuffer), runtimes without workers, and workers that fail to start encode on the calling thread as before.
-- Lossy `encodeJXL()` searches the varblocks in worker threads (`JXLEncodeOptions.threads`, the same default), rows of
-  64x64 areas in parallel like libjxl's: the same files. A 1920x1080 photo takes 1.1 s instead of 2.4 s at effort 1 and
-  1.8 s instead of 5.0 s at effort 2 (8 threads). Effort 0 (which has no search) and images under about 512x512 pixels
-  at effort 1, 384x384 at 2, encode without threads.
+- Lossy `encodeJXL()` encodes in worker threads (`JXLEncodeOptions.threads`, the same default): XYB, the quantization
+  field, the varblock search (rows of 64x64 areas, like libjxl's), the coefficients and their tokens run in parallel,
+  writing the same files. A 1920x1080 photo takes 0.20 s instead of 0.28 s at effort 0, 0.86 s instead of 2.2 s at
+  effort 1 and 1.7 s instead of 4.9 s at effort 2, a 3840x2160 one 0.42 s instead of 0.89 s, 2.0 s instead of 8.5 s
+  and 4.8 s instead of 19.2 s (8 threads). Images under about 1024x1024 pixels at effort 0, 512x512 at 1 and 384x384
+  at 2 encode without threads.
 - JPEG XL decoding uses worker threads (`DecodeOptions.threads` and `AnimationDecodeOptions.threads`, the same
   default), from 4 megapixels on (one thread per 2 megapixels at most): the groups (with all their passes), Gaborish, the
   EPF's strips and the conversion to sRGB run in parallel, with the same pixels. A 3840x2160 image decodes in 395 ms

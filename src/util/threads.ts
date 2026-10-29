@@ -156,6 +156,9 @@ export async function runChunks<R>(threads: Thread[] | null, task: ChunkTask, co
     return results;
 }
 
+/** A typed array in shared memory: itself if it is */
+export const sharedOf = <T extends Float32Array | Int32Array | Int8Array | Uint8Array | Uint16Array>(array: T): T => array.buffer instanceof SharedArrayBuffer ? array : shared(array);
+
 /** A copy of a typed array in shared memory (for threads) */
 export function shared<T extends Float32Array | Int32Array | Int8Array | Uint8Array | Uint16Array>(array: T): T {
     const Type = array.constructor as new (buffer: SharedArrayBuffer) => T;

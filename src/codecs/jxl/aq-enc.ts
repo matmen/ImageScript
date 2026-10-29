@@ -4,6 +4,7 @@
  * PerBlockModulations, Blur1x1Masking), on the whole image instead of tiles. Copyright (c) the JPEG XL Project Authors, BSD-3-Clause
  * License (see THIRD_PARTY_NOTICES.md)
  */
+import { runChunks, type ChunkTask, type Thread } from '../../util/threads.ts';
 
 const SG_MUL = 226.77216153508914, SG_MUL2 = 1 / 73.377132366608819, LOG2 = 0.693147181;
 const SG_RET_MUL = SG_MUL2 * 18.6580932135 * LOG2, SG_V_OFFSET = 7.7825991679894591;
@@ -35,36 +36,65 @@ export interface QuantField {
     mask1x1: Float32Array;
 }
 
+/** The masking of bands of 64 rows (see initialQuantField) */
+export interface MaskingTask extends ChunkTask {
+    y: Float32Array;
+    w: number;
+    h: number;
+    // the results: the masking of the pixels (and blurred), the pre-erosion
+    mask1x1: Float32Array;
+    blurred: Float32Array;
+    preErosion: Float32Array;
+}
+
+/**
+ * The masking of a band of 64 rows (the chunk): of each pixel the inverse of the gamma corrected Laplacian (of Y);
+ * the pre-erosion: its square (limited), through maskingSqrt, averaged over 4x4 pixels
+ */
+export function maskingChunks({ y: py, w, h, mask1x1, preErosion }: MaskingTask): (chunk: number) => void {
+    const MATCH_GAMMA_OFFSET = 0.019, LIMIT = 0.2, rowSum = new Float32Array(w);
+    return band => {
+        for (let y = band * 64; y < Math.min(h, band * 64 + 64); y++) {
+            const r = y * w, r1 = (y > 0 ? y - 1 : y) * w, r2 = (y + 1 < h ? y + 1 : y) * w;
+            for (let x = 0; x < w; x++) {
+                const x1 = x > 0 ? x - 1 : x, x2 = x + 1 < w ? x + 1 : x;
+                const base = 0.25 * (py[r2 + x] + py[r1 + x] + py[r + x1] + py[r + x2]);
+                const gammac = gammaRatio(py[r + x] + MATCH_GAMMA_OFFSET);
+                const d = gammac * (py[r + x] - base);
+                mask1x1[r + x] = 1 / (Math.log1p(Math.abs(d)) + 0.01);
+                const v = maskingSqrt(Math.min(d * d, LIMIT));
+                rowSum[x] = y % 4 ? rowSum[x] + v : v;
+            }
+            if (y % 4 === 3) {
+                const out = (y >> 2) * (w / 4);
+                for (let x = 0; x < w / 4; x++) preErosion[out + x] = (rowSum[4 * x] + rowSum[4 * x + 1] + rowSum[4 * x + 2] + rowSum[4 * x + 3]) * 0.25;
+            }
+        }
+    };
+}
+
+/** The 5x5 blur of the pixels' masking of a band of 64 rows (the chunk) */
+export function maskBlurChunks({ w, h, mask1x1, blurred }: MaskingTask): (chunk: number) => void {
+    const k = [0.25647067633737225, 0.2050056912354399, 0.1540820486684973, 0.08149576591362004, 0.05127501048123085];
+    const n = 1 / Math.max(1 + 4 * (k[0] + k[1] + k[2] + k[4] + 2 * k[3]), 1e-5);
+    const weights = [n, n * k[0], n * k[2], n * k[1], n * k[4], n * k[3]];
+    return band => symmetric5(mask1x1, w, h, weights, blurred, band * 64, Math.min(h, band * 64 + 64));
+}
+
 /**
  * libjxl's initial quantization field of XYB planes (w x h, whole blocks) for a Butteraugli distance (scale: the
- * field's scale)
+ * field's scale); the pixels' masking in threads, if given
  */
-export function initialQuantField(distance: number, planes: Float32Array[], w: number, h: number, scale: number): QuantField {
-    const [px, py, pb] = planes, bw = w / 8, bh = h / 8;
-    const MATCH_GAMMA_OFFSET = 0.019, LIMIT = 0.2;
-    // the masking of each pixel: the inverse of the gamma corrected Laplacian; the pre-erosion: its square (limited),
-    // through maskingSqrt, averaged over 4x4 pixels
-    const mask1x1 = new Float32Array(w * h), preErosion = new Float32Array((w / 4) * (h / 4)), rowSum = new Float32Array(w);
-    for (let y = 0; y < h; y++) {
-        const r = y * w, r1 = (y > 0 ? y - 1 : y) * w, r2 = (y + 1 < h ? y + 1 : y) * w;
-        for (let x = 0; x < w; x++) {
-            const x1 = x > 0 ? x - 1 : x, x2 = x + 1 < w ? x + 1 : x;
-            const base = 0.25 * (py[r2 + x] + py[r1 + x] + py[r + x1] + py[r + x2]);
-            const gammac = gammaRatio(py[r + x] + MATCH_GAMMA_OFFSET);
-            const d = gammac * (py[r + x] - base);
-            mask1x1[r + x] = 1 / (Math.log1p(Math.abs(d)) + 0.01);
-            const v = maskingSqrt(Math.min(d * d, LIMIT));
-            rowSum[x] = y % 4 ? rowSum[x] + v : v;
-        }
-        if (y % 4 === 3) {
-            const out = (y >> 2) * (w / 4);
-            for (let x = 0; x < w / 4; x++) preErosion[out + x] = (rowSum[4 * x] + rowSum[4 * x + 1] + rowSum[4 * x + 2] + rowSum[4 * x + 3]) * 0.25;
-        }
-    }
-    const aq = fuzzyErosion(distance, preErosion, w / 4, h / 4);
+export async function initialQuantField(distance: number, planes: Float32Array[], w: number, h: number, scale: number, threads: Thread[] | null): Promise<QuantField> {
+    const [px, py, pb] = planes, bw = w / 8, bh = h / 8, bands = Math.ceil(h / 64);
+    const array = (n: number): Float32Array => new Float32Array(threads ? new SharedArrayBuffer(4 * n) : new ArrayBuffer(4 * n));
+    const task: MaskingTask = { task: 'jxl-masking', y: py, w, h, mask1x1: array(w * h), blurred: array(w * h), preErosion: array((w / 4) * (h / 4)) };
+    await runChunks(threads, task, bands, maskingChunks(task));
+    const aq = fuzzyErosion(distance, task.preErosion, w / 4, h / 4);
     const mask = Float32Array.from(aq, v => 1 / (v + 0.001));
     perBlockModulations(distance, px, py, pb, w, bw, bh, scale, aq);
-    return { quant: aq, mask, mask1x1: blur1x1(mask1x1, w, h) };
+    await runChunks(threads, { ...task, task: 'jxl-mask-blur' }, bands, maskBlurChunks(task));
+    return { quant: aq, mask, mask1x1: task.blurred };
 }
 
 // the weighted 4 smallest values of each 3x3 neighbourhood, summed over 2x2 (the output is half the size)
@@ -148,16 +178,15 @@ function perBlockModulations(distance: number, px: Float32Array, py: Float32Arra
     }
 }
 
-// a symmetric 5x5 convolution with mirrored borders (libjxl's Symmetric5): the weights of the center, the edges 1 and 2
-// away, the diagonals 1 and 2 away and the knight moves
-function symmetric5(m: Float32Array, w: number, h: number, [c, r, R, d, D, L]: number[]): Float32Array {
+// rows y0 to y1 of a symmetric 5x5 convolution with mirrored borders (libjxl's Symmetric5): the weights of the center,
+// the edges 1 and 2 away, the diagonals 1 and 2 away and the knight moves
+function symmetric5(m: Float32Array, w: number, h: number, [c, r, R, d, D, L]: number[], out: Float32Array, y0: number, y1: number): void {
     const weights = [D, L, R, L, D, L, d, r, d, L, R, r, c, r, R, L, d, r, d, L, D, L, R, L, D];
     const mirror = (v: number, n: number): number => {
         while (v < 0 || v >= n) v = v < 0 ? -v - 1 : 2 * n - 1 - v;
         return v;
     };
-    const out = new Float32Array(w * h);
-    for (let y = 0; y < h; y++) {
+    for (let y = y0; y < y1; y++) {
         const rows = [-2, -1, 0, 1, 2].map(dy => mirror(y + dy, h) * w);
         for (let x = 0; x < w; x++) {
             let sum = 0;
@@ -168,12 +197,4 @@ function symmetric5(m: Float32Array, w: number, h: number, [c, r, R, d, D, L]: n
             out[y * w + x] = sum;
         }
     }
-    return out;
-}
-
-// the 5x5 blur of the pixels' masking
-function blur1x1(m: Float32Array, w: number, h: number): Float32Array {
-    const k = [0.25647067633737225, 0.2050056912354399, 0.1540820486684973, 0.08149576591362004, 0.05127501048123085];
-    const n = 1 / Math.max(1 + 4 * (k[0] + k[1] + k[2] + k[4] + 2 * k[3]), 1e-5);
-    return symmetric5(m, w, h, [n, n * k[0], n * k[2], n * k[1], n * k[4], n * k[3]]);
 }

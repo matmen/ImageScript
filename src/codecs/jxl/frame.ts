@@ -14,7 +14,7 @@ import { ModularImage, Channel, MAConfig, channel, readTree, decodeModular } fro
 import { upsample } from './upsample.ts';
 import { gaborish, gaborishRows, epf, epfStrip, epfScratch, epfSteps, epfStrips } from './filters.ts';
 import { VarDCT, VarDCTGlobal, readVarDCTGlobal, type VarDCTShared } from './vardct.ts';
-import { runChunks, shared, type ChunkTask, type Thread } from '../../util/threads.ts';
+import { runChunks, shared, sharedOf, type ChunkTask, type Thread } from '../../util/threads.ts';
 import { Patch, Splines, readPatches, applyPatches, readSplines, renderSplines, readNoise, renderNoise } from './features.ts';
 import { ColorOutput, xybToBytes } from './color.ts';
 import { Blending, performBlending, PB_REPLACE, PB_ADD, PB_BLEND_ABOVE, PB_ADD_ABOVE, PB_MUL } from './blend.ts';
@@ -372,7 +372,6 @@ async function threaded<T>(pool: FrameThreads, pixels: number, inThreads: (threa
 }
 
 // a typed array in shared memory (itself if it is)
-const sharedOf = <T extends Float32Array>(a: T): T => a.buffer instanceof SharedArrayBuffer ? a : shared(a);
 const sharedPlanes = (n: number, w: number, h: number): Float32Array[] => Array.from({ length: n }, () => new Float32Array(new SharedArrayBuffer(4 * w * h)));
 
 /** The rows of the steps after decoding for threads (see postChunks): Gaborish, an EPF pass, XYB to bytes */

@@ -4,7 +4,7 @@
  * area: the best 8x8 transform of each block, merged into larger DCTs where they are estimated to cost less.
  * Copyright (c) the JPEG XL Project Authors, BSD-3-Clause License (see THIRD_PARTY_NOTICES.md)
  */
-import { runChunks, shared, type ChunkTask, type Thread } from '../../util/threads.ts';
+import { runChunks, shared, sharedOf, type ChunkTask, type Thread } from '../../util/threads.ts';
 import { forwardTransform } from './transforms-enc.ts';
 import { inverseTransform } from './dct.ts';
 import { defaultDequant, MATRIX_INDEX } from './quant.ts';
@@ -290,8 +290,8 @@ export async function chooseVarblocks(planes: Float32Array[], stride: number, bw
     const types = new Int8Array(threads ? new SharedArrayBuffer(bw * bh) : new ArrayBuffer(bw * bh));
     const task: VarblockTask = {
         task: 'jxl-varblocks', stride, bw, bh, distance, speed, types,
-        planes: threads ? planes.map(shared) : planes,
-        field: threads ? { quant: shared(field.quant), mask: shared(field.mask), mask1x1: shared(field.mask1x1) } : field,
+        planes: threads ? planes.map(sharedOf) : planes,
+        field: threads ? { quant: shared(field.quant), mask: shared(field.mask), mask1x1: sharedOf(field.mask1x1) } : field,
     };
     // (a row of 64x64 areas each, independent of the others)
     await runChunks(threads, task, Math.ceil(bh / 8), varblockChunks(task));
