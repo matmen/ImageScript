@@ -4,7 +4,7 @@ import { concat } from '../util/mem.ts';
 import { littleEndian } from '../util/alpha.ts';
 import { encode as utf8, decode as utf8Decode } from '../util/utf8.ts';
 import { orientation as exifOrientation, xmpOrientation } from './exif.ts';
-import { compressAsync, decompressAsync } from './zlib.ts';
+import { compressAsync, decompressAsync, decompress } from './zlib.ts';
 
 const HEAD = Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10);
 const IHDR = 0x49484452;
@@ -599,22 +599,31 @@ function parse(array: Uint8Array): Parsed {
     return { header, palette, transparency, idat, exif, text, animation, frames, animationError };
 }
 
-// inflates and converts one image (the default image or an APNG frame) to RGBA
-async function decodeImageData(p: Parsed, chunks: Uint8Array[], width: number, height: number): Promise<Uint8Array> {
-    const { depth, colorType, interlace } = p.header;
-    const channels = COLOR_TYPE_CHANNELS[colorType];
-    const bitsPerPixel = channels * depth;
-    const bpp = Math.max(1, bitsPerPixel >> 3);
-    const passes = interlace ? ADAM7.map(([xs, ys, dx, dy]) => [xs, ys, dx, dy, Math.ceil((width - xs) / dx), Math.ceil((height - ys) / dy)]) : [[0, 0, 1, 1, width, height]];
-
+// the interlace passes of an image ([x start, y start, x step, y step, width, height]) and its inflated size
+function passesOf(p: Parsed, width: number, height: number): { passes: number[][], expected: number } {
+    const bitsPerPixel = COLOR_TYPE_CHANNELS[p.header.colorType] * p.header.depth;
+    const passes = p.header.interlace ? ADAM7.map(([xs, ys, dx, dy]) => [xs, ys, dx, dy, Math.ceil((width - xs) / dx), Math.ceil((height - ys) / dy)]) : [[0, 0, 1, 1, width, height]];
     let expected = 0;
     for (const pass of passes) {
         const [, , , , pw, ph] = pass;
         if (pw > 0 && ph > 0) expected += ph * (1 + Math.ceil(pw * bitsPerPixel / 8));
     }
+    return { passes, expected };
+}
 
+// inflates and converts one image (the default image or an APNG frame) to RGBA
+async function decodeImageData(p: Parsed, chunks: Uint8Array[], width: number, height: number): Promise<Uint8Array> {
+    const { expected } = passesOf(p, width, height);
     if (!chunks.length) throw new Error('PNG: missing image data');
-    const data = await decompressAsync(chunks.length === 1 ? chunks[0] : concat(chunks), expected);
+    return imagePixels(p, await decompressAsync(chunks.length === 1 ? chunks[0] : concat(chunks), expected), width, height);
+}
+
+// an image's RGBA pixels from its inflated data
+function imagePixels(p: Parsed, data: Uint8Array, width: number, height: number): Uint8Array {
+    const { depth, colorType, interlace } = p.header;
+    const bitsPerPixel = COLOR_TYPE_CHANNELS[colorType] * depth;
+    const bpp = Math.max(1, bitsPerPixel >> 3);
+    const { passes, expected } = passesOf(p, width, height);
     if (data.length < expected) throw new Error('PNG: image data is truncated');
 
     const rgba = new Uint8Array(width * height * 4);
@@ -647,6 +656,16 @@ export async function decode(array: Uint8Array, maxPixels = MAX_PIXELS): Promise
     checkPixels(width, height, maxPixels);
     const pixels = await decodeImageData(p, p.idat, width, height);
     return { width, height, pixels, orientation: p.exif ? exifOrientation(p.exif) : await textOrientation(p.text) };
+}
+
+/** Decodes a PNG into 8-bit RGBA at once (inflated without the native, asynchronous streams; for small images) */
+export function decodeSync(array: Uint8Array, maxPixels = MAX_PIXELS): { width: number, height: number, pixels: Uint8Array } {
+    const p = parse(array);
+    const { width, height } = p.header;
+    checkPixels(width, height, maxPixels);
+    if (!p.idat.length) throw new Error('PNG: missing image data');
+    const { expected } = passesOf(p, width, height);
+    return { width, height, pixels: imagePixels(p, decompress(p.idat.length === 1 ? p.idat[0] : concat(p.idat), expected), width, height) };
 }
 
 export interface APNGFrame {

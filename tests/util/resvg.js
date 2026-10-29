@@ -1,14 +1,22 @@
 const {Image} = require('../..');
 const fs = require('fs').promises;
 
+// resvg's test fonts (tests/fonts/resvg, subsets with the characters of the test cases): its default family (serif)
+// first, then its sans-serif and monospace ones (fonts fitting generic families are picked in order)
+const fonts = async () => {
+    const dir = './tests/fonts/resvg', first = ['NotoSerif-Regular.ttf', 'NotoSans-Regular.ttf', 'NotoMono-Regular.ttf'];
+    const names = (await fs.readdir(dir)).filter(f => /\.(ttf|otf)$/.test(f)).sort();
+    return Promise.all([...first, ...names.filter(f => !first.includes(f))].map(f => fs.readFile(`${dir}/${f}`)));
+};
+
 // test cases of resvg (tests/svgs/resvg, see its LICENSE) next to resvg's renderings, of the directories some returns
 // true for. Antialiasing differs a little: at most 0.5% of the pixels may differ by more than 24 (premultiplied)
 module.exports = async (some, panic) => {
-    const root = './tests/svgs/resvg';
+    const root = './tests/svgs/resvg', options = {mode: Image.SVG_MODE_WIDTH, fonts: await fonts()};
     const files = (await fs.readdir(root, {recursive: true})).filter(f => f.endsWith('.svg') && some(f.replace(/\\/g, '/')));
     for (const file of files) {
         const reference = await Image.decode(await fs.readFile(`${root}/${file.replace(/\.svg$/, '.png')}`));
-        const image = await Image.renderSVG(await fs.readFile(`${root}/${file}`, 'utf8'), reference.width, Image.SVG_MODE_WIDTH);
+        const image = await Image.renderSVG(await fs.readFile(`${root}/${file}`, 'utf8'), {...options, size: reference.width});
         if (image.width !== reference.width || image.height !== reference.height) panic(`resvg ${file}: ${image.width}x${image.height} instead of ${reference.width}x${reference.height}`);
         const a = image.bitmap, b = reference.bitmap;
         let differing = 0;

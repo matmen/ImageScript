@@ -102,7 +102,7 @@ const colorTables = new WeakMap<Font, { layers: ((glyph: number) => ColorLayer[]
 const sizes = new WeakMap<Font, Map<string, SizedFont>>();
 const SIZES = 16;
 
-function loadFont(data: Uint8Array): Font {
+export function loadFont(data: Uint8Array): Font {
     let regions = fonts.get(data.buffer);
     if (!regions) fonts.set(data.buffer, regions = new Map<string, Font>());
 

@@ -35,9 +35,9 @@ const panic = message => {
         if (!await samePixels(target, encoded)) panic('features don\'t match');
     }
 
-    // resvg's test cases (but the filters, see svg-filters.js): XML entities, style sheets, switch, nested svg and
+    // resvg's test cases (but the filters and text, see svg-filters.js and svg-text.js): XML entities, style sheets, switch, nested svg and
     // aspect ratios, gradients, patterns, clip paths, masks, markers, images, colors, lines, arcs, caps, symbols
-    await require('./util/resvg')(file => !file.startsWith('filters/'), panic);
+    await require('./util/resvg')(file => !file.startsWith('filters/') && !file.startsWith('text/'), panic);
 
     {
         // images embedded as data URIs: placed at their size, the pixels are the decoded image's

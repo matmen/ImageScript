@@ -12,24 +12,43 @@
  */
 
 import { decode as decodeUTF8, encode as encodeUTF8 } from '../util/utf8.ts';
-import { PathCommand } from './font.ts';
+import { Font, PathCommand } from './font.ts';
 import { base64 } from '../util/bytes.ts';
 import { gunzip } from '../codecs/zlib.ts';
 import { applyFilter, Filter, Primitive, Kind, Input, Transfer, ColorMatrix, Pixmap, Light } from './filter.ts';
 import { BLEND_MODES, blendPixel } from './blend.ts';
+import { FontFace, FontStyle, fontFace, layOutText, parseFontFamilies, pathLength, placeOutline, colorTablesOf, TextInput, ChunkInput, SpanInput, TextOutput, SpanOutput, Baseline } from './svg-text.ts';
+import { rasterizeGlyph } from './text.ts';
+import { renderPaintGlyph } from './colr.ts';
+import { decodeSync as decodePNG } from '../codecs/png.ts';
+import { decompress } from '../codecs/zlib.ts';
 
-const UNSUPPORTED = new Set(['text', 'filter', 'pattern', 'marker', 'foreignObject', 'script', 'style', 'title', 'desc', 'metadata',
+const UNSUPPORTED = new Set(['filter', 'pattern', 'marker', 'foreignObject', 'script', 'style', 'title', 'desc', 'metadata',
     'defs', 'clipPath', 'mask', 'linearGradient', 'radialGradient', 'stop', 'symbol', 'font', 'font-face', 'animate', 'animateTransform', 'animateMotion', 'set']);
 
 const INHERITED = new Set(['fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-linecap', 'stroke-linejoin',
     'stroke-miterlimit', 'stroke-dasharray', 'stroke-dashoffset', 'color', 'visibility', 'clip-rule', 'font-size', 'marker-start', 'marker-mid',
-    'marker-end', 'image-rendering', 'color-interpolation-filters', 'paint-order', 'shape-rendering']);
+    'marker-end', 'image-rendering', 'color-interpolation-filters', 'paint-order', 'shape-rendering',
+    'font-family', 'font-weight', 'font-style', 'font-stretch', 'font-variant', 'text-anchor', 'letter-spacing', 'word-spacing', 'dominant-baseline',
+    'writing-mode', 'kerning', 'font-kerning', 'text-rendering']);
 
 // elements a switch may choose from
+// properties that aren't presentation attributes
+const CSS_ONLY = new Set(['font-kerning']);
+
+// the elements of SVG 1.1 and 2 (a tref only shows the text of these)
+const SVG_ELEMENTS = new Set(['a', 'altGlyph', 'altGlyphDef', 'altGlyphItem', 'animate', 'animateColor', 'animateMotion', 'animateTransform', 'circle',
+    'clipPath', 'color-profile', 'cursor', 'defs', 'desc', 'ellipse', 'feBlend', 'feColorMatrix', 'feComponentTransfer', 'feComposite', 'feConvolveMatrix',
+    'feDiffuseLighting', 'feDisplacementMap', 'feDistantLight', 'feDropShadow', 'feFlood', 'feFuncA', 'feFuncB', 'feFuncG', 'feFuncR', 'feGaussianBlur',
+    'feImage', 'feMerge', 'feMergeNode', 'feMorphology', 'feOffset', 'fePointLight', 'feSpecularLighting', 'feSpotLight', 'feTile', 'feTurbulence',
+    'filter', 'font', 'font-face', 'foreignObject', 'g', 'glyph', 'glyphRef', 'hkern', 'image', 'line', 'linearGradient', 'marker', 'mask', 'metadata',
+    'missing-glyph', 'mpath', 'path', 'pattern', 'polygon', 'polyline', 'radialGradient', 'rect', 'script', 'set', 'stop', 'style', 'svg', 'switch',
+    'symbol', 'text', 'textPath', 'title', 'tref', 'tspan', 'use', 'view', 'vkern']);
+
 const SWITCHABLE = new Set(['svg', 'g', 'a', 'switch', 'use', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'image', 'foreignObject']);
 
 const PROPERTIES = new Set([...INHERITED, 'opacity', 'display', 'clip-path', 'mask', 'stop-color', 'stop-opacity', 'transform', 'transform-origin', 'filter', 'flood-color',
-    'flood-opacity', 'lighting-color']);
+    'flood-opacity', 'lighting-color', 'text-decoration', 'baseline-shift', 'alignment-baseline']);
 
 interface XNode {
     name: string;
@@ -41,6 +60,8 @@ interface XNode {
     parent?: XNode;
     computed?: Style | null;
     computedParent?: Style | null;
+    /** within <text> elements: the text and child elements in document order */
+    content?: Array<string | XNode>;
 }
 
 type Style = Record<string, string | undefined>;
@@ -123,7 +144,9 @@ const DEFAULTS: Record<string, string> = {
     'color': 'black', 'visibility': 'visible', 'clip-rule': 'nonzero', 'font-size': '16', 'opacity': '1', 'display': 'inline',
     'stop-color': 'black', 'stop-opacity': '1', 'marker-start': 'none', 'marker-mid': 'none', 'marker-end': 'none',
     'image-rendering': 'auto', 'filter': 'none', 'flood-color': 'black', 'flood-opacity': '1', 'color-interpolation-filters': 'linearRGB',
-    'lighting-color': 'white', 'shape-rendering': 'auto'
+    'lighting-color': 'white', 'shape-rendering': 'auto', 'font-weight': '400', 'font-style': 'normal', 'font-stretch': 'normal',
+    'font-variant': 'normal', 'text-anchor': 'start', 'letter-spacing': 'normal', 'word-spacing': 'normal', 'dominant-baseline': 'auto',
+    'writing-mode': 'lr-tb', 'text-rendering': 'auto'
 };
 
 const SAMPLES = 16; // sub-scanlines per pixel
@@ -134,7 +157,7 @@ const SAMPLES = 16; // sub-scanlines per pixel
  * @param {number} size
  * @return {{width: number, height: number, pixels: Uint8Array}}
  */
-export function render(source: string | Uint8Array, mode: number, size: number, images: Map<string, RasterImage> = new Map()): { width: number, height: number, pixels: Uint8Array } {
+export function render(source: string | Uint8Array, mode: number, size: number, images: Map<string, RasterImage> = new Map(), fonts: Uint8Array[] = []): { width: number, height: number, pixels: Uint8Array } {
     if (typeof source !== 'string') source = decodeUTF8(source);
 
     const root = parseXML(source).children.find(node => node.name === 'svg' && node.svg);
@@ -142,6 +165,7 @@ export function render(source: string | Uint8Array, mode: number, size: number, 
 
     const doc = new Document(root);
     doc.images = images;
+    doc.given = fonts.map(data => fontFace(data)).filter(face => face !== null);
     const { width, height } = documentSize(root);
     if (!(width > 0) || !(height > 0)) throw new Error('SVG: invalid dimensions');
 
@@ -190,6 +214,19 @@ function documentSize(root: XNode): { width: number, height: number } {
         return parseLength(value, null, 16);
     };
     return { width: lengthOf(root.attrs.width, viewBox ? viewBox[2] : 100), height: lengthOf(root.attrs.height, viewBox ? viewBox[3] : 100) };
+}
+
+// SVG fonts' glyph documents by their offset in the font
+const glyphDocuments = new WeakMap<Font, Map<number, Document | null>>();
+
+// draws an image with a matrix from its pixels to the layer's, sampled with a filter (0 nearest, 1 bilinear, 2
+// bicubic; like tiny-skia, the nearest pixel where the image is only translated)
+function drawRaster(layer: Layer, image: RasterImage, matrix: Matrix, filter: number): void {
+    const inverse = invert(matrix);
+    const coverage = inverse && rasterize([transformPoints([0, 0, image.width, 0, image.width, image.height, 0, image.height], matrix)], false, layer.width, layer.height);
+    if (!coverage) return;
+    const translated = Math.abs(matrix[0] - 1) < 1e-6 && Math.abs(matrix[3] - 1) < 1e-6 && matrix[1] === 0 && matrix[2] === 0;
+    layer.fill(coverage, sampler(premultiplied(image), image.width, image.height, inverse, false, translated ? 0 : filter, 1));
 }
 
 function premultiplied(image: RasterImage): Float32Array {
@@ -316,11 +353,17 @@ function parseXML(text: string): XNode {
         return name in entities ? entities[name] : match;
     });
 
+    const addText = (value: string): void => {
+        const node = stack[stack.length - 1];
+        node.text += value;
+        if (node.content) node.content.push(value);
+    };
+
     let i = 0;
     while (i < text.length) {
         if (text[i] !== '<') {
             const end = text.indexOf('<', i);
-            stack[stack.length - 1].text += decode(text.slice(i, end === -1 ? text.length : end));
+            addText(decode(text.slice(i, end === -1 ? text.length : end)));
             i = end === -1 ? text.length : end;
             continue;
         }
@@ -330,7 +373,7 @@ function parseXML(text: string): XNode {
             i = end === -1 ? text.length : end + 3;
         } else if (text.startsWith('<![CDATA[', i)) {
             const end = text.indexOf(']]>', i);
-            stack[stack.length - 1].text += text.slice(i + 9, end === -1 ? text.length : end);
+            addText(text.slice(i + 9, end === -1 ? text.length : end));
             i = end === -1 ? text.length : end + 3;
         } else if (text.startsWith('<!', i)) {
             let depth = 0, j = i + 2;
@@ -388,7 +431,11 @@ function parseXML(text: string): XNode {
             const end = close.exec(text);
             i = end ? close.lastIndex : text.length;
 
-            stack[stack.length - 1].children.push(node);
+            const parent = stack[stack.length - 1];
+            parent.children.push(node);
+            // (text elements keep their text and elements in order)
+            if (parent.content) parent.content.push(node);
+            if (parent.content || (node.name === 'text' && node.svg)) node.content = [];
             if (!end || !end[1]) {
                 stack.push(node);
                 namespaces.push(scope);
@@ -568,7 +615,24 @@ function parseDeclarations(text: string): Declarations {
     const declarations: Declarations = { normal: {}, important: {} };
     text = stripComments(text);
 
-    for (const part of text.split(';')) {
+    // (semicolons in parentheses and strings, like in data: URIs, don't end a declaration)
+    const parts: string[] = [];
+    let depth = 0, quote = '', start = 0;
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (quote) {
+            if (c === quote) quote = '';
+        } else if (c === '"' || c === '\'') quote = c;
+        else if (c === '(') depth++;
+        else if (c === ')') depth = Math.max(0, depth - 1);
+        else if (c === ';' && !depth) {
+            parts.push(text.slice(start, i));
+            start = i + 1;
+        }
+    }
+    parts.push(text.slice(start));
+
+    for (const part of parts) {
         const colon = part.indexOf(':');
         if (colon === -1) continue;
         const name = part.slice(0, colon).trim().toLowerCase();
@@ -617,6 +681,12 @@ class Document {
     images: Map<string, RasterImage> = new Map();
     /** the SVGs of data URIs, parsed */
     nested: Map<string, NestedSvg | null> = new Map();
+    /** fonts for text: the ones the style sheets embed (@font-face), and the ones given to render() */
+    embedded: FontFace[];
+    given: FontFace[] = [];
+    /** the scale of the document's size to the pixels it's rendered at */
+    outputScale = 1;
+    texts = new WeakMap<XNode, { style: Style, width: number, height: number, scale: number, layout: TextOutput<Style> | null }>();
 
     constructor(root: XNode) {
         this.ids = new Map();
@@ -637,6 +707,7 @@ class Document {
 
         this.root = root;
         this.rules = parseStyleSheet(styles.join('\n'));
+        this.embedded = embeddedFonts(styles.join('\n'));
         for (const name of ['fill', 'stroke']) this.breakPatternCycles(name);
         this.breakImageCycles();
     }
@@ -707,13 +778,14 @@ class Document {
             for (const name in declarations) {
                 // (the marker shorthand only exists in CSS, not as an attribute)
                 if (name === 'marker') for (const kind of ['marker-start', 'marker-mid', 'marker-end']) own[kind] = declarations[name];
+                else if (name === 'font') Object.assign(own, fontShorthand(declarations[name]) ?? {});
                 else if (validProperty(name, declarations[name])) own[name] = declarations[name];
             }
         };
 
         const presentation: Record<string, string> = {};
         // presentation attributes are CSS values, with the spaces around them insignificant
-        for (const name in node.attrs) if (PROPERTIES.has(name)) presentation[name] = node.attrs[name].trim();
+        for (const name in node.attrs) if (PROPERTIES.has(name) && !CSS_ONLY.has(name)) presentation[name] = node.attrs[name].trim();
         apply(presentation);
 
         const rules = this.rules.filter(rule => rule.match(node));
@@ -731,6 +803,15 @@ class Document {
             if (value === undefined || value === 'initial') value = DEFAULTS[name];
             style[name] = value === undefined ? undefined : String(value).trim();
         }
+
+        // font sizes in pixels (relative ones to the parent's), weights as numbers (bolder and lighter like usvg's)
+        const parentSize = parent ? parseFloat(parent['font-size'] as string) : 16;
+        style['font-size'] = String(own['font-size'] !== undefined && own['font-size'] !== 'inherit' ? fontSize(own['font-size'], parentSize) : parentSize);
+        const parentWeight = parent ? Number(parent['font-weight']) : 400, weight = own['font-weight'];
+        style['font-weight'] = String(weight === undefined || weight === 'inherit' ? parentWeight : weight === 'normal' ? 400 : weight === 'bold' ? 700
+            : weight === 'bolder' ? Math.min(900, parentWeight + (parentWeight === 400 ? 300 : 100))
+                : weight === 'lighter' ? Math.max(100, parentWeight - (parentWeight === 400 ? 200 : 100))
+                    : /^[1-9]00$/.test(weight) ? Number(weight) : parentWeight);
 
         // currentColor resolves to the color of the element using it
         style['mask-type'] = own['mask-type'] || node.attrs['mask-type'];
@@ -803,6 +884,7 @@ class Document {
                 }
                 case 'use': return this.renderUse(node, ctx);
                 case 'image': return this.renderImage(node, ctx);
+                case 'text': return this.renderText(node, ctx);
                 default: {
                     const path = shapePath(node, ctx.viewport, parseNumber(style['font-size'], 16));
                     if (!path) return;
@@ -915,6 +997,371 @@ class Document {
         target.computedParent = computedParent;
     }
 
+    // the fonts for text: embedded ones first, they win for their families
+    get fonts(): FontFace[] {
+        return this.embedded.length ? [...this.embedded, ...this.given] : this.given;
+    }
+
+    // the layout of a text element (kept for its computed style, viewport and scale); null without fonts or anything to
+    // show
+    textOf(node: XNode, style: Style, viewport: Viewport, scale = 1): TextOutput<Style> | null {
+        const cached = this.texts.get(node);
+        if (cached && cached.style === style && cached.width === viewport.width && cached.height === viewport.height && cached.scale === scale) return cached.layout;
+        let layout: TextOutput<Style> | null = null;
+        const fonts = this.fonts;
+        if (fonts.length) {
+            try {
+                layout = layOutText(this.textInput(node, style, viewport, scale), fonts);
+            } catch (err) {
+                // (damaged fonts: the text isn't shown)
+                if (!(err instanceof RangeError)) throw err;
+            }
+        }
+        this.texts.set(node, { style, width: viewport.width, height: viewport.height, scale, layout });
+        return layout;
+    }
+
+    // a text element as usvg reads it (crates/usvg/src/parser/text.rs and svgtree/text.rs): its characters with
+    // xml:space processed, their positions and rotations, and the chunks and spans they make
+    textInput(text: XNode, textStyle: Style, viewport: Viewport, scale: number): TextInput<Style> {
+        interface Item { node: XNode, style: Style, parent: Item | null, children: Array<Item | Leaf> }
+        interface Leaf { text: string, item: Item, preserve: boolean, depth: number }
+        const leaves: Leaf[] = [];
+        const preserveOf = (node: XNode, inherited: boolean): boolean => node.attrs['xml:space'] === undefined ? inherited : node.attrs['xml:space'] === 'preserve';
+        // (newlines and tabs become spaces, runs of spaces collapse unless preserved)
+        const trim = (value: string, preserve: boolean): string => {
+            value = value.replace(/[\r\n\t]/g, ' ');
+            return preserve ? value : value.replace(/ {2,}/g, ' ');
+        };
+        const allText = (node: XNode): string => node.content ? node.content.map(c => typeof c === 'string' ? c : allText(c)).join('')
+            : node.text + node.children.map(allText).join('');
+
+        let preserve = false;
+        for (let p: XNode | undefined = text; p; p = p.parent) if (p.attrs['xml:space'] !== undefined) {
+            preserve = p.attrs['xml:space'] === 'preserve';
+            break;
+        }
+        const build = (node: XNode, style: Style, parent: Item | null, preserve: boolean, depth: number): Item => {
+            const item: Item = { node, style, parent, children: [] };
+            for (const child of node.content ?? []) {
+                if (typeof child === 'string') {
+                    const leaf = { text: trim(child, preserve), item, preserve, depth };
+                    item.children.push(leaf);
+                    leaves.push(leaf);
+                    continue;
+                }
+                const name = child.name === 'a' ? 'tspan' : child.name;
+                if (!child.svg || !['tspan', 'tref', 'textPath'].includes(name) || (name === 'textPath' && node !== text)) continue;
+                const childPreserve = preserveOf(child, preserve);
+                const childItem = name === 'tref' ? { node: child, style: this.computeStyle(child, style), parent: item, children: [] as Array<Item | Leaf> }
+                    : build(child, this.computeStyle(child, style), item, childPreserve, depth + 1);
+                if (name === 'tref') {
+                    const target = this.reference(this.href(child));
+                    const value = target && target.svg && SVG_ELEMENTS.has(target.name) ? allText(target) : '';
+                    if (value) {
+                        const leaf = { text: trim(value, childPreserve), item: childItem, preserve: childPreserve, depth: depth + 1 };
+                        childItem.children.push(leaf);
+                        leaves.push(leaf);
+                    }
+                }
+                item.children.push(childItem);
+            }
+            return item;
+        };
+        const root = build(text, textStyle, null, preserve, 0);
+
+        // spaces at the ends, and between the text nodes, like usvg (which mimics Chrome)
+        const dropFirst = (leaf: Leaf): void => { if (leaf.text[0] === ' ') leaf.text = leaf.text.slice(1); };
+        const dropLast = (leaf: Leaf): void => { if (leaf.text.endsWith(' ')) leaf.text = leaf.text.slice(0, -1); };
+        if (leaves.length === 1) {
+            const leaf = leaves[0];
+            if (!leaf.preserve) {
+                if (leaf.text === ' ') leaf.text = '';
+                else {
+                    dropFirst(leaf);
+                    dropLast(leaf);
+                }
+            }
+        } else {
+            let lastNonEmpty: Leaf | null = null;
+            for (let i = 0; i < leaves.length - 1; i++) {
+                let a = leaves[i];
+                const b = leaves[i + 1], depthA = leaves[i].depth, depthB = b.depth;
+                if (!a.text && lastNonEmpty) a = lastNonEmpty;
+                const c1 = a.text[0], c2 = a.text[a.text.length - 1], c3 = b.text[0], c4 = b.text[b.text.length - 1];
+                if (depthA < depthB) {
+                    if (c3 === ' ' && !b.preserve) dropFirst(b);
+                } else if (c2 === ' ' && c2 === c3) {
+                    if (!a.preserve && !b.preserve) dropLast(a);
+                    else if (a.preserve && !b.preserve) dropFirst(b);
+                }
+                const first = i === 0, last = i === leaves.length - 2;
+                if (first && c1 === ' ' && !a.preserve && a.text) dropFirst(a);
+                else if (last && c4 === ' ' && b.text && !b.preserve) dropLast(b);
+                if (last && c2 === ' ' && a.text && !b.text) dropLast(a);
+                if (a.text.trim()) lastNonEmpty = a;
+            }
+        }
+
+        // characters (code points) per leaf and item
+        const codepoints = new Map<Leaf, number[]>();
+        for (const leaf of leaves) codepoints.set(leaf, Array.from(leaf.text, c => c.codePointAt(0) as number));
+        const count = (item: Item): number => item.children.reduce((n, c) => n + ('text' in c ? (codepoints.get(c) as number[]).length : count(c)), 0);
+        const total = count(root);
+        const fontSizeOf = (item: Item): number => parseFloat(item.style['font-size'] as string);
+
+        // x, y, dx and dy of text and tspan elements for their characters (later ones override), rotate of all
+        const xs = new Array<number | null>(total).fill(null), ys = new Array<number | null>(total).fill(null);
+        const dx = new Array<number>(total).fill(0), dy = new Array<number>(total).fill(0), rotations = new Array<number>(total).fill(0);
+        const lengths = (value: string | undefined, axis: 'x' | 'y', item: Item): number[] | null =>
+            value === undefined ? null : value.split(/[\s,]+/).filter(Boolean).map(v => parseLength(v, viewport, fontSizeOf(item), axis));
+        let offset = 0, lastAngle = 0;
+        const positions = (item: Item): void => {
+            const chars = count(item), name = item.node.name;
+            if (name === 'text' || name === 'tspan' || name === 'tref' || name === 'a') {
+                for (const [list, value, axis] of [[xs, item.node.attrs.x, 'x'], [ys, item.node.attrs.y, 'y'], [dx, item.node.attrs.dx, 'x'], [dy, item.node.attrs.dy, 'y']] as const) {
+                    const parsed = lengths(value, axis, item);
+                    if (parsed) for (let i = 0; i < Math.min(parsed.length, chars); i++) (list as Array<number | null>)[offset + i] = parsed[i];
+                }
+            }
+            // (a list of numbers, ignored if anything else is in it)
+            const rotate = item.node.attrs.rotate?.trim();
+            if (rotate !== undefined && rotate.split(/[\s,]+/).filter(Boolean).every(v => NUMBER_OR_PERCENTAGE.test(v) && !v.endsWith('%'))) {
+                const angles = parseNumberList(rotate);
+                for (let i = 0; i < chars; i++) {
+                    if (i < angles.length) lastAngle = angles[i];
+                    rotations[offset + i] = lastAngle;
+                }
+            }
+            for (const child of item.children) {
+                if ('text' in child) offset += (codepoints.get(child) as number[]).length;
+                else positions(child);
+            }
+        };
+        positions(root);
+
+        // the chunks: new ones at absolute positions, and for text paths
+        const chunks: ChunkInput<Style>[] = [];
+        let chars = 0, split = false, flow: { path: PathCommand[], startOffset: number } | null = null;
+        const visible = (item: Item): boolean => item.style.display !== 'none' && this.passesConditions(item.node);
+        const decoration = (item: Item, kind: string): Style | null => {
+            const has = (style: Style): boolean => (style['text-decoration'] ?? '').split(/\s+/).includes(kind);
+            let found = false;
+            for (let p: Item | null = item; p; p = p.parent) if (has(p.style)) found = true;
+            for (let n = text.parent; !found && n && n.name !== '#root'; n = n.parent) if (has(this.styleOf(n))) found = true;
+            if (!found) return null;
+            for (let p: Item | null = item; p; p = p.parent) if (has(p.style) || p.node === text) return p.style;
+            return textStyle;
+        };
+        const span = (item: Item, start: number, end: number): SpanInput<Style> => {
+            const style = item.style, fontSize = fontSizeOf(item);
+            const shifts: Array<number | 'sub' | 'super'> = [];
+            for (let p: Item | null = item; p && p.node !== text; p = p.parent) {
+                const value = p.style['baseline-shift']?.trim();
+                if (value === undefined) continue;
+                if (value === 'sub' || value === 'super') shifts.push(value);
+                else if (/%$/.test(value)) shifts.push(fontSizeOf(p) * parseFloat(value) / 100);
+                else if (LENGTH.test(value)) shifts.push(parseLength(value, viewport, fontSizeOf(p), 'y'));
+                else shifts.push(0);
+            }
+            let dominant = style['dominant-baseline'] as string;
+            if (dominant === 'no-change') dominant = (item.parent ? item.parent.style['dominant-baseline'] : 'auto') as string;
+            const textLength = item.node.attrs.textLength !== undefined && LENGTH.test(item.node.attrs.textLength.trim())
+                ? parseLength(item.node.attrs.textLength, viewport, fontSize, 'x') : null;
+            const spacing = (value: string | undefined): number => !value || value === 'normal' ? 0 : parseLength(value, viewport, fontSize, 'x');
+            const stretch = ({ 'ultra-condensed': 1, 'extra-condensed': 2, condensed: 3, narrower: 3, 'semi-condensed': 4, 'semi-expanded': 6, expanded: 7,
+                wider: 7, 'extra-expanded': 8, 'ultra-expanded': 9 } as Record<string, number>)[style['font-stretch'] as string] ?? 5;
+            const fontStyle = style['font-style'] === 'italic' || style['font-style'] === 'oblique' ? style['font-style'] as FontStyle : 'normal';
+            return {
+                start, end, paint: style, visible: style.visibility === 'visible',
+                font: { families: parseFontFamilies(style['font-family'] ?? ''), weight: Number(style['font-weight']), style: fontStyle, stretch },
+                fontSize, smallCaps: style['font-variant'] === 'small-caps',
+                kerning: !(style.kerning !== undefined && style.kerning !== 'auto' && parseLength(style.kerning, viewport, fontSize, 'x') === 0) && style['font-kerning'] !== 'none',
+                letterSpacing: spacing(style['letter-spacing']), wordSpacing: spacing(style['word-spacing']),
+                textLength: textLength !== null && textLength >= 0 ? textLength : null, spacingAndGlyphs: item.node.attrs.lengthAdjust === 'spacingAndGlyphs',
+                dominantBaseline: dominant as Baseline, alignmentBaseline: (style['alignment-baseline'] ?? 'auto') as Baseline,
+                baselineShift: shifts.every(v => v === 0) ? [] : shifts,
+                underline: decoration(item, 'underline'), overline: decoration(item, 'overline'), lineThrough: decoration(item, 'line-through'),
+            };
+        };
+        const collect = (item: Item): void => {
+            for (const child of item.children) {
+                if (!('text' in child)) {
+                    if (child.node.name === 'textPath') {
+                        const resolved = this.textPathOf(child.node, viewport, fontSizeOf(child));
+                        if (!resolved) {
+                            chars += count(child);
+                            continue;
+                        }
+                        flow = resolved;
+                        split = true;
+                    }
+                    collect(child);
+                    flow = null;
+                    if (child.node.name === 'textPath') split = true;
+                    continue;
+                }
+                const cps = codepoints.get(child) as number[];
+                if (!visible(item) || !(fontSizeOf(item) > 0)) {
+                    chars += cps.length;
+                    continue;
+                }
+                let current: SpanInput<Style> | null = null;
+                for (const cp of cps) {
+                    let chunk = chunks[chunks.length - 1];
+                    if (xs[chars] !== null || ys[chars] !== null || split || !chunk) {
+                        chunk = { x: xs[chars], y: ys[chars], anchor: (item.style['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end', codepoints: [], offset: chars, spans: [], path: flow };
+                        chunks.push(chunk);
+                        current = null;
+                    }
+                    split = false;
+                    if (!current) chunk.spans.push(current = span(item, chunk.codepoints.length, chunk.codepoints.length));
+                    chunk.codepoints.push(cp);
+                    current.end++;
+                    chars++;
+                }
+            }
+        };
+        collect(root);
+
+        const mode = textStyle['writing-mode'];
+        return { chunks, dx, dy, rotate: rotations, vertical: mode === 'tb' || mode === 'tb-rl' || mode === 'vertical-rl' || mode === 'vertical-lr', scale };
+    }
+
+    // a textPath's path (the shape it references, with its transform) and its start offset
+    textPathOf(node: XNode, viewport: Viewport, fontSize: number): { path: PathCommand[], startOffset: number } | null {
+        const target = this.reference(this.href(node));
+        const raw = target ? shapePath(target, viewport, fontSize) : null;
+        if (!target || !raw || !raw.length) return null;
+        const m = target.attrs.transform ? originTransform(target.attrs.transform, target.attrs['transform-origin'], viewport) : null;
+        const path = m ? raw.map(c => [c[0], ...transformPoints(c.slice(1) as number[], m)] as PathCommand) : raw;
+        const offset = (node.attrs.startOffset ?? '').trim();
+        const startOffset = /%$/.test(offset) ? pathLength(path) * parseFloat(offset) / 100 : parseLength(offset || '0', viewport, fontSize, 'x');
+        return { path, startOffset: Number.isFinite(startOffset) ? startOffset : 0 };
+    }
+
+    // draws a text element's spans: their over- and underlines, glyphs, then line-throughs, painted with the bounding
+    // box of the text
+    renderText(node: XNode, ctx: Context): void {
+        // (the scale in the document, like usvg's)
+        const m = ctx.matrix, layout = this.textOf(node, ctx.style as Style, ctx.viewport, Math.sqrt(Math.hypot(m[0], m[1]) * Math.hypot(m[2], m[3])) / this.outputScale);
+        if (!layout) return;
+        const crisp = (ctx.style as Style)['text-rendering'] === 'optimizeSpeed';
+        const paint = (path: PathCommand[], style: Style, order: string | undefined): void => {
+            const textStyle: Style = { ...style, 'fill-rule': 'nonzero', 'paint-order': order, 'marker-start': 'none', 'marker-mid': 'none', 'marker-end': 'none', 'shape-rendering': crisp ? 'crispEdges' : 'auto', visibility: 'visible' };
+            this.paintPath(path, node, { ...ctx, style: textStyle }, layout.bbox);
+        };
+        for (const span of layout.spans) {
+            if (!span.visible) continue;
+            for (const d of span.before) paint(d.path, d.paint, 'normal');
+            if (span.glyphs.length) paint(span.glyphs, span.paint, span.paint['paint-order']);
+            for (const glyph of span.colors) this.renderColorGlyph(glyph, span.paint, node, ctx, paint);
+            for (const d of span.after) paint(d.path, d.paint, 'normal');
+        }
+    }
+
+    // a color glyph: COLR version 0 layers as outlines in their colors (the text color is the fill, if it's a color),
+    // version 1 paints and bitmaps as images, SVG glyphs as their documents' elements
+    renderColorGlyph(g: SpanOutput<Style>['colors'][number], style: Style, node: XNode, ctx: Context, paint: (path: PathCommand[], style: Style, order: string) => void): void {
+        const font = g.face.font, tables = colorTablesOf(font);
+        const m = multiply(ctx.matrix, g.matrix);
+        const fill = parseColor(style.fill === 'currentColor' ? style.color : style.fill) ?? [0, 0, 0, 1];
+        const foreground = (Math.round(fill[0] * 255) << 24 | Math.round(fill[1] * 255) << 16 | Math.round(fill[2] * 255) << 8 | Math.round(fill[3] * 255)) >>> 0;
+        const hex = (color: number): string => '#' + color.toString(16).padStart(8, '0');
+        const image = (raster: RasterImage, matrix: Matrix): void => drawRaster(ctx.layer, raster, matrix, 2);
+
+        if (g.kind === 'layers') {
+            for (const layer of tables.layers?.(g.glyph) ?? []) {
+                const path: PathCommand[] = [];
+                placeOutline(path, font.outline(layer.glyph), g.matrix);
+                paint(path, { ...style, fill: hex(layer.color ?? foreground), 'fill-opacity': '1', stroke: 'none' }, 'normal');
+            }
+        } else if (g.kind === 'paint' && tables.paints) {
+            const s = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
+            if (!(s > 0)) return;
+            const bitmap = renderPaintGlyph(font, tables.paints, g.glyph, s, 0, foreground, glyph => font.outline(glyph), (path, clip) => rasterizeGlyph(path, 1, 0, clip));
+            if (!bitmap) return;
+            const premultiplied = new Float32Array(bitmap.data.length);
+            for (let i = 0; i < premultiplied.length; i++) premultiplied[i] = bitmap.data[i] / 255;
+            image({ width: bitmap.width, height: bitmap.height, pixels: bitmap.data, premultiplied }, multiply(m, [1 / s, 0, 0, -1 / s, bitmap.left / s, bitmap.top / s]));
+        } else if (g.kind === 'bitmap') {
+            // (from the strike for the size in pixels)
+            const s = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
+            const bitmap = tables.bitmaps(Math.round(s * font.unitsPerEm))?.(g.glyph) ?? tables.bitmaps(g.fontSize)?.(g.glyph);
+            if (!bitmap) return;
+            let decoded;
+            try {
+                decoded = decodePNG(bitmap.png);
+            } catch {
+                return;
+            }
+            const k = font.unitsPerEm / bitmap.ppem;
+            let left = bitmap.left * k, top = bitmap.top * k;
+            // sbix bitmaps are shifted by the outline's lower left corner, or (without one) down like macOS seems to
+            // (like usvg)
+            if (font.tables.sbix && !font.tables.CBDT) {
+                let xMin = Infinity, yMin = Infinity;
+                for (const c of font.outline(g.glyph)) for (let i = 1; i + 1 < c.length; i += 2) {
+                    xMin = Math.min(xMin, c[i] as number);
+                    yMin = Math.min(yMin, c[i + 1] as number);
+                }
+                if (!Number.isFinite(xMin)) xMin = yMin = 0;
+                left -= xMin;
+                top += Math.abs(yMin) < 1e-3 ? -0.128 * font.unitsPerEm : yMin;
+            }
+            image(decoded, multiply(m, [k, 0, 0, -k, left, top]));
+        } else if (g.kind === 'svg') {
+            const doc = this.glyphDocument(font, tables.svg?.(g.glyph) ?? null);
+            // (y down, in font units; context-fill and context-stroke are the text's)
+            doc?.renderElement(`glyph${g.glyph}`, multiply(m, [1, 0, 0, -1, 0, 0]), ctx.layer, ctx.depth + 1,
+                { style, matrix: ctx.matrix, viewport: ctx.viewport, bbox: () => this.textOf(node, ctx.style as Style, ctx.viewport)?.bbox ?? null });
+        }
+    }
+
+    // the document of an SVG glyph, parsed once
+    glyphDocument(font: Font, data: Uint8Array | null): Document | null {
+        if (!data) return null;
+        let documents = glyphDocuments.get(font);
+        if (!documents) glyphDocuments.set(font, documents = new Map<number, Document | null>());
+        if (!documents.has(data.byteOffset)) {
+            let doc: Document | null = null;
+            try {
+                const root = parseXML(svgText(data)).children.find(n => n.name === 'svg' && n.svg);
+                if (root) doc = new Document(root);
+            } catch {
+                doc = null;
+            }
+            documents.set(data.byteOffset, doc);
+        }
+        const doc = documents.get(data.byteOffset) ?? null;
+        if (doc) {
+            doc.images = this.images;
+            doc.budget = this.budget;
+        }
+        return doc;
+    }
+
+    // renders the element with an id (like an SVG glyph) with a matrix, styled by its ancestors
+    renderElement(id: string, matrix: Matrix, layer: Layer, depth: number, contextElement?: ContextElement): void {
+        const node = this.ids.get(id);
+        if (!node || depth > 32) return;
+        const style = node.parent && node.parent.name !== '#root' ? this.styleOf(node.parent) : null;
+        const { width, height } = documentSize(this.root);
+        const ctx = { matrix, style, viewport: { width, height }, layer, depth, instanced: true, contextElement };
+        // (an svg element is drawn like a group: glyphs aren't clipped to a viewport)
+        if (node.name === 'svg') this.renderChildren(node, { ...ctx, style: this.computeStyle(node, style) });
+        else this.renderNode(node, ctx);
+    }
+
+    // the outlines of a text element, for clip paths
+    textOutlines(node: XNode, style: Style, viewport: Viewport): PathCommand[] | null {
+        const layout = this.textOf(node, style, viewport);
+        if (!layout) return null;
+        const path: PathCommand[] = [];
+        for (const span of layout.spans) if (span.visible) for (const part of [...span.before, { path: span.glyphs }, ...span.after]) path.push(...part.path);
+        return path.length ? path : null;
+    }
+
     // an image: decoded rasters (by their href, from render()'s caller) or SVGs in data URIs, fitted into its rectangle
     // like resvg's (crates/usvg/src/parser/image.rs); other references (files, URLs) aren't loaded
     renderImage(node: XNode, ctx: Context): void {
@@ -929,18 +1376,12 @@ class Document {
             if (nested) {
                 nested.document.images = this.images;
                 nested.document.budget = this.budget;
+                nested.document.given = this.given;
                 nested.document.renderRoot(matrix, layer, ctx.depth + 1, true);
                 return;
             }
-            const pixels = raster as RasterImage;
-            const inverse = invert(matrix);
-            const coverage = inverse && rasterize([transformPoints([0, 0, pixels.width, 0, pixels.width, pixels.height, 0, pixels.height], matrix)], false, layer.width, layer.height);
-            if (!coverage) return;
             const rendering = style['image-rendering'];
-            // (like tiny-skia, the nearest pixel where the image is only translated)
-            const translated = Math.abs(matrix[0] - 1) < 1e-6 && Math.abs(matrix[3] - 1) < 1e-6 && matrix[1] === 0 && matrix[2] === 0;
-            const filter = translated || /^(optimizeSpeed|crisp-edges|pixelated)$/i.test(rendering || '') ? 0 : rendering === 'smooth' ? 1 : 2;
-            layer.fill(coverage, sampler(premultiplied(pixels), pixels.width, pixels.height, inverse, false, filter, 1));
+            drawRaster(layer, raster as RasterImage, matrix, /^(optimizeSpeed|crisp-edges|pixelated)$/i.test(rendering || '') ? 0 : rendering === 'smooth' ? 1 : 2);
         };
 
         // (slice overflows the rectangle, it's clipped to it)
@@ -974,6 +1415,7 @@ class Document {
     // renders the document's root with a matrix mapping its size (as an image) to device pixels
     renderRoot(matrix: Matrix, layer: Layer, depth: number, instanced = false): void {
         const { root } = this;
+        this.outputScale = Math.sqrt(Math.hypot(matrix[0], matrix[1]) * Math.hypot(matrix[2], matrix[3])) || 1;
         const viewBox = parseViewBox(root.attrs.viewBox);
         const { width, height } = documentSize(root);
         let matrix0 = matrix;
@@ -994,7 +1436,7 @@ class Document {
     }
 
     // paints a shape's fill, stroke and markers
-    paintPath(path: PathCommand[], node: XNode, ctx: Context): void {
+    paintPath(path: PathCommand[], node: XNode, ctx: Context, box?: BBox | null): void {
         const { matrix } = ctx;
         const style = ctx.style as Style;
         if (style.visibility === 'hidden' || style.visibility === 'collapse') return;
@@ -1002,7 +1444,8 @@ class Document {
         const scale = Math.sqrt(Math.abs(matrix[0] * matrix[3] - matrix[1] * matrix[2])) || 1e-9;
         const tolerance = 0.1 / scale;
         const subpaths = flatten(path, tolerance);
-        const bbox = boundingBox(subpaths);
+        // (text is painted with the bounding box of its text element)
+        const bbox = box === undefined ? boundingBox(subpaths) : box;
 
         for (const part of paintOrder(style['paint-order'])) {
             if (part === 'fill') this.paintFill(subpaths, bbox, node, ctx);
@@ -1779,12 +2222,14 @@ class Document {
                 shape = target;
             }
 
-            const path = shapePath(shape, context.viewport, 16);
+            // (text is filled nonzero)
+            const text = shape.name === 'text';
+            const path = text ? this.textOutlines(shape, childStyle, context.viewport) : shapePath(shape, context.viewport, 16);
             if (!path) continue;
 
             const scale = Math.sqrt(Math.abs(childMatrix[0] * childMatrix[3] - childMatrix[1] * childMatrix[2])) || 1e-9;
             const polygons = flatten(path, 0.1 / scale).map(points => transformPoints(points.points, childMatrix));
-            const coverage = rasterize(polygons, this.computeStyle(shape, childStyle)['clip-rule'] === 'evenodd', width, height);
+            const coverage = rasterize(polygons, !text && this.computeStyle(shape, childStyle)['clip-rule'] === 'evenodd', width, height);
             if (!coverage) continue;
 
             // a child's own clip-path intersects with its shape
@@ -1812,13 +2257,21 @@ class Document {
         return alpha;
     }
 
+    // a text element's bounding box (from the fonts' metrics) as a path
+    textBox(node: XNode, viewport: Viewport): PathCommand[] | null {
+        const layout = this.textOf(node, this.styleOf(node), viewport);
+        if (!layout) return null;
+        const { x, y, width, height } = layout.bbox;
+        return [['M', x, y], ['L', x + width, y], ['L', x + width, y + height], ['L', x, y + height], ['Z']];
+    }
+
     groupBoundingBox(node: XNode, viewport: Viewport, matrix: Matrix = [1, 0, 0, 1, 0, 0]): BBox | null {
         let box: BBox | null = null;
         const visit = (n: XNode, matrix: Matrix): void => {
             // (an image's bounding box is its rectangle)
             const image = n.name === 'image' ? this.imageOf(n, viewport) : null;
             const path = image ? [['M', image.x, image.y], ['L', image.x + image.width, image.y], ['L', image.x + image.width, image.y + image.height],
-                ['L', image.x, image.y + image.height], ['Z']] as PathCommand[] : shapePath(n, viewport, 16);
+                ['L', image.x, image.y + image.height], ['Z']] as PathCommand[] : n.name === 'text' ? this.textBox(n, viewport) : shapePath(n, viewport, 16);
             if (path) {
                 const points = flatten(path, 0.1).map(p => transformPoints(p.points, matrix));
                 const b = boundingBox(points.map(p => ({ points: p })));
@@ -3051,6 +3504,103 @@ function parseTransform(value: string): Matrix {
     }
 
     return matrix;
+}
+
+// the font shorthand (CSS only): style, variant, weight and stretch in any order (the others reset), size (with an
+// ignored line height) and families; null if invalid
+function fontShorthand(value: string): Record<string, string> | null {
+    const out: Record<string, string> = { 'font-style': 'normal', 'font-variant': 'normal', 'font-weight': 'normal', 'font-stretch': 'normal', 'font-kerning': 'auto' };
+    const tokens = value.trim().split(/\s+/);
+    let i = 0;
+    for (; i < tokens.length; i++) {
+        const t = tokens[i];
+        if (t === 'normal') continue;
+        if (t === 'italic' || t === 'oblique') out['font-style'] = t;
+        else if (t === 'small-caps') out['font-variant'] = t;
+        else if (/^(bold|bolder|lighter|[1-9]00)$/.test(t)) out['font-weight'] = t;
+        else if (/^(ultra|extra|semi)?-?(condensed|expanded)$/.test(t)) out['font-stretch'] = t;
+        else break;
+    }
+    const size = tokens[i]?.split('/')[0];
+    const family = tokens.slice(i + 1).join(' ');
+    if (!size || !family || !(LENGTH.test(size) || /^(xx-small|x-small|small|medium|large|x-large|xx-large|smaller|larger)$/.test(size))) return null;
+    out['font-size'] = size;
+    out['font-family'] = family;
+    return out;
+}
+
+// a font-size in pixels: lengths (em, ex and percentages of the parent's), keywords (medium is 16 pixels, 1.2 times
+// as large per step, smaller and larger relative to the parent's); invalid values keep the parent's
+function fontSize(value: string, parent: number): number {
+    const v = value.trim();
+    const steps: Record<string, number> = { 'xx-small': -3, 'x-small': -2, small: -1, medium: 0, large: 1, 'x-large': 2, 'xx-large': 3 };
+    if (v in steps) return 16 * 1.2 ** steps[v];
+    if (v === 'smaller') return parent / 1.2;
+    if (v === 'larger') return parent * 1.2;
+    const match = LENGTH.exec(v);
+    if (!match) return parent;
+    const n = parseFloat(match[1]);
+    return match[2] === '%' ? n * parent / 100 : match[2] === 'em' ? n * parent : match[2] === 'ex' ? n * parent / 2 : parseLength(v, null, parent);
+}
+
+// the fonts of @font-face rules: TrueType, OpenType and WOFF ones in data: URIs, with their family, weight and style
+function embeddedFonts(css: string): FontFace[] {
+    const faces: FontFace[] = [];
+    css = stripComments(css);
+    for (let at = css.search(/@font-face\s*\{/i); at >= 0;) {
+        const open = css.indexOf('{', at), end = blockEnd(css, open);
+        const declarations = parseDeclarations(css.slice(open + 1, end));
+        const d = { ...declarations.normal, ...declarations.important };
+        const family = parseFontFamilies(d['font-family'] ?? '')[0];
+        const weight = d['font-weight'] === 'bold' ? 700 : /^\d+$/.test(d['font-weight'] ?? '') ? Number(d['font-weight']) : 400;
+        const style = d['font-style'] === 'italic' || d['font-style'] === 'oblique' ? d['font-style'] as FontStyle : 'normal';
+        if (family) for (const [, , url] of (d.src ?? '').matchAll(/url\(\s*(['"]?)([^'")]*)\1\s*\)/g)) {
+            const uri = dataURI(url);
+            if (!uri) continue;
+            let data: Uint8Array | null = uri.data;
+            try {
+                if (data[0] === 0x77 && data[1] === 0x4f && data[2] === 0x46 && data[3] === 0x46) data = fromWOFF(data);
+            } catch {
+                data = null;
+            }
+            const face = data && fontFace(data, { family, weight, style });
+            if (face) {
+                faces.push(face);
+                break;
+            }
+        }
+        const next = css.slice(end + 1).search(/@font-face\s*\{/i);
+        at = next < 0 ? -1 : end + 1 + next;
+    }
+    return faces;
+}
+
+// a WOFF (1) font as the TrueType or OpenType font it compresses
+function fromWOFF(data: Uint8Array): Uint8Array {
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const count = view.getUint16(12);
+    const tables: Array<{ tag: number, data: Uint8Array, checksum: number }> = [];
+    for (let i = 0; i < count; i++) {
+        const e = 44 + i * 20, offset = view.getUint32(e + 4), compressed = view.getUint32(e + 8), length = view.getUint32(e + 12);
+        const raw = data.subarray(offset, offset + compressed);
+        tables.push({ tag: view.getUint32(e), checksum: view.getUint32(e + 16), data: compressed < length ? decompress(raw, length).subarray(0, length) : raw });
+    }
+    const header = 12 + count * 16;
+    let size = header;
+    for (const t of tables) size += t.data.length + 3 & ~3;
+    const out = new Uint8Array(size), o = new DataView(out.buffer);
+    o.setUint32(0, view.getUint32(4));
+    o.setUint16(4, count);
+    let position = header;
+    tables.forEach((t, i) => {
+        o.setUint32(12 + i * 16, t.tag);
+        o.setUint32(16 + i * 16, t.checksum);
+        o.setUint32(20 + i * 16, position);
+        o.setUint32(24 + i * 16, t.data.length);
+        out.set(t.data, position);
+        position += t.data.length + 3 & ~3;
+    });
+    return out;
 }
 
 // an element's transform around its transform-origin

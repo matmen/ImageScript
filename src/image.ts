@@ -160,6 +160,15 @@ export interface SVGOptions {
      * Default: {@link Image.SVG_MODE_SCALE}
      */
     mode?: SVGScaleMode;
+    /**
+     * Fonts for `<text>` (TrueType, OpenType): each text gets the face its `font-family`, `font-weight`, `font-style`
+     * and `font-stretch` match best among them, by the names, weights and styles in the fonts (like browsers match
+     * installed fonts). Generic families (`serif`, `sans-serif`, `monospace`, ...) are the first font that fits them,
+     * other families and text without one get the first font's family; characters a face doesn't have come from the
+     * other fonts. Fonts the SVG embeds with `@font-face` (in data: URIs, also WOFF) are used too, before these for
+     * their family names. Without any fonts text isn't rendered. Default: `[]`
+     */
+    fonts?: BinaryData[];
 }
 
 /** Options of {@link Image.renderText}: the text color and layout, and its style (see {@link TextStyle}) */
@@ -2289,7 +2298,7 @@ export class Image {
      * Creates a new image from the given SVG
      * Supports shapes, paths, transforms, use/symbol, CSS styles, gradients, patterns, strokes, markers, clip paths,
      * masks, opacity, blend modes, filters (all primitives and the filter functions) and images embedded as data URIs
-     * (PNG, JPEG, GIF, WebP, SVG); text is not rendered
+     * (PNG, JPEG, GIF, WebP, SVG), and text with the given or embedded fonts (see {@link SVGOptions.fonts})
      * @param svg The SVG content
      * @param options See {@link SVGOptions}
      * @return The rendered SVG graphic
@@ -2304,7 +2313,7 @@ export class Image {
      */
     static renderSVG(svg: string | BinaryData, size?: number, mode?: SVGScaleMode): Promise<Image>;
     static async renderSVG(svg: string | BinaryData, sizeOrOptions: number | SVGOptions = 1, modeArgument: SVGScaleMode = Image.SVG_MODE_SCALE): Promise<Image> {
-        const { size = 1, mode = Image.SVG_MODE_SCALE } = isOptions(sizeOrOptions) ? sizeOrOptions : { size: sizeOrOptions, mode: modeArgument };
+        const { size = 1, mode = Image.SVG_MODE_SCALE, fonts = [] } = isOptions(sizeOrOptions) ? sizeOrOptions : { size: sizeOrOptions, mode: modeArgument };
         if (![1, 2, 3].includes(mode))
             throw new Error('Invalid SVG scaling mode');
 
@@ -2332,7 +2341,7 @@ export class Image {
             }
         }
 
-        const {width, height, pixels} = svgRenderer.render(source, mode, size, images);
+        const {width, height, pixels} = svgRenderer.render(source, mode, size, images, fonts.map(font => view(font)));
         const image = new Image(width, height);
         image.bitmap.set(pixels);
 

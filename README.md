@@ -54,7 +54,8 @@ encode as GIF, APNG or WebP, also [a frame at a time](https://imagescript.matmen
 
 - [Text rendering](https://imagescript.matmen.dev/classes/Image.html#rendertext) with TrueType and OpenType fonts,
   in every script, with color emoji
-- [SVG rendering](https://imagescript.matmen.dev/classes/Image.html#rendersvg) (no text)
+- [SVG rendering](https://imagescript.matmen.dev/classes/Image.html#rendersvg), text included (with the fonts you
+  pass or the SVG embeds)
 - [Resizing](https://imagescript.matmen.dev/classes/Image.html#resize),
   [cropping](https://imagescript.matmen.dev/classes/Image.html#crop),
   [rotating](https://imagescript.matmen.dev/classes/Image.html#rotate),

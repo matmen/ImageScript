@@ -4,6 +4,25 @@
 
 ### Features
 
+- `Image.renderSVG()` renders text (`<text>`, `<tspan>`, `<tref>`, `<textPath>`) with the fonts given as
+  `SVGOptions.fonts` and the ones the SVG embeds with `@font-face` (TrueType, OpenType and WOFF in data: URIs, which
+  win for their family names). Fonts are matched like browsers match installed ones: `font-family` by the names in
+  the fonts, then `font-stretch`, `font-style` and `font-weight` by CSS Fonts' algorithm; generic families take the
+  first font fitting them (by its panose and fixed pitch flag), other families and text without one the first font,
+  and characters a face doesn't have come from the other fonts. Laid out like resvg's (ported from usvg): chunks
+  shaped as a whole (kerning and ligatures across spans, with each span's own font), the bidirectional algorithm,
+  `x`/`y`/`dx`/`dy`/`rotate` lists, `text-anchor`, `letter-spacing`, `word-spacing`, `textLength` and `lengthAdjust`,
+  `baseline-shift` (`sub`, `super`, lengths), `dominant-baseline` and `alignment-baseline`, `text-decoration` in the
+  colors of the elements declaring it, text along paths (`startOffset`, arc lengths measured like kurbo's), vertical
+  text (`writing-mode`), `font-variant: small-caps`, `font-kerning`, the `font` shorthand, `xml:space`, and color
+  glyphs (COLR versions 0 and 1, CBDT and sbix bitmaps, SVG glyphs). Text is painted like shapes (gradients and
+  patterns with the bounding box of the whole text, strokes, `paint-order`), and counts in clip paths and in bounding
+  boxes. Variable fonts aren't supported yet. 359 of resvg's 431 text tests pass (with its test fonts), and 41 more of
+  its other tests that have text; the others need variable fonts (14), resvg's default font size of 12 pixels (instead
+  of 16), its cursive and fantasy fonts, or render as resvg doesn't (in ways browsers don't either, like conjuncts
+  broken at a font change).
+- `font-size` resolves `em`, `ex`, percentages and keywords against the parent's size for all elements (lengths in `em`
+  used the default 16 pixels when an ancestor's size was relative), and `font-weight` `bolder` and `lighter`.
 - `Image.renderSVG()` blends elements with `mix-blend-mode` (all 16 modes and `plus-lighter`, in CSS) and isolates
   groups with `isolation: isolate`, like resvg (the blend modes are the ones feBlend already used). All of resvg's 21
   mix-blend-mode and 2 isolation tests pass, up from 4 and 1.
