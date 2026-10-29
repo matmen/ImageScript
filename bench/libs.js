@@ -3,6 +3,7 @@
 // are ones the library doesn't have.
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 
@@ -11,6 +12,8 @@ const ImageScript = await import(process.env.IMAGESCRIPT === 'local' ? '../dist/
 const ImageScriptV1 = require('imagescript-v1');
 const { Jimp, ResizeStrategy } = await import('jimp');
 const sharp = (await import('sharp')).default;
+// (as many threads as ImageScript uses by default: sharp's default on glibc Linux without jemalloc, like CI's, is one)
+sharp.concurrency(Math.min(os.availableParallelism(), 8));
 const canvas = await import('@napi-rs/canvas');
 const imageJS = await import('image-js');
 const photon = require('@silvia-odwyer/photon-node');

@@ -152,6 +152,9 @@ ${table(Object.keys(results.sizes).map(k => [k, k]), LIBS, (key, lib) => results
 - Where the library lets you choose, resizing is bilinear (ImageScript 1 only has nearest neighbor), blurring is
   gaussian with a radius or sigma of 5, rotating grows the image to fit. Each library uses its own defaults
   otherwise, e.g. its PNG compression level.
+- Threads: ImageScript uses worker threads where they pay off (the processors available, at most 8), and sharp gets
+  as many (\`sharp.concurrency()\`; its default on glibc Linux without jemalloc, like on CI, is one). The other
+  libraries run on one thread.
 - [tinybench](https://github.com/tinylibs/tinybench), at least 1.5 seconds and 3 runs per measurement, every library
   in its own process.
 - The release workflow runs the benchmark for every release and commits the results, on a GitHub Actions runner;
