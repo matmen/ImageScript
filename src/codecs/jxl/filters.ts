@@ -8,10 +8,17 @@ import { mirror } from './upsample.ts';
 
 /** Gaborish on 3 w x h channels: per channel the weights of the sides and corners */
 export function gaborish(channels: Float32Array[], w: number, h: number, weights: number[]): Float32Array[] {
-    return channels.map((src, c) => {
+    const out = channels.map(() => new Float32Array(w * h));
+    gaborishRows(channels, out, w, h, weights, 0, h);
+    return out;
+}
+
+/** Gaborish of rows y0 to y1 (see gaborish) into out */
+export function gaborishRows(channels: Float32Array[], outs: Float32Array[], w: number, h: number, weights: number[], y0: number, y1: number): void {
+    channels.forEach((src, c) => {
         const w0 = weights[2 * c], w1 = weights[2 * c + 1], norm = 1 / (1 + 4 * w0 + 4 * w1);
-        const out = new Float32Array(w * h);
-        for (let y = 0; y < h; y++) {
+        const out = outs[c];
+        for (let y = y0; y < y1; y++) {
             const t = mirror(y - 1, h) * w, m = y * w, b = mirror(y + 1, h) * w;
             const at = (x: number, l: number, r: number): number =>
                 (src[m + x] + (src[t + x] + src[b + x] + src[m + l] + src[m + r]) * w0 + (src[t + l] + src[t + r] + src[b + l] + src[b + r]) * w1) * norm;
@@ -31,7 +38,6 @@ export function gaborish(channels: Float32Array[], w: number, h: number, weights
             }
             if (w > 1) out[m + w - 1] = at(w - 1, w - 2, mirror(w, w));
         }
-        return out;
     });
 }
 
@@ -184,39 +190,59 @@ const TAPS = new Int32Array(16);
  * The edge-preserving filter on 3 w x h channels
  * @param sigma the sigma of each 8x8 block (bw per row), or null for e.sigmaForModular everywhere
  */
-export function epf(channels: Float32Array[], w: number, h: number, e: EPF, sigma: Float32Array | null, bw: number): Float32Array[] {
-    let cur = channels;
-    const steps = e.iters === 3 ? [0, 1, 2] : e.iters === 2 ? [1, 2] : [1];
+/** The scratch buffers of EPF strips (of a width) */
+export interface EpfScratch {
+    diffs: Float64Array[];
+    sums: Float64Array[];
+    xs: Int32Array;
+    rows: Int32Array;
+}
+
+export function epfScratch(w: number): EpfScratch {
     // (the strips' planes are padded by 3; xs: mirrored columns from -5)
     const pw = w + 6, ph = STRIP + 6;
-    const diffs = Array.from({ length: 6 }, () => new Float64Array(pw * ph)), sums = Array.from({ length: 6 }, () => new Float64Array(pw * ph));
     const xs = new Int32Array(w + 10);
     for (let x = 0; x < xs.length; x++) xs[x] = mirror(x - 5, w);
-    const rows = new Int32Array(5);
-    for (const step of steps) {
+    return { diffs: Array.from({ length: 6 }, () => new Float64Array(pw * ph)), sums: Array.from({ length: 6 }, () => new Float64Array(pw * ph)), xs, rows: new Int32Array(5) };
+}
+
+/** EPF's passes (indices into its steps) */
+export const epfSteps = (e: EPF): number[] => e.iters === 3 ? [0, 1, 2] : e.iters === 2 ? [1, 2] : [1];
+
+/** The number of strips EPF filters a height in, each separately (epfStrip) */
+export const epfStrips = (h: number): number => Math.ceil(h / STRIP);
+
+export function epf(channels: Float32Array[], w: number, h: number, e: EPF, sigma: Float32Array | null, bw: number): Float32Array[] {
+    let cur = channels;
+    const scratch = epfScratch(w);
+    for (const step of epfSteps(e)) {
         const out = [new Float32Array(w * h), new Float32Array(w * h), new Float32Array(w * h)];
-        const { u, plus } = STEPS[step], n = u.length / 2;
-        const stepMul = step === 0 ? e.pass0SigmaScale : step === 2 ? e.pass2SigmaScale : 1;
-        const [s0, s1, s2] = e.channelScale;
-        const [i0, i1, i2] = cur;
-        for (let y0 = 0; y0 < h; y0 += STRIP) {
-            const strip = Math.min(STRIP, h - y0);
-            // the weighted differences to each displacement at q (padded: q + 3), summed over the plus around each p
-            for (let k = 0; k < n; k++) {
-                const ux = u[2 * k], uy = u[2 * k + 1], d = diffs[k], sum = sums[k];
-                for (let py = 0; py < strip + 6; py++) {
-                    diffRow(i0, i1, i2, mirror(y0 + py - 3, h) * w, mirror(y0 + py - 3 + uy, h) * w, xs, ux, d, py * pw, pw, s0, s1, s2);
-                }
-                if (!plus) sum.set(d);
-                else for (let py = 1; py < strip + 5; py++) plusRow(d, sum, py * pw, pw);
-            }
-            for (let ry = 0; ry < strip; ry++) {
-                const y = y0 + ry;
-                for (let k = 0; k < 5; k++) rows[k] = mirror(y + k - 2, h) * w;
-                outputRow(cur, out, y, w, sums, (ry + 3) * pw + 3, pw, u, rows, xs, sigma, (y >> 3) * bw, e.sigmaForModular, stepMul, e.borderSadMul);
-            }
-        }
+        for (let strip = 0; strip < epfStrips(h); strip++) epfStrip(cur, out, w, h, e, sigma, bw, step, strip, scratch);
         cur = out;
     }
     return cur;
+}
+
+/** A strip of a pass of EPF (step: its index into the steps), of cur into out */
+export function epfStrip(cur: Float32Array[], out: Float32Array[], w: number, h: number, e: EPF, sigma: Float32Array | null, bw: number, step: number, index: number, scratch: EpfScratch): void {
+    const pw = w + 6, { diffs, sums, xs, rows } = scratch;
+    const { u, plus } = STEPS[step], n = u.length / 2;
+    const stepMul = step === 0 ? e.pass0SigmaScale : step === 2 ? e.pass2SigmaScale : 1;
+    const [s0, s1, s2] = e.channelScale;
+    const [i0, i1, i2] = cur;
+    const y0 = index * STRIP, strip = Math.min(STRIP, h - y0);
+    // the weighted differences to each displacement at q (padded: q + 3), summed over the plus around each p
+    for (let k = 0; k < n; k++) {
+        const ux = u[2 * k], uy = u[2 * k + 1], d = diffs[k], sum = sums[k];
+        for (let py = 0; py < strip + 6; py++) {
+            diffRow(i0, i1, i2, mirror(y0 + py - 3, h) * w, mirror(y0 + py - 3 + uy, h) * w, xs, ux, d, py * pw, pw, s0, s1, s2);
+        }
+        if (!plus) sum.set(d);
+        else for (let py = 1; py < strip + 5; py++) plusRow(d, sum, py * pw, pw);
+    }
+    for (let ry = 0; ry < strip; ry++) {
+        const y = y0 + ry;
+        for (let k = 0; k < 5; k++) rows[k] = mirror(y + k - 2, h) * w;
+        outputRow(cur, out, y, w, sums, (ry + 3) * pw + 3, pw, u, rows, xs, sigma, (y >> 3) * bw, e.sigmaForModular, stepMul, e.borderSadMul);
+    }
 }

@@ -51,6 +51,7 @@ try {
         if (r.isolated !== isolated) problems.push(`crossOriginIsolated ${r.isolated}`);
         if (r.single !== r.threaded) problems.push('threads wrote a different file');
         if (r.jxlSingle !== r.jxlThreaded) problems.push('threads wrote a different JPEG XL');
+        if (r.decodeSingle !== r.decodeThreaded) problems.push('threads decoded a JPEG XL differently');
         if (isolated ? workers < 2 : workers) problems.push(`${workers} workers started`);
         for (const [step, result] of Object.entries(r.smoke ?? {})) if (String(result).startsWith('FAIL')) problems.push(`${step}: ${result}`);
         console.log(`${isolated ? 'cross-origin isolated' : 'not isolated'}: ${workers} workers, ${problems.length ? problems.join('\n  ') : 'ok'}`);

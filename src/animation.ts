@@ -3,6 +3,7 @@ import * as gifCodec from './codecs/gif.ts';
 import * as png from './codecs/png.ts';
 import * as webp from './codecs/webp.ts';
 import * as jxl from './codecs/jxl.ts';
+import { availableThreads } from './util/threads.ts';
 import { BinaryData, view } from './util/mem.ts';
 import { Image, ResizeMode, ResizeOptions } from './image.ts';
 import { Frame } from './frame.ts';
@@ -45,6 +46,8 @@ export interface AnimationDecodeOptions {
     maxPixels?: number;
     /** Whether to convert the colors of frames with an embedded ICC profile (APNGs, WebPs) to sRGB, like `applyColorProfile` of {@link Image.decode}. Default: `true` */
     applyColorProfile?: boolean;
+    /** At most this many worker threads decode in parallel, like `threads` of {@link Image.decode}. Default: the processors available, at most 8 */
+    threads?: number;
 }
 
 /** The options all animation encoders have */
@@ -417,7 +420,8 @@ export class Animation extends Array<Frame> {
      * @ignore
      */
     private static async __decode__(input: BinaryData, onlyFirstFrameOrOptions: boolean | AnimationDecodeOptions): Promise<Animation> {
-        const { onlyFirstFrame: onlyExtractFirstFrame = false, maxPixels = MAX_PIXELS, applyColorProfile = true } = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions : { onlyFirstFrame: onlyFirstFrameOrOptions };
+        const { onlyFirstFrame: onlyExtractFirstFrame = false, maxPixels = MAX_PIXELS, applyColorProfile = true, threads = Math.max(1, Math.min(availableThreads(), 8)) } = isOptions(onlyFirstFrameOrOptions) ? onlyFirstFrameOrOptions : { onlyFirstFrame: onlyFirstFrameOrOptions };
+        if (!Number.isInteger(threads) || threads < 1) throw new RangeError(`threads must be a positive integer, not ${threads}`);
         const profile = (frames: Frame[], icc: Uint8Array | undefined): Frame[] => {
             const transform = applyColorProfile && icc ? profileTransform(icc) : null;
             if (transform) for (const frame of frames) transform(frame.bitmap);
@@ -448,7 +452,7 @@ export class Animation extends Array<Frame> {
         if (type === 'jxl') {
             const frames: Frame[] = [];
             let loopCount = -1;
-            for (const decoded of jxl.frames(data, maxPixels)) {
+            for await (const decoded of jxl.frames(data, maxPixels, 'reinhard', threads)) {
                 const frame = new Frame(decoded.width, decoded.height, decoded.duration, 0, 0, Frame.DISPOSAL_BACKGROUND);
                 frame.bitmap = decoded.pixels;
                 frames.push(frame.__orient__(decoded.orientation));

@@ -8,14 +8,15 @@ import { BitReader } from './bits.ts';
 import { ImageHeader, EXTRA_ALPHA } from './headers.ts';
 import {
     FrameHeader, TOC, frameHeader, toc, passShifts, FRAME_LF, FRAME_REGULAR, FRAME_SKIP_PROGRESSIVE, BLEND_REPLACE, BLEND_ADD,
-    BLEND_BLEND, BLEND_MULADD, BLEND_MUL, FLAG_PATCHES, FLAG_SPLINES, FLAG_NOISE, FLAG_USE_LF_FRAME
+    BLEND_BLEND, BLEND_MULADD, BLEND_MUL, FLAG_PATCHES, FLAG_SPLINES, FLAG_NOISE, FLAG_USE_LF_FRAME, type EPF
 } from './frame-header.ts';
 import { ModularImage, Channel, MAConfig, channel, readTree, decodeModular } from './modular.ts';
 import { upsample } from './upsample.ts';
-import { gaborish, epf } from './filters.ts';
-import { VarDCT, VarDCTGlobal, readVarDCTGlobal } from './vardct.ts';
+import { gaborish, gaborishRows, epf, epfStrip, epfScratch, epfSteps, epfStrips } from './filters.ts';
+import { VarDCT, VarDCTGlobal, readVarDCTGlobal, type VarDCTShared } from './vardct.ts';
+import { runChunks, shared, type ChunkTask, type Thread } from '../../util/threads.ts';
 import { Patch, Splines, readPatches, applyPatches, readSplines, renderSplines, readNoise, renderNoise } from './features.ts';
-import { ColorOutput } from './color.ts';
+import { ColorOutput, xybToBytes } from './color.ts';
 import { Blending, performBlending, PB_REPLACE, PB_ADD, PB_BLEND_ABOVE, PB_ADD_ABOVE, PB_MUL } from './blend.ts';
 
 /** Float planes: the 3 color channels (or 1), then the extra channels */
@@ -79,7 +80,18 @@ interface LfGlobal {
 }
 
 /** Reads a frame (its header at r) and renders it */
-export function decodeFrame(d: Uint8Array, r: BitReader, state: DecoderState): Frame & { end: number } {
+/** Worker threads decoding frames' pass groups (null without them, or once they failed) */
+export interface FrameThreads {
+    threads: Thread[] | null;
+    /** the codestream in shared memory */
+    data: Uint8Array | null;
+}
+
+// (frames below this many pixels decode faster without threads, which take about 0.1 s to start)
+const MIN_THREADED_PIXELS = 1024 * 1024;
+
+/** Decodes a frame (at, read by r), the pass groups in threads if there are and the frame is large enough */
+export async function decodeFrame(d: Uint8Array, r: BitReader, state: DecoderState, at: number, pool: FrameThreads): Promise<Frame & { end: number }> {
     const image = state.image;
     const f = frameHeader(r, image);
     const t = toc(r, f);
@@ -104,24 +116,44 @@ export function decodeFrame(d: Uint8Array, r: BitReader, state: DecoderState): F
         vardct?.readHfMetadata(gr, g, lf.tree);
     }
     // HfGlobal
-    if (vardct) vardct.readHfGlobal(sections.get(1 + f.numLfGroups), lf.tree);
-    // pass groups
-    for (let p = 0; p < f.numPasses; p++) {
-        const [min, max] = passShifts(f, p);
-        for (let g = 0; g < f.numGroups; g++) {
-            const gr = sections.get(2 + f.numLfGroups + p * f.numGroups + g);
-            vardct?.readPassGroup(gr, p, g);
-            const x = (g % f.groupsPerRow) * f.groupDim, y = Math.floor(g / f.groupsPerRow) * f.groupDim;
-            decodeModularGroup(gr, lf, f, x, y, f.groupDim, min, max, 1 + 3 * f.numLfGroups + NUM_QUANT_TABLES + f.numGroups * p + g);
+    if (vardct) {
+        vardct.readHfGlobal(sections.get(1 + f.numLfGroups), lf.tree);
+        const lfFrame = useLfFrame ? state.lfFrames[f.lfLevel] : null;
+        if (useLfFrame && !lfFrame) throw new Error('JPEG XL: no LF frame');
+        // (in shared memory, for threads)
+        const many = pool.threads && f.numGroups > 1 && f.width * f.height >= MIN_THREADED_PIXELS;
+        vardct.prepare(image.quantBias, image.quantBiasNumerator, lfFrame ? lfFrame.channels.slice(0, 3) : null,
+            many ? [0, 1, 2].map(c => new Float32Array(new SharedArrayBuffer(4 * vardct.stride(c) * (vardct.bh >> vardct.vs[c]) * 8))) : undefined);
+    }
+    // the pass groups: in threads (the XYB planes and the Modular channels in shared memory), or here
+    const coeffs = vardct ? [0, 1, 2].map(() => new Int32Array(f.groupDim * f.groupDim)) : [];
+    const local = (g: number): void => decodeGroup(g, f, sections, lf, vardct, coeffs);
+    let groupsDone = false;
+    if (pool.threads && f.numGroups > 1 && f.width * f.height >= MIN_THREADED_PIXELS) {
+        if (!pool.data) pool.data = shared(d);
+        const planes = vardct ? vardct.rendered : null;
+        for (const c of lf.modular.channels) c.data = shared(c.data);
+        const task: GroupTask = {
+            task: 'jxl-groups', data: pool.data, at, image, channels: lf.modular.channels, nbMeta: lf.modular.nbMeta,
+            vardct: vardct ? vardct.share() : null, planes,
+        };
+        try {
+            await runChunks(pool.threads, task, f.numGroups, local);
+            if (vardct && planes) vardct.adopt(vardct.share(), planes);
+            groupsDone = true;
+        } catch {
+            // (threads that fail aren't used again; the planes are rendered again)
+            for (const t of pool.threads) t.terminate();
+            pool.threads = null;
+            if (vardct) vardct.rendered.forEach(p => p.fill(0));
         }
     }
+    if (!groupsDone) for (let g = 0; g < f.numGroups; g++) local(g);
     lf.modular.undo();
     let planes = modularToPlanes(lf, f, image);
     let sigma: Float32Array | null = null;
     if (vardct) {
-        const lfFrame = useLfFrame ? state.lfFrames[f.lfLevel] : null;
-        if (useLfFrame && !lfFrame) throw new Error('JPEG XL: no LF frame');
-        const xyb = vardct.render(image.quantBias, image.quantBiasNumerator, lfFrame ? lfFrame.channels.slice(0, 3) : null);
+        const xyb = vardct.rendered;
         const color = xyb.map((plane, c) => {
             const hs = vardct.hs[c], vs = vardct.vs[c], w = Math.ceil(f.sampleWidth / (1 << hs)), h = Math.ceil(f.sampleHeight / (1 << vs));
             const out = crop(plane, vardct.stride(c), w, h);
@@ -130,7 +162,7 @@ export function decodeFrame(d: Uint8Array, r: BitReader, state: DecoderState): F
         planes = { ...planes, channels: [...color, ...planes.channels] };
         sigma = vardct.sigma;
     }
-    planes = filter(planes, f, image, sigma, vardct ? vardct.bw : 0);
+    planes = await threaded(pool, planes.width * planes.height, threads => filterThreaded(planes, f, image, sigma, vardct ? vardct.bw : 0, threads), () => filter(planes, f, image, sigma, vardct ? vardct.bw : 0));
     // patches and splines (before upsampling), noise (after)
     const numColor = planes.channels.length - image.extraChannels.length;
     if (lf.patches) applyPatches(planes, numColor, lf.patches, state.references, image.extraChannels);
@@ -138,8 +170,49 @@ export function decodeFrame(d: Uint8Array, r: BitReader, state: DecoderState): F
     if (lf.splines && numColor === 3) renderSplines(planes, lf.splines, baseX, baseB);
     planes = upsamplePlanes(planes, f, image);
     if (lf.noise && numColor === 3) renderNoise(planes, lf.noise, f.groupDim, state.visible, state.invisible, baseX, baseB);
-    const frame = render(planes, f, state);
+    const frame = await render(planes, f, state, pool);
     return { ...frame, end: t.end };
+}
+
+// decodes pass group g: each pass (VarDCT's coefficients into coeffs, then rendered; the Modular channels' part)
+function decodeGroup(g: number, f: FrameHeader, sections: Sections, lf: LfGlobal, vardct: VarDCT | null, coeffs: Int32Array[]): void {
+    for (const c of coeffs) c.fill(0);
+    for (let p = 0; p < f.numPasses; p++) {
+        const [min, max] = passShifts(f, p);
+        const gr = sections.get(2 + f.numLfGroups + p * f.numGroups + g);
+        vardct?.readPassGroup(gr, p, g, coeffs);
+        const x = (g % f.groupsPerRow) * f.groupDim, y = Math.floor(g / f.groupsPerRow) * f.groupDim;
+        decodeModularGroup(gr, lf, f, x, y, f.groupDim, min, max, 1 + 3 * f.numLfGroups + NUM_QUANT_TABLES + f.numGroups * p + g);
+    }
+    vardct?.renderGroup(g, coeffs);
+}
+
+/** The pass groups of a frame for threads (see groupChunks) */
+export interface GroupTask extends ChunkTask {
+    task: 'jxl-groups';
+    /** the codestream (shared), the frame's offset */
+    data: Uint8Array;
+    at: number;
+    image: ImageHeader;
+    /** the global Modular image's channels (their data shared, the groups' parts set) */
+    channels: Channel[];
+    nbMeta: number;
+    vardct: VarDCTShared | null;
+    /** the XYB planes rendered into (shared) */
+    planes: Float32Array[] | null;
+}
+
+/** In a thread: the decoding of pass groups (the chunks) of a frame, reading its headers and HfGlobal again */
+export function groupChunks(task: GroupTask): (g: number) => void {
+    const r = new BitReader(task.data, task.at), f = frameHeader(r, task.image), sections = new Sections(task.data, toc(r, f));
+    const lf = lfGlobal(sections.get(0), f, task.image, task);
+    const vardct = lf.vardct ? new VarDCT(f, lf.vardct, lf.lfDequant, task.image.bitDepth.bits) : null;
+    if (vardct) {
+        vardct.adopt(task.vardct as VarDCTShared, task.planes as Float32Array[]);
+        vardct.readHfGlobal(sections.get(1 + f.numLfGroups), lf.tree);
+    }
+    const coeffs = vardct ? [0, 1, 2].map(() => new Int32Array(f.groupDim * f.groupDim)) : [];
+    return g => decodeGroup(g, f, sections, lf, vardct, coeffs);
 }
 
 /** a w x h part of a plane (rows stride apart) */
@@ -175,7 +248,8 @@ function chromaUpsample(src: Float32Array, sw: number, sh: number, w: number, h:
     return cur;
 }
 
-function lfGlobal(r: BitReader, f: FrameHeader, image: ImageHeader): LfGlobal {
+// (given the global Modular image's channels, in a thread, without reading them)
+function lfGlobal(r: BitReader, f: FrameHeader, image: ImageHeader, given?: { channels: Channel[], nbMeta: number }): LfGlobal {
     const patches = f.flags & FLAG_PATCHES ? readPatches(r, image.extraChannels, f.width, f.height) : null;
     const splines = f.flags & FLAG_SPLINES ? readSplines(r, f.width, f.height) : null;
     const noise = f.flags & FLAG_NOISE ? readNoise(r) : null;
@@ -186,6 +260,11 @@ function lfGlobal(r: BitReader, f: FrameHeader, image: ImageHeader): LfGlobal {
     const numExtra = image.extraChannels.length;
     let tree: MAConfig | null = null;
     if (r.bool()) tree = readTree(r, Math.min(1 << 22, 1024 + Math.floor(f.width * f.height * (f.encodedColorChannels + numExtra) / 16)));
+    if (given) {
+        const modular = new ModularImage(given.channels, image.bitDepth.bits);
+        modular.nbMeta = given.nbMeta;
+        return { patches, splines, noise, lfDequant, vardct, tree, modular };
+    }
     const w = f.sampleWidth, h = f.sampleHeight, list: Channel[] = [];
     if (f.modular) {
         if (f.doYCbCr) {
@@ -279,6 +358,78 @@ function filter(p: Planes, f: FrameHeader, image: ImageHeader, sigma: Float32Arr
     return { ...p, channels: [...color.slice(0, numColor), ...p.channels.slice(numColor)] };
 }
 
+// runs a step in threads, if there are and the frame is large enough, else (or if they fail: then not again) here
+async function threaded<T>(pool: FrameThreads, pixels: number, inThreads: (threads: Thread[]) => Promise<T>, here: () => T): Promise<T> {
+    if (pool.threads && pixels >= MIN_THREADED_PIXELS) {
+        try {
+            return await inThreads(pool.threads);
+        } catch {
+            for (const t of pool.threads) t.terminate();
+            pool.threads = null;
+        }
+    }
+    return here();
+}
+
+// a typed array in shared memory (itself if it is)
+const sharedOf = <T extends Float32Array>(a: T): T => a.buffer instanceof SharedArrayBuffer ? a : shared(a);
+const sharedPlanes = (n: number, w: number, h: number): Float32Array[] => Array.from({ length: n }, () => new Float32Array(new SharedArrayBuffer(4 * w * h)));
+
+/** The rows of the steps after decoding for threads (see postChunks): Gaborish, an EPF pass, XYB to bytes */
+export interface PostTask extends ChunkTask {
+    task: 'jxl-post';
+    kind: 'gaborish' | 'epf' | 'xyb';
+    w: number;
+    h: number;
+    inputs: Float32Array[];
+    outputs: Float32Array[];
+    weights?: number[];
+    epf?: EPF;
+    sigma?: Float32Array | null;
+    bw?: number;
+    step?: number;
+    rgba?: Uint8Array;
+    m?: number[];
+    bias?: number[];
+    k?: number;
+}
+
+// (the rows of a chunk of Gaborish and the XYB conversion; EPF's are its strips)
+const BAND = 64;
+
+/** The steps after decoding (the chunks: bands of rows) */
+export function postChunks(t: PostTask): (chunk: number) => void {
+    const { w, h, inputs, outputs } = t;
+    if (t.kind === 'gaborish') return chunk => gaborishRows(inputs, outputs, w, h, t.weights as number[], chunk * BAND, Math.min(h, (chunk + 1) * BAND));
+    if (t.kind === 'epf') {
+        const scratch = epfScratch(w);
+        return chunk => epfStrip(inputs, outputs, w, h, t.epf as EPF, t.sigma ?? null, t.bw as number, t.step as number, chunk, scratch);
+    }
+    const [x, y, b] = inputs;
+    return chunk => xybToBytes(x, y, b, t.m as number[], t.bias as number[], t.k as number, t.rgba as Uint8Array, chunk * BAND * w, Math.min(h, (chunk + 1) * BAND) * w);
+}
+
+/** filter, Gaborish and EPF in threads */
+async function filterThreaded(p: Planes, f: FrameHeader, image: ImageHeader, sigma: Float32Array | null, sigmaStride: number, threads: Thread[]): Promise<Planes> {
+    if (!f.gab && !f.epf) return p;
+    const numColor = p.channels.length - image.extraChannels.length, w = p.width, h = p.height;
+    let color = (numColor === 1 ? [p.channels[0], p.channels[0], p.channels[0]] : p.channels.slice(0, 3)).map(sharedOf);
+    if (f.gab) {
+        const task: PostTask = { task: 'jxl-post', kind: 'gaborish', w, h, inputs: color, outputs: sharedPlanes(3, w, h), weights: f.gab };
+        await runChunks(threads, task, Math.ceil(h / BAND), postChunks(task));
+        color = task.outputs;
+    }
+    if (f.epf) {
+        const s = sigma && sharedOf(sigma);
+        for (const step of epfSteps(f.epf)) {
+            const task: PostTask = { task: 'jxl-post', kind: 'epf', w, h, inputs: color, outputs: sharedPlanes(3, w, h), epf: f.epf, sigma: s, bw: sigmaStride, step };
+            await runChunks(threads, task, epfStrips(h), postChunks(task));
+            color = task.outputs;
+        }
+    }
+    return { ...p, channels: [...color.slice(0, numColor), ...p.channels.slice(numColor)] };
+}
+
 /** Upsamples the color channels and the extra channels to the frame's size */
 function upsamplePlanes(p: Planes, f: FrameHeader, image: ImageHeader): Planes {
     const numColor = p.channels.length - image.extraChannels.length, W = f.upsampledWidth, H = f.upsampledHeight;
@@ -309,7 +460,7 @@ function floatSample(v: number, bits: number, expBits: number): number {
 // ---- rendering: filters, features, upsampling, the color transform, blending, references
 
 // what follows the features: storing LF frames and references, the color transform, blending
-function render(p: Planes, f: FrameHeader, state: DecoderState): Frame {
+async function render(p: Planes, f: FrameHeader, state: DecoderState, pool: FrameThreads): Promise<Frame> {
     const image = state.image;
     let planes = p;
     if (f.type === FRAME_LF) {
@@ -325,7 +476,15 @@ function render(p: Planes, f: FrameHeader, state: DecoderState): Frame {
     // (only toRGBA uses the planes of a frame shown as it is: replacing all, not referenced; with straight alpha only)
     const replaces = !f.haveCrop && f.blending.mode === BLEND_REPLACE && f.ecBlending.every(b => b.mode === BLEND_REPLACE) && p.width === image.width && p.height === image.height;
     const final = normal && replaces && !canReference && image.extraChannels.every(e => e.type === EXTRA_ALPHA && !e.alphaAssociated);
-    planes = state.output.transform(planes, f.doYCbCr, final);
+    // (XYB to bytes in threads)
+    const bytes = state.output.bytesParams(f.doYCbCr, final), input = planes;
+    planes = bytes ? await threaded(pool, planes.width * planes.height, async threads => {
+        const { width: w, height: h, channels } = input, rgba = new Uint8Array(new SharedArrayBuffer(4 * w * h));
+        const task: PostTask = { task: 'jxl-post', kind: 'xyb', w, h, inputs: channels.slice(0, 3).map(sharedOf), outputs: [], rgba, ...bytes };
+        await runChunks(threads, task, Math.ceil(h / BAND), postChunks(task));
+        // (the pixels not in shared memory: APIs like crypto.subtle and TextDecoder reject views of it)
+        return { width: w, height: h, channels: channels.slice(3), rgba: new Uint8Array(rgba) };
+    }, () => state.output.transform(input, f.doYCbCr, final)) : state.output.transform(planes, f.doYCbCr, final);
     const canvas = normal ? blend(planes, f, state) : planes;
     if (canReference && !f.saveBeforeCT) {
         state.references[f.saveAsReference] = canvas;

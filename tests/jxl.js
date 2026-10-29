@@ -63,4 +63,19 @@ const difference = (bitmap, width, height, reference, step = 1, premultiplied = 
     }
     // the pixel limit
     if (await Image.decode(lossy, {maxPixels: 100}).then(() => true, () => false)) panic('maxPixels was ignored');
+
+    // threads (groups, Gaborish, EPF and the XYB conversion in parallel, from 4 megapixels): the same pixels as without,
+    // lossy (with alpha) and lossless
+    const big = new Image(2304, 2048);
+    for (let y = 0; y < big.height; y++) for (let x = 0; x < big.width; x++) big.setPixelAt(x, y, Image.rgbaToColor(x * 7 & 255, (x ^ y) & 255, y * 3 & 255, x < 64 ? 128 : 255));
+    for (const options of [{quality: 80, effort: 0}, {}]) {
+        const data = await big.encodeJXL(options);
+        const one = await Image.decode(data, {threads: 1}), four = await Image.decode(data, {threads: 4});
+        if (Buffer.compare(Buffer.from(one.bitmap), Buffer.from(four.bitmap))) panic(`threads, ${options.quality ? 'lossy' : 'lossless'}: different pixels`);
+        // (not in shared memory, which some APIs reject)
+        if (four.bitmap.buffer instanceof SharedArrayBuffer) panic('threads: the bitmap is in shared memory');
+        const animation = await Animation.decode(data, {threads: 4});
+        if (Buffer.compare(Buffer.from(animation[0].bitmap), Buffer.from(one.bitmap))) panic('threads, Animation.decode: different pixels');
+    }
+    for (const threads of [0, 1.5]) if (!await Image.decode(lossy, {threads}).then(() => false, e => e instanceof RangeError)) panic(`threads ${threads} should throw`);
 })();

@@ -16,6 +16,12 @@
   64x64 areas in parallel like libjxl's: the same files. A 1920x1080 photo takes 1.1 s instead of 2.4 s at effort 1 and
   1.8 s instead of 5.0 s at effort 2 (8 threads). Effort 0 (which has no search) and images under about 512x512 pixels
   at effort 1, 384x384 at 2, encode without threads.
+- JPEG XL decoding uses worker threads (`DecodeOptions.threads` and `AnimationDecodeOptions.threads`, the same
+  default), from 4 megapixels on (one thread per 2 megapixels at most): the groups (with all their passes), Gaborish, the
+  EPF's strips and the conversion to sRGB run in parallel, with the same pixels. A 3840x2160 image decodes in 395 ms
+  instead of 640 ms lossy and 328 ms instead of 671 ms lossless, a 5120x2880 one in 568 ms instead of 1121 ms and
+  487 ms instead of 1122 ms. Lossy frames no longer keep the coefficients of the whole frame (about 100 MB at 4K): each
+  group is rendered once its passes are read.
 
 ### Tests
 

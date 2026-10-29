@@ -50,11 +50,11 @@ const linearByte = (v: number): number => {
     return k;
 };
 
-// XYB to interleaved sRGB bytes (out: RGBA, alpha left)
-function xybToBytes(x: Float32Array, y: Float32Array, b: Float32Array, m: number[], bias: number[], k: number, out: Uint8Array): void {
+/** XYB to interleaved sRGB bytes (out: RGBA, alpha left), of the pixels from to to */
+export function xybToBytes(x: Float32Array, y: Float32Array, b: Float32Array, m: number[], bias: number[], k: number, out: Uint8Array, from = 0, to = x.length): void {
     const m0 = m[0], m1 = m[1], m2 = m[2], m3 = m[3], m4 = m[4], m5 = m[5], m6 = m[6], m7 = m[7], m8 = m[8];
     const b0 = bias[0], b1 = bias[1], b2 = bias[2], c0 = Math.cbrt(b0), c1 = Math.cbrt(b1), c2 = Math.cbrt(b2);
-    for (let i = 0, o = 0; i < x.length; i++, o += 4) {
+    for (let i = from, o = 4 * from; i < to; i++, o += 4) {
         const gr = y[i] + x[i] - c0, gg = y[i] - x[i] - c1, gb = b[i] - c2;
         const mr = gr * gr * gr + b0, mg = gg * gg * gg + b1, mb = gb * gb * gb + b2;
         out[o] = linearByte((m0 * mr + m1 * mg + m2 * mb) * k);
@@ -123,6 +123,13 @@ export class ColorOutput {
             ch.splice(0, 3, R, G, B);
         }
         return { width: p.width, height: p.height, channels: ch };
+    }
+
+    /** What transform converts XYB to bytes with right away (final, not YCbCr; see xybToBytes), null if it doesn't */
+    bytesParams(ycbcr: boolean, final: boolean): { m: number[], bias: number[], k: number } | null {
+        const image = this.image;
+        if (ycbcr || !image.xybEncoded || !final || this.linear) return null;
+        return { m: image.opsinInverse, bias: image.opsinBias, k: 255 / image.toneMapping.intensityTarget * this.scale };
     }
 
     /** the image (its planes after the color transform) as 8-bit RGBA, unpremultiplied */

@@ -4,11 +4,12 @@
  * libjxl (see THIRD_PARTY_NOTICES.md); the encoders' codestreams, with Exif in the container (signature, ftyp, Exif, jxlc
  * boxes)
  */
+import { startThreads } from '../util/threads.ts';
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { BitReader } from './jxl/bits.ts';
 import { imageHeader, skipICC } from './jxl/headers.ts';
 import { frameHeader, toc } from './jxl/frame-header.ts';
-import { decodeFrame, DecoderState } from './jxl/frame.ts';
+import { decodeFrame, DecoderState, type FrameThreads } from './jxl/frame.ts';
 import { ColorOutput } from './jxl/color.ts';
 import { ToneMapping } from './hdr.ts';
 import { encodeRGBA } from './jxl/fast-lossless.ts';
@@ -72,7 +73,7 @@ function codestream(d: Uint8Array): Uint8Array {
 }
 
 /** The frames shown (composited, as RGBA), their durations in milliseconds */
-export function* frames(data: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard'): Generator<{ width: number, height: number, pixels: Uint8Array, duration: number, orientation: number, loopCount: number }> {
+export async function* frames(data: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard', threads = 1): AsyncGenerator<{ width: number, height: number, pixels: Uint8Array, duration: number, orientation: number, loopCount: number }> {
     const d = codestream(data);
     const r = new BitReader(d);
     const image = imageHeader(r);
@@ -90,27 +91,35 @@ export function* frames(data: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: T
         lfFrames: [null, null, null, null], visible: 0, invisible: 0
     };
     const a = image.animation, tick = a ? 1000 * a.tpsDenominator / a.tpsNumerator : 0;
-    let shown = 0;
-    for (; ;) {
-        if (at >= d.length) {
-            if (shown) return;
-            throw new Error('JPEG XL: no frame shown');
+    // (threads for the frames' groups and filters, see decodeFrame: at most one per 2 megapixels, fewer take less time to
+    // start and warm up than they save)
+    const n = Math.min(threads, Math.floor(image.width * image.height / (2 << 20)));
+    const pool: FrameThreads = { threads: n > 1 ? startThreads(n) : null, data: null };
+    try {
+        let shown = 0;
+        for (; ;) {
+            if (at >= d.length) {
+                if (shown) return;
+                throw new Error('JPEG XL: no frame shown');
+            }
+            const frame = await decodeFrame(d, new BitReader(d, at), state, at, pool);
+            at = frame.end;
+            if (frame.canvas && (frame.header.isLast || frame.header.duration !== 0)) {
+                shown++;
+                yield {
+                    width: image.width, height: image.height, pixels: state.output.toRGBA(frame.canvas), duration: frame.header.duration * tick,
+                    orientation: image.orientation, loopCount: a ? a.numLoops : 1
+                };
+            }
+            if (frame.header.isLast) return;
         }
-        const frame = decodeFrame(d, new BitReader(d, at), state);
-        at = frame.end;
-        if (frame.canvas && (frame.header.isLast || frame.header.duration !== 0)) {
-            shown++;
-            yield {
-                width: image.width, height: image.height, pixels: state.output.toRGBA(frame.canvas), duration: frame.header.duration * tick,
-                orientation: image.orientation, loopCount: a ? a.numLoops : 1
-            };
-        }
-        if (frame.header.isLast) return;
+    } finally {
+        if (pool.threads) for (const t of pool.threads) t.terminate();
     }
 }
 
 /** Decodes the first frame shown */
-export function decode(data: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard'): { width: number, height: number, pixels: Uint8Array, orientation: number } {
-    for (const frame of frames(data, maxPixels, toneMapping)) return frame;
+export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard', threads = 1): Promise<{ width: number, height: number, pixels: Uint8Array, orientation: number }> {
+    for await (const frame of frames(data, maxPixels, toneMapping, threads)) return frame;
     throw new Error('JPEG XL: no frame shown');
 }

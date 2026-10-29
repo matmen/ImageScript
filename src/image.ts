@@ -212,6 +212,11 @@ export interface DecodeOptions {
      * brighter than white. Default: `'reinhard'`
      */
     toneMapping?: ToneMapping;
+    /**
+     * At most this many worker threads decode in parallel (JPEG XLs, from 4 megapixels on: one per 2 megapixels at
+     * most), `1` for none. Default: the processors available, at most 8 (1 where workers can't share memory)
+     */
+    threads?: number;
 }
 
 /** Options of {@link Image.encodeJXL} */
@@ -2235,7 +2240,8 @@ export class Image {
      * @return The decoded image
      */
     static async decode(input: BinaryData, options: DecodeOptions = {}): Promise<Image> {
-        const { applyOrientation = true, applyColorProfile = true, maxPixels = MAX_PIXELS, toneMapping = 'reinhard' } = options;
+        const { applyOrientation = true, applyColorProfile = true, maxPixels = MAX_PIXELS, toneMapping = 'reinhard', threads = defaultThreads() } = options;
+        checkThreads(threads);
         if (toneMapping !== 'reinhard' && toneMapping !== 'clamp') throw new TypeError(`toneMapping must be 'reinhard' or 'clamp', not ${String(toneMapping)}`);
         const data = view(input);
         const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -2256,7 +2262,7 @@ export class Image {
                 return { width, height, pixels };
             };
             if (ImageType.isAVIF(dataView)) return avif.decode(data, maxPixels, toneMapping);
-            if (ImageType.isJXL(dataView)) return jxl.decode(data, maxPixels, toneMapping);
+            if (ImageType.isJXL(dataView)) return jxl.decode(data, maxPixels, toneMapping, threads);
             if (ImageType.isBMP(dataView)) return bitmap(bmp.decode(data, maxPixels));
             if (ImageType.isICO(dataView)) return bitmap(ico.decode(data, maxPixels));
             if (ImageType.isQOI(dataView)) return qoi.decode(data, maxPixels);

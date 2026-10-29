@@ -122,6 +122,19 @@ function chromaShifts(up: number[]): { h: number[], v: number[], anyH: boolean, 
     return { h: up.map(u => anyH && (u === 0 || u === 3) ? 1 : 0), v: up.map(u => anyV && (u === 0 || u === 2) ? 1 : 0), anyH, anyV };
 }
 
+/** What VarDCT.share gives threads */
+export interface VarDCTShared {
+    type: Int8Array;
+    hfMul: Int32Array;
+    xFromY: Int32Array;
+    bFromY: Int32Array;
+    lfQuant: Int32Array[];
+    hasLfQuant: boolean;
+    renderLf: Float32Array[];
+    quantBias: number[];
+    quantBiasNumerator: number;
+}
+
 /** The VarDCT state of a frame: what its LF groups, HfGlobal and pass groups give, then the rendered XYB */
 export class VarDCT {
     /** the frame's size in blocks (even if chroma is subsampled) */
@@ -141,8 +154,12 @@ export class VarDCT {
     /** the quantized and dequantized LF (X, Y, B), per block */
     private readonly lfQuant: Int32Array[];
     private readonly lf: Float32Array[];
-    private readonly coeffs: Int32Array[];
     private matrices: DequantMatrices | null = null;
+    /** set by prepare: the LF to render with, the XYB planes rendered into */
+    private renderLf: Float32Array[] = [];
+    private planes: Float32Array[] = [];
+    private quantBias: number[] = [];
+    private quantBiasNumerator = 0;
     private numPresets = 1;
     private passes: HfPass[] = [];
     private hasLfQuant = false;
@@ -165,7 +182,6 @@ export class VarDCT {
         this.bFromY = new Int32Array(this.tilesPerRow * Math.ceil(bh / 8));
         this.lfQuant = [0, 1, 2].map(c => new Int32Array((bw >> this.hs[c]) * (bh >> this.vs[c])));
         this.lf = [0, 1, 2].map(c => new Float32Array((bw >> this.hs[c]) * (bh >> this.vs[c])));
-        this.coeffs = [0, 1, 2].map(c => new Int32Array((bw >> this.hs[c]) * (bh >> this.vs[c]) * 64));
     }
 
     // the blocks of LF group g: [x0, y0, width, height] (in blocks)
@@ -281,8 +297,8 @@ export class VarDCT {
         }
     }
 
-    /** the HF coefficients of a pass group */
-    readPassGroup(r: BitReader, pass: number, group: number): void {
+    /** the HF coefficients of a pass group, added to a group's (per channel, rows of groupStride(c) coefficients) */
+    readPassGroup(r: BitReader, pass: number, group: number, coeffs: Int32Array[]): void {
         const f = this.f, ctx = this.g.ctx, hp = this.passes[pass];
         const gdim = f.groupDim / 8, bx0 = (group % f.groupsPerRow) * gdim, by0 = Math.floor(group / f.groupsPerRow) * gdim;
         const width = Math.min(gdim, this.bw - bx0), height = Math.min(gdim, this.bh - by0);
@@ -331,8 +347,8 @@ export class VarDCT {
                     const value = (count + numBlocks - 1) >> numBlocksLog;
                     for (let dx = 0; dx < w8; dx++) nz[sx + dx] = value;
                     if (!count) continue;
-                    const out = this.coeffs[c], stride = (bw >> hs[c]) * 8;
-                    const base = (((by0 >> vs[c]) + sy) * 8) * stride + ((bx0 >> hs[c]) + sx) * 8;
+                    const out = coeffs[c], stride = this.groupStride(c);
+                    const base = sy * 8 * stride + sx * 8;
                     const order = hp.orders[orderId][c], tr = transposed(type);
                     let prevNonZero = count <= numBlocks * 4 ? 1 : 0;
                     const ctxBase = blockCtx * 458 + 37 * nc, n = order.length / 2;
@@ -356,8 +372,11 @@ export class VarDCT {
         dist.finish();
     }
 
-    /** the XYB planes (of the color sample size); lfFrame: the LF from an LF frame */
-    render(quantBias: number[], quantBiasNumerator: number, lfFrame: Float32Array[] | null): Float32Array[] {
+    /**
+     * Prepares rendering (the LF's chroma from luma and smoothing) into XYB planes (of the color sample size, channel c
+     * stride(c) wide: zeros, given or new); lfFrame: the LF from an LF frame
+     */
+    prepare(quantBias: number[], quantBiasNumerator: number, lfFrame: Float32Array[] | null, planes?: Float32Array[]): void {
         const f = this.f, g = this.g, bw = this.bw, bh = this.bh, hs = this.hs, vs = this.vs;
         let lf = this.lf;
         if (lfFrame) lf = lfFrame;
@@ -375,22 +394,65 @@ export class VarDCT {
                 lf = smoothLf(lf, [0, 1, 2].map(c => bw >> hs[c]), [0, 1, 2].map(c => bh >> vs[c]), this.lfDequant.map(m => m * sc), hs, vs);
             }
         }
+        this.renderLf = lf;
+        this.planes = planes ?? [0, 1, 2].map(c => new Float32Array((bw >> hs[c]) * (bh >> vs[c]) * 64));
+        this.quantBias = quantBias;
+        this.quantBiasNumerator = quantBiasNumerator;
+    }
+
+    /** What threads rendering groups need of the LF groups and prepare (see adopt) */
+    share(): VarDCTShared {
+        return {
+            type: this.type, hfMul: this.hfMul, xFromY: this.xFromY, bFromY: this.bFromY, lfQuant: this.lfQuant, hasLfQuant: this.hasLfQuant,
+            renderLf: this.renderLf, quantBias: this.quantBias, quantBiasNumerator: this.quantBiasNumerator,
+        };
+    }
+
+    /** In a thread: takes the LF groups' data and the preparation (instead of reading them), renders into planes */
+    adopt(s: VarDCTShared, planes: Float32Array[]): void {
+        this.type.set(s.type);
+        this.hfMul.set(s.hfMul);
+        this.xFromY.set(s.xFromY);
+        this.bFromY.set(s.bFromY);
+        s.lfQuant.forEach((q, c) => this.lfQuant[c].set(q));
+        this.hasLfQuant = s.hasLfQuant;
+        this.renderLf = s.renderLf;
+        this.quantBias = s.quantBias;
+        this.quantBiasNumerator = s.quantBiasNumerator;
+        this.planes = planes;
+    }
+
+    /** the XYB planes rendered (by renderGroup) */
+    get rendered(): Float32Array[] {
+        return this.planes;
+    }
+
+    /** the stride of a group's coefficients of channel c (see readPassGroup) */
+    groupStride(c: number): number {
+        return (this.f.groupDim >> this.hs[c]);
+    }
+
+    /** Renders a group (its coefficients of all passes, see readPassGroup) into the planes */
+    renderGroup(group: number, coeffs: Int32Array[]): void {
+        const f = this.f, g = this.g, bw = this.bw, hs = this.hs, vs = this.vs, planes = this.planes, lf = this.renderLf;
+        const gdim = f.groupDim / 8, bx0 = (group % f.groupsPerRow) * gdim, by0 = Math.floor(group / f.groupsPerRow) * gdim;
+        const width = Math.min(gdim, bw - bx0), height = Math.min(gdim, this.bh - by0);
         // dequantization
         const m = this.matrices as DequantMatrices;
         const qmScale = [0.8 ** (f.xqmScale - 2), 1, 0.8 ** (f.bqmScale - 2)];
-        const planes = [0, 1, 2].map(c => new Float32Array(this.coeffs[c].length));
         for (let c = 0; c < 3; c++) {
-            const q = this.coeffs[c], out = planes[c], stride = (bw >> hs[c]) * 8, bias = quantBias[c];
-            this.forEachVarblock(c, (sbx, sby, type, mul) => {
+            const q = coeffs[c], out = planes[c], stride = (bw >> hs[c]) * 8, bias = this.quantBias[c], qbn = this.quantBiasNumerator;
+            const qStride = this.groupStride(c), gx = bx0 >> hs[c], gy = by0 >> vs[c];
+            this.forEachVarblock(c, bx0, by0, width, height, (sbx, sby, type, mul) => {
                 const w = SIZES[2 * type] * 8, h = SIZES[2 * type + 1] * 8, idx = MATRIX_INDEX[type];
                 const matrix = transposed(type) ? m.transposed[idx][c] : m.matrices[idx][c];
                 const k = 65536 / (g.globalScale * mul) * qmScale[c];
                 for (let y = 0; y < h; y++) {
-                    const o = (sby * 8 + y) * stride + sbx * 8;
+                    const o = (sby * 8 + y) * stride + sbx * 8, oq = ((sby - gy) * 8 + y) * qStride + (sbx - gx) * 8;
                     for (let x = 0; x < w; x++) {
-                        let v = q[o + x];
+                        let v = q[oq + x];
                         if (v === 0) continue;
-                        v = Math.abs(v) <= 1 ? v * bias : v - quantBiasNumerator / v;
+                        v = Math.abs(v) <= 1 ? v * bias : v - qbn / v;
                         out[o + x] = v * matrix[y * w + x] * k;
                     }
                 }
@@ -399,8 +461,8 @@ export class VarDCT {
         // chroma from luma, per 64x64 tile
         if (!this.subsampled) {
             const [x, y, b] = planes, stride = bw * 8;
-            for (let py = 0; py < bh * 8; py++) {
-                for (let tx = 0; tx < this.tilesPerRow; tx++) {
+            for (let py = by0 * 8; py < (by0 + height) * 8; py++) {
+                for (let tx = bx0 >> 3; tx < (bx0 + width + 7) >> 3; tx++) {
                     const t = (py >> 6) * this.tilesPerRow + tx;
                     const kx = g.baseX + this.xFromY[t] / g.colourFactor, kb = g.baseB + this.bFromY[t] / g.colourFactor;
                     const end = Math.min(tx * 64 + 64, stride);
@@ -414,7 +476,7 @@ export class VarDCT {
         // the transforms, with the LF
         for (let c = 0; c < 3; c++) {
             const out = planes[c], stride = (bw >> hs[c]) * 8, lfc = lf[c], lfStride = bw >> hs[c];
-            this.forEachVarblock(c, (sbx, sby, type) => {
+            this.forEachVarblock(c, bx0, by0, width, height, (sbx, sby, type) => {
                 const w8 = SIZES[2 * type], h8 = SIZES[2 * type + 1];
                 const llf: Block = { buf: out, offset: sby * 8 * stride + sbx * 8, stride, w: w8, h: h8 };
                 if (single(type)) out[llf.offset] = lfc[sby * lfStride + sbx];
@@ -427,7 +489,6 @@ export class VarDCT {
                 inverseTransform({ buf: out, offset: llf.offset, stride, w: w8 * 8, h: h8 * 8 }, type);
             });
         }
-        return planes;
     }
 
     /** the planes' stride (the width of channel c) */
@@ -435,11 +496,12 @@ export class VarDCT {
         return (this.bw >> this.hs[c]) * 8;
     }
 
-    // calls fn with the varblocks of channel c (at their block coordinates in the channel)
-    private forEachVarblock(c: number, fn: (sbx: number, sby: number, type: number, mul: number) => void): void {
+    // calls fn with the varblocks of channel c in the blocks bx0, by0 (w x h, a group's) at their block coordinates in
+    // the channel
+    private forEachVarblock(c: number, bx0: number, by0: number, w: number, h: number, fn: (sbx: number, sby: number, type: number, mul: number) => void): void {
         const bw = this.bw, hs = this.hs[c], vs = this.vs[c], gdim = this.f.groupDim / 8;
-        for (let by = 0; by < this.bh; by++) {
-            for (let bx = 0; bx < bw; bx++) {
+        for (let by = by0; by < by0 + h; by++) {
+            for (let bx = bx0; bx < bx0 + w; bx++) {
                 const type = this.type[by * bw + bx];
                 if (type < 0) continue;
                 if (hs || vs) {
