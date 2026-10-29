@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.10.0
+
+### Performance
+
+- `encodeAVIF()` encodes in worker threads (`AVIFEncodeOptions.threads`, default: the processors available, at most
+  8; `1` for none), writing the same files: superblock rows are searched in a wavefront (each superblock after the one
+  above right of it), like libaom's row-based multithreading, so there is no loss in compression, and the loop filter
+  and CDEF trials run in parallel. A 1920x1080 photo takes 1.1 s instead of 2.1 s at effort 0, 1.7 s instead of 4.9 s
+  at effort 1 and 3.4 s instead of 14.2 s at effort 2 (8 threads, Ryzen 7 5800X). Works in Node (worker_threads),
+  Deno, Bun and browsers (Web Workers; bundlers like Vite pick up the worker's module). Small images (under about
+  640x640 pixels at effort 0, 448x448 at 1, 320x320 at 2), browser pages without cross-origin isolation (no
+  SharedArrayBuffer), runtimes without workers, and workers that fail to start encode on the calling thread as before.
+
 ## 3.9.0
 
 ### Features

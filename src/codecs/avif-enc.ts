@@ -4,7 +4,8 @@
  * container with the boxes libavif writes. The quality maps to the quantizer like avifenc's, with libaom's quantizer_to_qindex (Copyright (c)
  * 2016, Alliance for Open Media, BSD-2-Clause License, see THIRD_PARTY_NOTICES.md)
  */
-import { encodeAV1 } from './av1/encode.ts';
+import { encodeAV1, encodeAV1Threaded, type AV1Image, type AV1Params } from './av1/encode.ts';
+import { startThreads } from '../util/threads.ts';
 
 /** Options of the AVIF encoder */
 export interface AVIFOptions {
@@ -18,7 +19,12 @@ export interface AVIFOptions {
     effort: number;
     /** Exif data (a TIFF header and IFDs) */
     exif?: Uint8Array;
+    /** at most this many worker threads (1: none) */
+    threads: number;
 }
+
+// (images below this many pixels encode faster without threads, which take about 0.1 s to start: by effort)
+const MIN_THREADED_PIXELS = [640 * 640, 448 * 448, 320 * 320];
 
 // libaom's quantizer_to_qindex (avifenc's quality: (100 - quality) * 63 / 100, rounded)
 const QINDEX = [
@@ -170,7 +176,7 @@ function seqMonochrome(d: Uint8Array, o: number): boolean {
 }
 
 /** Encodes RGBA pixels as an AVIF (with an alpha image if the image has transparency) */
-export function encode(rgba: Uint8Array, width: number, height: number, { quality, alphaQuality, subsampling, effort, exif }: AVIFOptions): Uint8Array {
+export async function encode(rgba: Uint8Array, width: number, height: number, { quality, alphaQuality, subsampling, effort, exif, threads: maxThreads }: AVIFOptions): Promise<Uint8Array> {
     if (width < 1 || height < 1) throw new RangeError('AVIF: dimensions must be at least 1');
     if (width > 65536 || height > 65536) throw new RangeError('AVIF: dimensions must be at most 65536');
     let opaque = true;
@@ -186,12 +192,35 @@ export function encode(rgba: Uint8Array, width: number, height: number, { qualit
     const cicp = lossless ? [1, 13, 0] : CICP;
     const planes = gray ? [Uint8Array.from({ length: width * height }, (_, i) => rgba[4 * i])]
         : lossless ? [1, 2, 0].map(c => Uint8Array.from({ length: width * height }, (_, i) => rgba[4 * i + c])) : toYUV(rgba, width, height, subsampled);
-    const color = encodeAV1({ planes, width, height, layout: gray ? 0 : subsampled ? 1 : 3, cicp }, { qidx: qindex(quality), effort });
-    let alpha: Uint8Array | null = null;
-    if (!opaque) {
-        const a = new Uint8Array(width * height);
-        for (let i = 0; i < a.length; i++) a[i] = original[4 * i + 3];
-        alpha = encodeAV1({ planes: [a], width, height, layout: 0, cicp: [2, 2, 2] }, { qidx: qindex(alphaQuality), effort });
+    // threads searching superblock rows in a wavefront (each two superblocks behind the one above, so at most half
+    // the superblocks of a row at once) and running filter trials: the same files. Without them (or if they fail, like
+    // workers whose module can't be loaded), the encoder runs here
+    const n = Math.min(maxThreads, height + 63 >> 6, Math.ceil((width + 63 >> 6) / 2));
+    let threads = n > 1 && width * height >= MIN_THREADED_PIXELS[effort] ? startThreads(n) : null;
+    const stop = (): void => {
+        if (threads) for (const t of threads) t.terminate();
+        threads = null;
+    };
+    const av1 = async (image: AV1Image, params: AV1Params): Promise<Uint8Array> => {
+        if (threads) {
+            try {
+                return await encodeAV1Threaded(image, params, threads);
+            } catch {
+                stop();
+            }
+        }
+        return encodeAV1(image, params);
+    };
+    let color: Uint8Array, alpha: Uint8Array | null = null;
+    try {
+        color = await av1({ planes, width, height, layout: gray ? 0 : subsampled ? 1 : 3, cicp }, { qidx: qindex(quality), effort });
+        if (!opaque) {
+            const a = new Uint8Array(width * height);
+            for (let i = 0; i < a.length; i++) a[i] = original[4 * i + 3];
+            alpha = await av1({ planes: [a], width, height, layout: 0, cicp: [2, 2, 2] }, { qidx: qindex(alphaQuality), effort });
+        }
+    } finally {
+        stop();
     }
 
     // the boxes: ftyp, meta (the items, their locations in mdat, their properties), mdat

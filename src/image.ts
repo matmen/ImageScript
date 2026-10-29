@@ -11,6 +11,7 @@ import * as netpbm from './codecs/netpbm.ts';
 import * as hdr from './codecs/hdr.ts';
 import * as avif from './codecs/avif.ts';
 import * as avifEnc from './codecs/avif-enc.ts';
+import { availableThreads } from './util/threads.ts';
 import * as jxl from './codecs/jxl.ts';
 import type { ToneMapping } from './codecs/hdr.ts';
 import * as quantize from './codecs/quantize.ts';
@@ -234,6 +235,13 @@ export interface AVIFEncodeOptions {
     subsampling?: '4:4:4' | '4:2:0';
     /** How hard the encoder searches for the best modes: 0-2, faster to smaller. Default: `1` */
     effort?: number;
+    /**
+     * At most this many worker threads encode in parallel (the same file, faster: 2.9 times with 8 on a 1920x1080
+     * photo at effort 1), `1` for none. Small images (under about 640x640 pixels at effort 0, 448x448 at 1, 320x320
+     * at 2), and runtimes whose workers can't share memory (browsers without cross-origin isolation), encode without
+     * them. Default: the processors available, at most 8
+     */
+    threads?: number;
     /** Metadata to include, see {@link Metadata} */
     metadata?: Metadata;
 }
@@ -2168,9 +2176,10 @@ export class Image {
      * Encodes the image as AVIF (AV1, with an alpha image if the image has transparency)
      * @param options See {@link AVIFEncodeOptions}
      */
-    async encodeAVIF({ quality = 60, alphaQuality = 100, subsampling = '4:4:4', effort = 1, metadata = {} }: AVIFEncodeOptions = {}): Promise<Uint8Array> {
+    async encodeAVIF({ quality = 60, alphaQuality = 100, subsampling = '4:4:4', effort = 1, threads = Math.max(1, Math.min(availableThreads(), 8)), metadata = {} }: AVIFEncodeOptions = {}): Promise<Uint8Array> {
+        if (!Number.isInteger(threads) || threads < 1) throw new RangeError(`threads must be a positive integer, not ${threads}`);
         const exif = exifData(resolveMetadata(metadata));
-        return avifEnc.encode(this.__bytes__(), this.width, this.height, { quality: finite(quality, 'quality'), alphaQuality: finite(alphaQuality, 'alphaQuality'), subsampling, effort, exif });
+        return avifEnc.encode(this.__bytes__(), this.width, this.height, { quality: finite(quality, 'quality'), alphaQuality: finite(alphaQuality, 'alphaQuality'), subsampling, effort, exif, threads });
     }
 
     /**

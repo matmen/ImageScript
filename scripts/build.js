@@ -46,5 +46,11 @@ const prune = dir => {
 };
 prune(path.join(root, 'dist'));
 
+// the worker threads' module: worker.js in the build (written as a literal for bundlers, see threads.ts)
+const threads = path.join(root, 'dist/util/threads.js');
+const threadsCode = fs.readFileSync(threads, 'utf8');
+if (!threadsCode.includes("new URL('./worker.ts', import.meta.url)")) throw new Error('build: the worker URL in threads.js not found');
+fs.writeFileSync(threads, threadsCode.replace("new URL('./worker.ts', import.meta.url)", "new URL('./worker.js', import.meta.url)"));
+
 // the package itself has no "type", so mark the build as ES modules
 fs.writeFileSync(path.join(root, 'dist/package.json'), '{"type":"module"}\n');

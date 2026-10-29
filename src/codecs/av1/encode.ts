@@ -7,6 +7,7 @@
  * level (around libaom's guess from the quantizer: Copyright (c) 2016, Alliance for Open Media, BSD-2-Clause License)
  * and the CDEF strengths by the filtered frame's distortion. See THIRD_PARTY_NOTICES.md
  */
+import type { Thread } from '../../util/threads.ts';
 import { SymbolEncoder } from './msac-enc.ts';
 import { SequenceHeader, FrameHeader, RESTORATION_NONE } from './obu.ts';
 import { HeaderWriter, obu, writeSequenceHeader, writeFrameHeader, OBU_FRAME } from './obu-enc.ts';
@@ -139,22 +140,31 @@ class TileEncoder {
     private bits = 0;
     private coded = false;
 
-    constructor(private f: Frame, private src: Uint16Array[], private params: AV1Params) {
+    /** the bytes of the above contexts of a frame */
+    static aboveBytes(f: Frame): number {
+        const n = f.b4Stride + 32;
+        return 10 * n + (n >> 1) + 1 + 48 * n;
+    }
+
+    /** above: the buffer of the above contexts (shared by the threads searching a frame's rows) */
+    constructor(private f: Frame, private src: Uint16Array[], private params: AV1Params, above?: ArrayBufferLike) {
         this.seq = f.seq;
         this.hdr = f.hdr;
         this.ssx = f.ssx;
         this.ssy = f.ssy;
-        const n = f.b4Stride + 32;
-        this.aMode = new Uint8Array(n);
-        this.aLcoef = new Uint8Array(n);
-        this.aCcoef = [new Uint8Array(n), new Uint8Array(n)];
-        this.aSkip = new Uint8Array(n);
-        this.aUvmode = new Uint8Array(n);
-        this.aPartition = new Uint8Array(n >> 1);
-        this.aPalSz = new Uint8Array(n);
-        this.aPalSzUv = new Uint8Array(n);
-        this.aPal = new Uint16Array(n * 24);
-        this.aTxIntra = new Int8Array(n);
+        const n = f.b4Stride + 32, buffer = above ?? new ArrayBuffer(TileEncoder.aboveBytes(f));
+        let o = 0;
+        const bytes = (length: number): Uint8Array => new Uint8Array(buffer, (o += length) - length, length);
+        this.aMode = bytes(n);
+        this.aLcoef = bytes(n);
+        this.aCcoef = [bytes(n), bytes(n)];
+        this.aSkip = bytes(n);
+        this.aUvmode = bytes(n);
+        this.aPartition = bytes(n >> 1);
+        this.aPalSz = bytes(n);
+        this.aPalSzUv = bytes(n);
+        this.aTxIntra = new Int8Array(buffer, (o += n) - n, n);
+        this.aPal = new Uint16Array(buffer, o + 1 & ~1, n * 24);
         this.cdefChoice = new Int8Array(f.cdefIdx.length);
         this.lossless = this.hdr.allLossless;
         const q = this.hdr.quant;
@@ -207,6 +217,35 @@ class TileEncoder {
         for (this.by = this.rowStart; this.by < this.rowEnd; this.by += 16) {
             this.resetLeft();
             for (this.bx = this.colStart; this.bx < this.colEnd; this.bx += 16) nodes.push(this.search(BL_64X64, root).node);
+        }
+        return nodes;
+    }
+
+    /** Starts searching a tile by rows (searchRow), the above contexts reset */
+    startTile(tileRow: number, tileCol: number): number {
+        this.tile(tileRow, tileCol);
+        this.resetAbove();
+        return this.rowEnd - this.rowStart + 15 >> 4;
+    }
+
+    /**
+     * Searches a row of a tile's superblocks, each after the row above searched the superblock above right of it (and
+     * the reconstruction and above contexts it leaves). progress: the superblocks searched, per row of the tile
+     */
+    searchRow(tileRow: number, tileCol: number, row: number, progress: Int32Array): Node[] {
+        this.tile(tileRow, tileCol);
+        const root = edgeTree(false), nodes: Node[] = [], n = this.colEnd - this.colStart + 15 >> 4;
+        this.by = this.rowStart + row * 16;
+        this.resetLeft();
+        for (let k = 0; k < n; k++) {
+            if (row) {
+                const need = Math.min(k + 2, n);
+                for (let v; (v = Atomics.load(progress, row - 1)) < need;) Atomics.wait(progress, row - 1, v);
+            }
+            this.bx = this.colStart + k * 16;
+            nodes.push(this.search(BL_64X64, root).node);
+            Atomics.store(progress, row, k + 1);
+            Atomics.notify(progress, row);
         }
         return nodes;
     }
@@ -1500,7 +1539,9 @@ function level(width: number, height: number): number {
 }
 
 /** Encodes an image as an AV1 still picture: a sequence header OBU and a frame OBU */
-export function encodeAV1(image: AV1Image, params: AV1Params): Uint8Array {
+// the headers, frame and source of an encoding (with shared memory: the frame's planes and the source in
+// SharedArrayBuffers)
+function setup(image: AV1Image, params: AV1Params, shared: boolean): { seq: SequenceHeader, hdr: FrameHeader, f: Frame, src: Uint16Array[], rows: number, cols: number } {
     const { width, height, layout } = image;
     const bitsFor = (v: number): number => Math.max(1, 32 - Math.clz32(v - 1));
     const seq = {
@@ -1547,18 +1588,119 @@ export function encodeAV1(image: AV1Image, params: AV1Params): Uint8Array {
     // the source in the frame's layout, the edges repeated up to the 8 pixel aligned size
     const src = f.planes.map((plane, p) => {
         const sx = p && layout === 1 ? 1 : 0, w = width + sx >> sx, h = height + sx >> sx, stride = f.strides[p];
-        const pw = f.bw * 4 >> sx, ph = f.bh * 4 >> sx, out = new Uint16Array(plane.length), inp = image.planes[p];
+        const pw = f.bw * 4 >> sx, ph = f.bh * 4 >> sx, inp = image.planes[p];
+        const out = shared ? new Uint16Array(new SharedArrayBuffer(plane.length * 2)) : new Uint16Array(plane.length);
         for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) out[y * stride + x] = inp[Math.min(y, h - 1) * w + Math.min(x, w - 1)];
         return out;
     });
+    if (shared) f.planes = f.planes.map(plane => new Uint16Array(new SharedArrayBuffer(plane.length * 2)));
+    return { seq, hdr, f, src, rows, cols };
+}
 
+export function encodeAV1(image: AV1Image, params: AV1Params): Uint8Array {
+    const { seq, hdr, f, src, rows, cols } = setup(image, params, false);
     const encoder = new TileEncoder(f, src, params);
     // the searches, then the filters (with the whole frame reconstructed), then the tiles written
     const nodes: Node[][] = [];
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) nodes.push(encoder.searchTile(r, c));
+    const g = finish(encoder, seq, hdr, f, params, nodes, rows, cols), dirs = new Int32Array(f.b4Stride * (f.bh + 1)).fill(-1);
+    for (let step = g.next(); ; step = g.next(runFilterTrials(f, src, step.value, dirs))) if (step.done) return step.value;
+}
+
+/** A row search of a frame for a thread (see searchRows) */
+export interface SearchTask {
+    task: 'av1-search';
+    seq: SequenceHeader;
+    hdr: FrameHeader;
+    params: AV1Params;
+    planes: Uint16Array[];
+    src: Uint16Array[];
+    above: Uint8Array;
+    /** the next row to search, the rows of the tile */
+    counter: Int32Array;
+    progress: Int32Array;
+    tileRow: number;
+    tileCol: number;
+}
+
+/** In a thread: searches the rows of a tile not taken yet, posting each one's nodes, then done */
+export function searchRows(task: SearchTask, post: (message: unknown) => void): void {
+    const f = new Frame(task.seq, task.hdr);
+    f.planes = task.planes;
+    const encoder = new TileEncoder(f, task.src, task.params, task.above.buffer);
+    for (let row; (row = Atomics.add(task.counter, 0, 1)) < task.progress.length;)
+        post({ row, nodes: encoder.searchRow(task.tileRow, task.tileCol, row, task.progress) });
+}
+
+/** Filter trials for a thread (see filterTrials) */
+export interface FilterTask extends FilterTrials {
+    task: 'av1-filter';
+    seq: SequenceHeader;
+    hdr: FrameHeader;
+    src: Uint16Array[];
+    /** the frame's blocks (Frame's arrays of them) */
+    blocks: Record<string, Uint8Array | Int8Array>;
+}
+
+const BLOCK_ARRAYS = ['lfLevels', 'txW', 'txH', 'uvTxW', 'uvTxH', 'skip', 'segMap', 'cdefIdx'] as const;
+
+/** In a thread: runs filter trials (runFilterTrials) */
+export function filterTrials(task: FilterTask): BlockErrors[] {
+    const f = new Frame(task.seq, task.hdr);
+    for (const name of BLOCK_ARRAYS) f[name] = task.blocks[name] as never;
+    return runFilterTrials(f, task.src, task, new Int32Array(f.b4Stride * (f.bh + 1)).fill(-1));
+}
+
+// runs filter trials in threads, each a share of the values
+async function threadTrials(threads: Thread[], f: Frame, src: Uint16Array[], t: FilterTrials): Promise<BlockErrors[]> {
+    const planes = t.planes.map(p => {
+        const s = new Uint16Array(new SharedArrayBuffer(p.length * 2));
+        s.set(p);
+        return s;
+    });
+    const blocks: Record<string, Uint8Array | Int8Array> = {};
+    for (const name of BLOCK_ARRAYS) blocks[name] = f[name];
+    const out: BlockErrors[] = new Array<BlockErrors>(t.values.length), used = threads.slice(0, t.values.length);
+    await Promise.all(used.map(async (thread, k) => {
+        const values = t.values.filter((_, i) => i % used.length === k);
+        const errors = await thread.run({ task: 'av1-filter', kind: t.kind, values, planes, seq: f.seq, hdr: f.hdr, src, blocks } satisfies FilterTask) as BlockErrors[];
+        errors.forEach((e, j) => out[k + j * used.length] = e);
+    }));
+    return out;
+}
+
+/**
+ * Encodes like encodeAV1, the searches of superblock rows run by threads in parallel (each superblock after the one
+ * above right of it): the same bitstream
+ */
+export async function encodeAV1Threaded(image: AV1Image, params: AV1Params, threads: Thread[]): Promise<Uint8Array> {
+    const { seq, hdr, f, src, rows, cols } = setup(image, params, true);
+    const above = new Uint8Array(new SharedArrayBuffer(TileEncoder.aboveBytes(f)));
+    const encoder = new TileEncoder(f, src, params, above.buffer);
+    const nodes: Node[][] = [];
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            const sbRows = encoder.startTile(r, c), rowNodes: Node[][] = new Array<Node[]>(sbRows);
+            const counter = new Int32Array(new SharedArrayBuffer(4)), progress = new Int32Array(new SharedArrayBuffer(4 * sbRows));
+            const task: SearchTask = { task: 'av1-search', seq, hdr, params, planes: f.planes, src, above, counter, progress, tileRow: r, tileCol: c };
+            await Promise.all(threads.map(t => t.run(task, m => {
+                const { row, nodes } = m as { row: number, nodes: Node[] };
+                rowNodes[row] = nodes;
+            })));
+            nodes.push(rowNodes.flat());
+        }
+    }
+    const g = finish(encoder, seq, hdr, f, params, nodes, rows, cols);
+    for (let step = g.next(); ; step = g.next(await threadTrials(threads, f, src, step.value))) if (step.done) return step.value;
+}
+
+// the filters (with the whole frame reconstructed; yielding their trials, see chooseFilters), then the tiles written,
+// of searched superblocks
+function* finish(encoder: TileEncoder, seq: SequenceHeader, hdr: FrameHeader, f: Frame, params: AV1Params, nodes: Node[][], rows: number, cols: number): Generator<FilterTrials, Uint8Array, BlockErrors[]> {
+    const { width, height } = f, qidx = hdr.quant.yac;
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) encoder.storeTile(r, c, nodes[r * cols + c]);
     // (lossless frames aren't filtered)
-    if (qidx) chooseFilters(f, src, qidx, params.effort, encoder.cdefChoice);
+    if (qidx) yield* chooseFilters(f, qidx, params.effort, encoder.cdefChoice);
     f.cdefIdx.fill(-1);
     const tiles: Uint8Array[] = [];
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) tiles.push(encoder.writeTile(r, c, nodes[r * cols + c]));
@@ -1610,51 +1752,74 @@ function blockErrors(f: Frame, planes: Uint16Array[], src: Uint16Array[], ey: Fl
 
 const sum = (a: Float64Array): number => a.reduce((s, v) => s + v, 0);
 
+/** Trials of the filter choice: the errors per 64x64 block (luma, chroma) after filtering planes */
+export interface FilterTrials {
+    kind: 'deblock' | 'cdef';
+    /** the loop filter levels or CDEF strengths */
+    values: number[];
+    planes: Uint16Array[];
+}
+
+type BlockErrors = [Float64Array, Float64Array];
+
+function setLevel(f: Frame, level: number): void {
+    f.hdr.loopFilter.levelY = [level, level];
+    f.hdr.loopFilter.levelU = f.hdr.loopFilter.levelV = level;
+    for (let i = 0; i < f.lfLevels.length; i += 4) f.lfLevels.set([level, level, level, level], i);
+}
+
+/** Runs filter trials on a frame (its blocks stored), restoring its planes; dirs: the CDEF directions found so far */
+export function runFilterTrials(f: Frame, src: Uint16Array[], t: FilterTrials, dirs: Int32Array): BlockErrors[] {
+    const n = f.cdefIdx.length, planes = f.planes, coded = Int8Array.from(f.cdefIdx, i => i >= 0 ? 0 : -1);
+    const out = t.values.map(value => {
+        const e: BlockErrors = [new Float64Array(n), new Float64Array(n)];
+        f.planes = t.planes.map(p => p.slice());
+        if (t.kind === 'deblock') {
+            setLevel(f, value);
+            deblock(f);
+        } else {
+            f.hdr.cdef.yStrengths = [value];
+            f.hdr.cdef.uvStrengths = [value];
+            f.cdefIdx.set(coded);
+            if (value) cdef(f, t.planes, dirs);
+        }
+        blockErrors(f, f.planes, src, e[0], e[1]);
+        return e;
+    });
+    f.planes = planes;
+    return out;
+}
+
 /**
  * Chooses the loop filter level (around libaom's guess from the quantizer) and the CDEF strengths (a set of up to 8,
- * one per 64x64 block) by the squared error after filtering
+ * one per 64x64 block) by the squared error after filtering. Yields the trials to run (runFilterTrials, possibly in
+ * threads), given back their errors
  */
-function chooseFilters(f: Frame, src: Uint16Array[], qidx: number, effort: number, choice: Int8Array): void {
+function* chooseFilters(f: Frame, qidx: number, effort: number, choice: Int8Array): Generator<FilterTrials, void, BlockErrors[]> {
     const hdr = f.hdr, q = dequant(0, qidx, 1), n = f.cdefIdx.length;
     const recon = f.planes.map(p => p.slice());
-    const ey = new Float64Array(n), euv = new Float64Array(n);
-    const setLevel = (level: number): void => {
-        hdr.loopFilter.levelY = [level, level];
-        hdr.loopFilter.levelU = hdr.loopFilter.levelV = level;
-        for (let i = 0; i < f.lfLevels.length; i += 4) f.lfLevels.set([level, level, level, level], i);
-    };
     // the loop filter
     const guess = Math.max(0, Math.min(63, (q * 20723 + 1015158 + (1 << 17) >> 18) - 4));
+    const levels = [[guess], [guess - 4, guess, guess + 4], [guess - 6, guess - 3, guess, guess + 3, guess + 6]][effort].filter(l => l >= 0 && l <= 63);
+    const levelErrors = yield { kind: 'deblock', values: levels, planes: recon };
     let bestLevel = guess, bestError = Infinity;
-    for (const level of [[guess], [guess - 4, guess, guess + 4], [guess - 6, guess - 3, guess, guess + 3, guess + 6]][effort]) {
-        if (level < 0 || level > 63) continue;
-        setLevel(level);
-        f.planes = recon.map(p => p.slice());
-        deblock(f);
-        blockErrors(f, f.planes, src, ey, euv);
-        const e = sum(ey) + sum(euv);
+    levels.forEach((level, k) => {
+        const e = sum(levelErrors[k][0]) + sum(levelErrors[k][1]);
         if (e < bestError) {
             bestError = e;
             bestLevel = level;
         }
-    }
-    setLevel(bestLevel);
+    });
+    setLevel(f, bestLevel);
     f.planes = recon.map(p => p.slice());
     deblock(f);
     const deblocked = f.planes;
 
     // CDEF: each candidate strength's errors per 64x64 block (luma, chroma), of the blocks with coefficients
     const strengths = [[0, 5, 9, 17, 33], [0, 1, 4, 5, 9, 17, 33, 61], [0, 1, 4, 5, 8, 9, 13, 17, 25, 33, 41, 61]][effort];
-    const errY = strengths.map(() => new Float64Array(n)), errUv = strengths.map(() => new Float64Array(n));
-    const coded = Array.from(f.cdefIdx, i => i >= 0), dirs = new Int32Array(f.b4Stride * (f.bh + 1)).fill(-1);
-    strengths.forEach((strength, k) => {
-        hdr.cdef.yStrengths = [strength];
-        hdr.cdef.uvStrengths = [strength];
-        f.planes = deblocked.map(p => p.slice());
-        f.cdefIdx.set(Int8Array.from(coded, c => c ? 0 : -1));
-        if (strength) cdef(f, deblocked, dirs);
-        blockErrors(f, f.planes, src, errY[k], errUv[k]);
-    });
+    const coded = Array.from(f.cdefIdx, i => i >= 0);
+    const strengthErrors = yield { kind: 'cdef', values: strengths, planes: deblocked };
+    const errY = strengthErrors.map(e => e[0]), errUv = strengthErrors.map(e => e[1]);
     // a set of (luma, chroma) strength pairs, added greedily; the size with the least error and signaling
     const lambda = 0.08 * (q / 8) ** 2, blocks = coded.filter(c => c).length;
     const pairs: number[][] = [];
