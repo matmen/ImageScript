@@ -199,7 +199,7 @@ export async function encodeVarDCT(rgba: Uint8Array, width: number, height: numb
     // patches at effort 2: text-like features of screenshots stored once (subtracted from the planes here)
     const patches = effort >= 2 ? findPatches(planes, pw, width, height, distance, alpha ? 1 : 0) : null;
     // (the search in threads, if they start: the same types)
-    let types = new Int8Array(bw * bh);
+    let types: Int8Array = new Int8Array(bw * bh);
     if (effort) {
         const field = initialQuantField(distance * 0.62, planes, pw, bh * 8, 0.725 / (distance * 0.62));
         // (at most one per 256x256 pixels: more take longer to start than they save)

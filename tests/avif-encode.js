@@ -70,12 +70,12 @@ const compare = (a, b) => {
     }
 
     // threads (rows searched in a wavefront, filter trials in parallel): the same files as without, with alpha and
-    // with several tiles too
+    // with several tiles too (each just above its effort's size for threads, to keep the test fast)
     {
-        const big = photo.clone().resize(704, Image.RESIZE_AUTO), alpha = big.clone();
+        const big = photo.clone().resize(448, Image.RESIZE_AUTO), alpha = photo.clone().resize(640, Image.RESIZE_AUTO);
         for (let i = 3; i < alpha.bitmap.length; i += 4) alpha.bitmap[i] = (i >> 2) % alpha.width;
-        const wide = new Image(4160, 192);
-        for (let y = 0; y < 192; y++) for (let x = 0; x < 4160; x++) wide.setPixelAt(x, y, Image.rgbaToColor(x * 37 & 255, y * 71 & 255, (x ^ y) & 255, 255));
+        const wide = new Image(4160, 128);
+        for (let y = 0; y < 128; y++) for (let x = 0; x < 4160; x++) wide.setPixelAt(x, y, Image.rgbaToColor(x * 37 & 255, y * 71 & 255, (x ^ y) & 255, 255));
         for (const [name, image, effort] of [['photo', big, 1], ['alpha', alpha, 0], ['tiles', wide, 0]]) {
             const one = await image.encodeAVIF({effort, threads: 1, metadata: {creationTime: 0}});
             const four = await image.encodeAVIF({effort, threads: 4, metadata: {creationTime: 0}});
