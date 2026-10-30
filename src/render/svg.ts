@@ -17,7 +17,7 @@ import { base64 } from '../util/bytes.ts';
 import { gunzip } from '../codecs/zlib.ts';
 import { applyFilter, Filter, Primitive, Kind, Input, Transfer, ColorMatrix, Pixmap, Light } from './filter.ts';
 import { BLEND_MODES, blendPixel } from './blend.ts';
-import { FontFace, FontStyle, fontFace, layOutText, parseFontFamilies, pathLength, placeOutline, colorTablesOf, TextInput, ChunkInput, SpanInput, TextOutput, SpanOutput, Baseline } from './svg-text.ts';
+import { FontFace, FontStyle, fontFace, layOutText, parseFontFamilies, parseVariationSettings, pathLength, placeOutline, colorTablesOf, TextInput, ChunkInput, SpanInput, TextOutput, SpanOutput, Baseline } from './svg-text.ts';
 import { rasterizeGlyph } from './text.ts';
 import { renderPaintGlyph } from './colr.ts';
 import { decodeSync as decodePNG } from '../codecs/png.ts';
@@ -30,7 +30,7 @@ const INHERITED = new Set(['fill', 'fill-opacity', 'fill-rule', 'stroke', 'strok
     'stroke-miterlimit', 'stroke-dasharray', 'stroke-dashoffset', 'color', 'visibility', 'clip-rule', 'font-size', 'marker-start', 'marker-mid',
     'marker-end', 'image-rendering', 'color-interpolation-filters', 'paint-order', 'shape-rendering',
     'font-family', 'font-weight', 'font-style', 'font-stretch', 'font-variant', 'text-anchor', 'letter-spacing', 'word-spacing', 'dominant-baseline',
-    'writing-mode', 'kerning', 'font-kerning', 'text-rendering']);
+    'writing-mode', 'kerning', 'font-kerning', 'text-rendering', 'font-variation-settings', 'font-optical-sizing']);
 
 // elements a switch may choose from
 // properties that aren't presentation attributes
@@ -145,6 +145,7 @@ const DEFAULTS: Record<string, string> = {
     'stop-color': 'black', 'stop-opacity': '1', 'marker-start': 'none', 'marker-mid': 'none', 'marker-end': 'none',
     'image-rendering': 'auto', 'filter': 'none', 'flood-color': 'black', 'flood-opacity': '1', 'color-interpolation-filters': 'linearRGB',
     'lighting-color': 'white', 'shape-rendering': 'auto', 'font-weight': '400', 'font-style': 'normal', 'font-stretch': 'normal',
+    'font-variation-settings': 'normal', 'font-optical-sizing': 'auto',
     'font-variant': 'normal', 'text-anchor': 'start', 'letter-spacing': 'normal', 'word-spacing': 'normal', 'dominant-baseline': 'auto',
     'writing-mode': 'lr-tb', 'text-rendering': 'auto'
 };
@@ -1178,7 +1179,10 @@ class Document {
             const fontStyle = style['font-style'] === 'italic' || style['font-style'] === 'oblique' ? style['font-style'] as FontStyle : 'normal';
             return {
                 start, end, paint: style, visible: style.visibility === 'visible',
-                font: { families: parseFontFamilies(style['font-family'] ?? ''), weight: Number(style['font-weight']), style: fontStyle, stretch },
+                font: {
+                    families: parseFontFamilies(style['font-family'] ?? ''), weight: Number(style['font-weight']), style: fontStyle, stretch,
+                    variations: parseVariationSettings(style['font-variation-settings'] ?? ''), opticalSizing: style['font-optical-sizing'] !== 'none',
+                },
                 fontSize, smallCaps: style['font-variant'] === 'small-caps',
                 kerning: !(style.kerning !== undefined && style.kerning !== 'auto' && parseLength(style.kerning, viewport, fontSize, 'x') === 0) && style['font-kerning'] !== 'none',
                 letterSpacing: spacing(style['letter-spacing']), wordSpacing: spacing(style['word-spacing']),

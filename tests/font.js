@@ -347,4 +347,30 @@ const panic = message => {
             if (!(error instanceof RangeError)) panic(`features ${JSON.stringify(features)} should be rejected`);
         }
     }
+
+    // variable fonts (Roboto Flex, its subset of resvg's test fonts): axes by name or tag, clamped to their ranges, the
+    // optical size the font size by default; fonts without axes aren't affected
+    {
+        const flex = await fs.readFile('./tests/fonts/resvg/RobotoFlex.subset.ttf'), text = 'Bold Thin';
+        const same = (a, b) => a.width === b.width && a.height === b.height && a.bitmap.every((v, i) => v === b.bitmap[i]);
+        const ink = image => image.bitmap.reduce((sum, v, i) => (i & 3) === 3 ? sum + v : sum, 0);
+        const render = variations => Image.renderText(flex, 32, text, {variations});
+        const regular = await render({}), bold = await render({weight: 900}), thin = await render({weight: 100});
+        if (!(ink(thin) < ink(regular) && ink(regular) < ink(bold))) panic('variable font: weight should change the strokes');
+        if (!same(bold, await render({wght: 900}))) panic('variable font: weight and wght should be the same');
+        // (its weights go up to 1000)
+        if (!same(await render({weight: 1000}), await render({weight: 5000}))) panic('variable font: weights should be clamped to the axis');
+        if ((await render({width: 25})).width >= regular.width) panic('variable font: width 25 should be narrower');
+        if (!same(regular, await render({opticalSize: 32}))) panic('variable font: the optical size should be the font size by default');
+        if (same(regular, await render({opticalSize: 144}))) panic('variable font: the optical size should change the glyphs');
+        if (same(regular, await render({GRAD: 150}))) panic('variable font: custom axes by tag');
+        if (!same(regular, await render({ZZZZ: 1}))) panic('variable font: axes it doesn\'t have should be ignored');
+        const plain = await fs.readFile('./tests/fonts/sourcesans3 regular.otf');
+        if (!same(await Image.renderText(plain, 32, text), await Image.renderText(plain, 32, text, {variations: {weight: 900}}))) panic('fonts without axes shouldn\'t change');
+        for (const variations of [{wieght: 700}, {weight: NaN}, {weight: '700'}]) {
+            let error = null;
+            try { await render(variations); } catch (err) { error = err; }
+            if (!(error instanceof RangeError)) panic(`variations ${JSON.stringify(variations)} should be rejected`);
+        }
+    }
 })();

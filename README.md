@@ -56,7 +56,7 @@ and encoded as GIF, APNG or WebP, all at once or
 P3, Adobe RGB, ...) are converted to sRGB when decoding, so images look the way browsers show them.
 
 - [Text rendering](https://imagescript.matmen.dev/classes/Image.html#rendertext) with TrueType and OpenType fonts:
-  all scripts, color emoji
+  all scripts, color emoji, variable fonts
 - [SVG rendering](https://imagescript.matmen.dev/classes/Image.html#rendersvg), including text (with fonts you pass
   or fonts embedded in the SVG)
 - [Resizing](https://imagescript.matmen.dev/classes/Image.html#resize),

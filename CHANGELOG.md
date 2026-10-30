@@ -2,6 +2,18 @@
 
 ## 3.12.0
 
+### New
+
+- Variable fonts: `renderText()` renders the instance `TextStyle.variations` asks for, by axis names (`weight`,
+  `width`, `slant`, `italic`, `opticalSize`) or tags (like Roboto Flex's `GRAD`), clamped to the axes' ranges; the
+  optical size is the font size unless given, like browsers' `font-optical-sizing: auto`. `renderSVG()` maps
+  `font-weight`, `font-stretch` and `font-style` to the axes like browsers and resvg do, with `font-optical-sizing`
+  and `font-variation-settings`, and matches a variable font's ranges of weights and stretches like several faces.
+  TrueType outlines (gvar, with the interpolation of untouched points), advances (HVAR, else gvar's phantom points),
+  metrics (MVAR), GPOS adjustments and anchors (variation indices), feature variations and hinting (cvar) vary;
+  CFF2 outlines aren't supported yet. Outlines and advances are the same as fontTools' and HarfBuzz's, shaping is
+  within HarfBuzz's rounding, and all 14 of resvg's `font-variation-settings` tests pass.
+
 ### Changes
 
 - AVIFs without an ICC profile whose nclx box (or sequence header) gives other color primaries than sRGB's (Display

@@ -40,6 +40,9 @@ export interface FontFace {
     style: FontStyle;
     /** 1 (ultra-condensed) - 9 (ultra-expanded), 5 is normal */
     stretch: number;
+    /** a variable font's ranges: of weights and stretches (its wght and wdth axes), whether it has italics (ital) and
+     * obliques (negative slnt); null for other fonts */
+    ranges: { weight: [number, number] | null, stretch: [number, number] | null, italic: boolean, oblique: boolean } | null;
     /** the generic families it fits (serif, sans-serif, monospace, cursive, fantasy) */
     generic: Set<string>;
     /** metrics in font units */
@@ -122,8 +125,20 @@ export function fontFace(data: Uint8Array, descriptors?: { family?: string, weig
     else if ((familyType === 2 && serifStyle >= 2 && serifStyle <= 10) || (familyClass >= 1 && familyClass <= 7 && familyClass !== 6)) generic.add('serif');
     else if ((familyType === 2 && serifStyle >= 11 && serifStyle <= 15) || familyClass === 8) generic.add('sans-serif');
 
+    // (a variable font's: by its axes)
+    const axis = (tag: string) => font.axes.find(a => a.tag === tag);
+    const wght = axis('wght'), wdth = axis('wdth'), ital = axis('ital'), slnt = axis('slnt');
+    const classes = (min: number, max: number): [number, number] | null => {
+        const lo = STRETCH_PERCENT.findIndex(p => p >= min), hi = STRETCH_PERCENT.filter(p => p <= max).length - 1;
+        return lo >= 0 && hi >= lo ? [lo + 1, hi + 1] : null;
+    };
+    const ranges = font.axes.length ? {
+        weight: wght ? [wght.min, wght.max] as [number, number] : null, stretch: wdth ? classes(wdth.min, wdth.max) : null,
+        italic: !!ital && ital.max >= 1, oblique: !!slnt && slnt.min < 0,
+    } : null;
+
     const face: FontFace = {
-        font, families: families.map(name => name.toLowerCase()), weight, style, stretch, generic,
+        font, families: families.map(name => name.toLowerCase()), weight, style, stretch, ranges, generic,
         ascent, descent, xHeight,
         underlinePosition: post >= 0 ? font.i16(post + 8) : -Math.trunc(units / 9),
         underlineThickness,
@@ -141,12 +156,26 @@ export interface FontQuery {
     weight: number;
     style: FontStyle;
     stretch: number;
+    /** font-variation-settings: axis values by tag */
+    variations: Record<string, number>;
+    /** font-optical-sizing: whether a variable font's optical size is the font size (auto) */
+    opticalSizing: boolean;
 }
+
+// the percentages of the stretches 1-9 (CSS font-stretch keywords)
+const STRETCH_PERCENT = [50, 62.5, 75, 87.5, 100, 112.5, 125, 150, 200];
 
 const GENERIC = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy']);
 
-// the face of a family that matches the query best (CSS Fonts' font matching: stretch, then style, then weight)
-function bestMatch(candidates: FontFace[], query: FontQuery): FontFace {
+// the face of a family that matches the query best (CSS Fonts' font matching: stretch, then style, then weight; a
+// variable font's ranges match what they include, else by their nearest end)
+function bestMatch(faces: FontFace[], query: FontQuery): FontFace {
+    const clamp = (v: number, range: [number, number] | null | undefined, own: number): number => range ? Math.min(Math.max(v, range[0]), range[1]) : own;
+    const candidates = faces.map(f => !f.ranges ? f : {
+        ...f, face: f, weight: clamp(query.weight, f.ranges.weight, f.weight), stretch: clamp(query.stretch, f.ranges.stretch, f.stretch),
+        style: query.style === 'italic' && f.ranges.italic ? 'italic' : query.style === 'oblique' && f.ranges.oblique ? 'oblique' : f.style,
+    });
+    const original = (f: FontFace): FontFace => (f as FontFace & { face?: FontFace }).face ?? f;
     const pick = (values: number[], wanted: number, below: boolean): number => {
         if (values.includes(wanted)) return wanted;
         const lower = values.filter(v => v < wanted).sort((a, b) => b - a), higher = values.filter(v => v > wanted).sort((a, b) => a - b);
@@ -166,7 +195,32 @@ function bestMatch(candidates: FontFace[], query: FontQuery): FontFace {
         const up = weights.filter(v => v > w && v <= 500).sort((a, b) => a - b)[0];
         weight = up ?? pick(weights.filter(v => v < w || v > 500), w, true);
     } else weight = pick(weights, w, w < 400);
-    return list.find(f => f.weight === weight) as FontFace;
+    return original(list.find(f => f.weight === weight) as FontFace);
+}
+
+const variedFaces = new WeakMap<FontFace, Map<string, FontFace>>();
+
+/**
+ * A face at a span's instance of its variable font (like usvg's): wght by the weight, wdth by the stretch, ital for
+ * italic, slnt -12 for oblique, opsz by the font size (with optical sizing), then font-variation-settings; the face
+ * itself for other fonts
+ */
+export function variedFace(face: FontFace, query: FontQuery, fontSize: number): FontFace {
+    if (!face.font.axes.length) return face;
+    const values: Record<string, number> = { wght: query.weight };
+    if (query.stretch !== 5) values.wdth = STRETCH_PERCENT[query.stretch - 1];
+    if (query.style === 'italic') values.ital = 1;
+    if (query.style === 'oblique') values.slnt = -12;
+    if (query.opticalSizing) values.opsz = fontSize;
+    const font = face.font.withVariations({ ...values, ...query.variations });
+    if (font === face.font) return face;
+    let byCoords = variedFaces.get(face);
+    if (!byCoords) variedFaces.set(face, byCoords = new Map<string, FontFace>());
+    const key = font.coords.join(',');
+    let varied = byCoords.get(key);
+    // (the ascent and descent moved like the font's, by MVAR)
+    if (!varied) byCoords.set(key, varied = { ...face, font, ascent: face.ascent + font.ascender - face.font.ascender, descent: face.descent + font.descender - face.font.descender });
+    return varied;
 }
 
 /**
@@ -254,6 +308,20 @@ function colorKind(face: FontFace, glyph: number, fontSize: number): ColorKind |
     if (t.svg && t.svg(glyph)) return 'svg';
     if (t.bitmaps(fontSize)?.(glyph)) return 'bitmap';
     return null;
+}
+
+/**
+ * font-variation-settings: normal, or quoted 4-character tags with a number each (comma separated; invalid ones are
+ * left out, the last of a tag counts)
+ */
+export function parseVariationSettings(value: string): Record<string, number> {
+    const out: Record<string, number> = {};
+    if (value.trim().toLowerCase() === 'normal') return out;
+    for (const part of value.split(',')) {
+        const m = /^\s*(["'])(.{4})\1\s+([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)\s*$/i.exec(part);
+        if (m) out[m[2]] = Number(m[3]);
+    }
+    return out;
 }
 
 /** the generic and named families of a font-family value, lowercase */
@@ -418,7 +486,10 @@ function shapeChunk<S>(chunk: ChunkInput<S>, fonts: FontFace[], primary: Map<Spa
         if (base) {
             const grapheme = cps.slice(start, end);
             let face: FontFace = base;
-            if (!grapheme.every(c => isDefaultIgnorableCodepoint(c) || base.font.glyphIndex(c))) face = fallbackFont(fonts, base, grapheme, new Set([base])) ?? base;
+            if (!grapheme.every(c => isDefaultIgnorableCodepoint(c) || base.font.glyphIndex(c))) {
+                const other = fallbackFont(fonts, base, grapheme, new Set([base]));
+                face = other && span ? variedFace(other, span.font, span.fontSize) : base;
+            }
             faceOf.fill(face, start, end);
             if (face !== base) fallback.fill(face, start, end);
         }
@@ -902,7 +973,7 @@ export function layOutText<S>(text: TextInput<S>, fonts: FontFace[]): TextOutput
     const primary = new Map<SpanInput<S>, FontFace>();
     for (const chunk of text.chunks) for (const span of chunk.spans) {
         const face = matchFont(fonts, span.font);
-        if (face) primary.set(span, face);
+        if (face) primary.set(span, variedFace(face, span.font, span.fontSize));
     }
 
     const spans: SpanOutput<S>[] = [];

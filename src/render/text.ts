@@ -112,8 +112,25 @@ export function loadFont(data: Uint8Array): Font {
     return font;
 }
 
-function sizedFont(data: Uint8Array, size: number, hinting: boolean): SizedFont {
-    const font = loadFont(data);
+// the axis names of renderText's variations: registered axes by name (tags are fine too, custom axes have theirs)
+const AXES: Record<string, string> = { weight: 'wght', width: 'wdth', slant: 'slnt', italic: 'ital', opticalSize: 'opsz' };
+
+/** Axis values by tag of variations by name (weight, width, slant, italic, opticalSize) or 4-character tag */
+export function axisValues(variations: Record<string, number | boolean>): Record<string, number> {
+    const values: Record<string, number> = {};
+    for (const [key, value] of Object.entries(variations)) {
+        const tag = AXES[key] ?? (key.length === 4 ? key : null);
+        if (!tag) throw new RangeError(`Unknown font variation ${key}: use weight, width, slant, italic, opticalSize or an axis tag`);
+        const v = typeof value === 'boolean' ? +value : value;
+        if (typeof v !== 'number' || !Number.isFinite(v)) throw new RangeError(`Invalid font variation ${key}: ${String(value)}`);
+        values[tag] = v;
+    }
+    return values;
+}
+
+function sizedFont(data: Uint8Array, size: number, hinting: boolean, variations: Record<string, number>): SizedFont {
+    // (a variable font's instance: the optical size the font size unless given, like browsers' font-optical-sizing)
+    const font = loadFont(data).withVariations({ opsz: size, ...variations });
     let bySize = sizes.get(font);
     if (!bySize) sizes.set(font, bySize = new Map<string, SizedFont>());
     const key = `${size}:${hinting}`;
@@ -184,10 +201,10 @@ function glyphOf(f: SizedFont, index: number, size: number): Glyph {
  * @param foreground RGBA color (0xrrggbbaa) of color glyph layers drawn in the text color
  * @return the coverage of the outline glyphs, and the premultiplied RGBA pixels of color glyphs (null without any)
  */
-export async function render(fonts: Uint8Array[], size: number, text: string, layout: Layout, hinting = false, foreground = 0xffffffff, features: Features = []): Promise<{ width: number, height: number, coverage: Uint8Array, color: Uint8ClampedArray | null }> {
+export async function render(fonts: Uint8Array[], size: number, text: string, layout: Layout, hinting = false, foreground = 0xffffffff, features: Features = [], variations: Record<string, number> = {}): Promise<{ width: number, height: number, coverage: Uint8Array, color: Uint8ClampedArray | null }> {
     // reading past the end of damaged or truncated font data throws a RangeError
     try {
-        return await layOut(fonts, size, text, layout, hinting, foreground, features);
+        return await layOut(fonts, size, text, layout, hinting, foreground, features, variations);
     } catch (err) {
         if (err instanceof RangeError && !(err instanceof TooLarge)) throw new Error('Font: damaged or truncated font data', { cause: err });
         throw err;
@@ -198,9 +215,9 @@ export async function render(fonts: Uint8Array[], size: number, text: string, la
 const MAX_PIXELS = 1 << 28;
 class TooLarge extends RangeError {}
 
-async function layOut(fonts: Uint8Array[], size: number, text: string, layout: Layout, hinting: boolean, foreground: number, features: Features): Promise<{ width: number, height: number, coverage: Uint8Array, color: Uint8ClampedArray | null }> {
+async function layOut(fonts: Uint8Array[], size: number, text: string, layout: Layout, hinting: boolean, foreground: number, features: Features, variations: Record<string, number>): Promise<{ width: number, height: number, coverage: Uint8Array, color: Uint8ClampedArray | null }> {
     const sized: SizedFont[] = [];
-    const font = (i: number): SizedFont => sized[i] ??= sizedFont(fonts[i], size, hinting);
+    const font = (i: number): SizedFont => sized[i] ??= sizedFont(fonts[i], size, hinting, variations);
     const primary = font(0);
     const ascent = Math.ceil(primary.font.ascender * primary.scale);
     // (at least a pixel, damaged fonts can have any metrics)

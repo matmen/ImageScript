@@ -292,6 +292,15 @@ export interface TextStyle {
      * `kern`), a number picks an alternate (`salt: 2`). Fonts without a feature ignore it. Default: `{}`
      */
     features?: Record<string, boolean | number>;
+    /**
+     * The instance of variable fonts, by their axes: `weight` (1-1000, like CSS's `font-weight`: 400 regular, 700
+     * bold), `width` (percent of the normal width: 75 condensed, 125 expanded), `slant` (degrees, negative leans
+     * right), `italic` (`true`/`false`), `opticalSize` (the size the glyphs are designed for, in pixels; default: the
+     * font size, like browsers' `font-optical-sizing: auto`), and other axes by their 4-character tag (like Roboto
+     * Flex's `GRAD: 50`). Values outside an axis's range are clamped, axes a font doesn't have are ignored, fonts
+     * without axes aren't affected. Default: `{}` (the fonts' default instances)
+     */
+    variations?: Record<string, number | boolean>;
 }
 
 /** Options of {@link Image.cropCircle} */
@@ -2429,7 +2438,8 @@ export class Image {
     static renderText(font: BinaryData | BinaryData[], size: number, text: string, color?: Color, layout?: TextLayout, style?: TextStyle): Promise<Image>;
     static async renderText(font: BinaryData | BinaryData[], size: number, text: string, colorOrOptions: Color | TextOptions = 0xffffffff, layoutArgument?: TextLayout, styleArgument: TextStyle = {}): Promise<Image> {
         const options: TextOptions = isOptions(colorOrOptions) ? colorOrOptions : { ...styleArgument, color: colorOrOptions, layout: layoutArgument };
-        const { color = 0xffffffff, layout = new TextLayout(), strokeWidth = 0, strokeColor = 0x000000ff, hinting = true, features = {} } = options;
+        const { color = 0xffffffff, layout = new TextLayout(), strokeWidth = 0, strokeColor = 0x000000ff, hinting = true, features = {}, variations = {} } = options;
+        const axes = textRenderer.axisValues(variations);
         size = finite(size, 'font size');
         if (finite(strokeWidth, 'stroke width') < 0)
             throw new RangeError('Invalid stroke width');
@@ -2438,7 +2448,7 @@ export class Image {
 
         const [r, g, b, a] = Image.colorToRGBA(color);
         // color glyph layers in the text color take it without its alpha, which applies to the whole color glyph
-        const rendered = await textRenderer.render(fonts.map(view), size, text, layout, hinting, (r << 24 | g << 16 | b << 8 | 255) >>> 0, featureList(features));
+        const rendered = await textRenderer.render(fonts.map(view), size, text, layout, hinting, (r << 24 | g << 16 | b << 8 | 255) >>> 0, featureList(features), axes);
 
         // the outline needs room around the glyphs
         const pad = Math.ceil(strokeWidth);

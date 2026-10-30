@@ -214,6 +214,9 @@ export class Hinter {
         const cvt = table('cvt ');
         this.cvt = new Int16Array(cvt.length >> 1);
         for (let i = 0; i < this.cvt.length; i++) this.cvt[i] = font.i16(font.tables['cvt '].offset + i * 2);
+        // (a variable font's instance: the values moved by cvar's deltas, rounded to font units like FreeType does)
+        const deltas = font.cvtDeltas(this.cvt.length);
+        if (deltas) for (let i = 0; i < this.cvt.length; i++) this.cvt[i] = Math.round(this.cvt[i] + deltas[i]);
 
         const maxp = font.tables.maxp.offset;
         const version = font.u32(maxp);
