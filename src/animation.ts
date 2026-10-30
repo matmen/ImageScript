@@ -451,15 +451,16 @@ export class Animation extends Array<Frame> {
 
         if (type === 'jxl') {
             const frames: Frame[] = [];
-            let loopCount = -1;
+            let loopCount = -1, icc: Uint8Array | undefined;
             for await (const decoded of jxl.frames(data, maxPixels, 'reinhard', threads)) {
                 const frame = new Frame(decoded.width, decoded.height, decoded.duration, 0, 0, Frame.DISPOSAL_BACKGROUND);
                 frame.bitmap = decoded.pixels;
                 frames.push(frame.__orient__(decoded.orientation));
                 loopCount = fromPlays(decoded.loopCount);
+                icc = decoded.icc;
                 if (onlyExtractFirstFrame) break;
             }
-            return new Animation(frames, frames.length > 1 ? loopCount : -1);
+            return new Animation(profile(frames, icc), frames.length > 1 ? loopCount : -1);
         }
 
         if (type) return new Animation([Frame.from(await Image.decode(data, { maxPixels, applyColorProfile }), 0)]);

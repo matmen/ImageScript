@@ -7,7 +7,7 @@
 import { startThreads } from '../util/threads.ts';
 import { MAX_PIXELS, checkPixels } from '../util/limits.ts';
 import { BitReader } from './jxl/bits.ts';
-import { imageHeader, skipICC } from './jxl/headers.ts';
+import { decodeICC, imageHeader, readICC } from './jxl/headers.ts';
 import { frameHeader, toc } from './jxl/frame-header.ts';
 import { decodeFrame, DecoderState, type FrameThreads } from './jxl/frame.ts';
 import { ColorOutput } from './jxl/color.ts';
@@ -73,12 +73,15 @@ function codestream(d: Uint8Array): Uint8Array {
 }
 
 /** The frames shown (composited, as RGBA), their durations in milliseconds */
-export async function* frames(data: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard', threads = 1): AsyncGenerator<{ width: number, height: number, pixels: Uint8Array, duration: number, orientation: number, loopCount: number }> {
+export async function* frames(data: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard', threads = 1): AsyncGenerator<{ width: number, height: number, pixels: Uint8Array, duration: number, orientation: number, loopCount: number, icc?: Uint8Array }> {
     const d = codestream(data);
     const r = new BitReader(d);
     const image = imageHeader(r);
     checkPixels(image.width, image.height, maxPixels);
-    if (image.colour.wantICC) skipICC(r);
+    // the embedded ICC profile: what the pixels are in unless they're XYB (which decodes to sRGB here; its profile only
+    // says what the image was before)
+    const stream = image.colour.wantICC ? readICC(r) : null;
+    const icc = stream && !image.xybEncoded ? decodeICC(stream) ?? undefined : undefined;
     r.zeroPadToByte();
     let at = r.bytePosition;
     if (image.preview) {
@@ -111,7 +114,7 @@ export async function* frames(data: Uint8Array, maxPixels = MAX_PIXELS, toneMapp
                 shown++;
                 yield {
                     width: image.width, height: image.height, pixels: state.output.toRGBA(frame.canvas), duration: frame.header.duration * tick,
-                    orientation: image.orientation, loopCount: a ? a.numLoops : 1
+                    orientation: image.orientation, loopCount: a ? a.numLoops : 1, icc
                 };
             }
             if (frame.header.isLast) return;
@@ -122,7 +125,7 @@ export async function* frames(data: Uint8Array, maxPixels = MAX_PIXELS, toneMapp
 }
 
 /** Decodes the first frame shown */
-export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard', threads = 1): Promise<{ width: number, height: number, pixels: Uint8Array, orientation: number }> {
+export async function decode(data: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard', threads = 1): Promise<{ width: number, height: number, pixels: Uint8Array, orientation: number, icc?: Uint8Array }> {
     for await (const frame of frames(data, maxPixels, toneMapping, threads)) return frame;
     throw new Error('JPEG XL: no frame shown');
 }

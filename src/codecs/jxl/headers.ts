@@ -241,12 +241,13 @@ export function imageHeader(r: BitReader): ImageHeader {
 }
 
 /** Reads (and skips) the embedded ICC profile's stream */
-export function skipICC(r: BitReader): void {
+export function readICC(r: BitReader): Uint8Array {
     const size = r.u64();
     if (size > 1 << 28) throw new Error('JPEG XL: ICC profile too large');
     const dec = new EntropyDecoder(r, 41);
     dec.begin(r);
     const kind = (b: number): number => b >= 97 && b <= 122 || b >= 65 && b <= 90 ? 0 : b >= 48 && b <= 57 || b === 46 || b === 44 ? 1 : -1;
+    const out = new Uint8Array(size);
     let b1 = 0, b2 = 0;
     for (let i = 0; i < size; i++) {
         let ctx = 0;
@@ -258,10 +259,180 @@ export function skipICC(r: BitReader): void {
         }
         const b = dec.read(r, ctx);
         if (b > 255) throw new Error('JPEG XL: invalid ICC profile');
+        out[i] = b;
         b2 = b1;
         b1 = b;
     }
     dec.finish();
+    return out;
+}
+
+// the tags and tag types the ICC stream's commands abbreviate
+const COMMON_TAGS = ['rTRC', 'rXYZ', 'cprt', 'wtpt', 'bkpt', 'rXYZ', 'gXYZ', 'bXYZ', 'kXYZ', 'rTRC', 'gTRC', 'bTRC', 'kTRC', 'chad', 'desc', 'chrm', 'dmnd', 'dmdd', 'lumi'];
+const COMMON_DATA = ['XYZ ', 'desc', 'text', 'mluc', 'para', 'curv', 'sf32', 'gbd '];
+
+/** The ICC profile an encoded ICC stream (see readICC) describes, null if the stream is invalid */
+export function decodeICC(stream: Uint8Array): Uint8Array | null {
+    let at = 0;
+    const fail = (): never => {
+        throw new RangeError('invalid ICC stream');
+    };
+    const varint = (s: Uint8Array, pos: { at: number }): number => {
+        let value = 0;
+        for (let shift = 0; shift < 63; shift += 7) {
+            if (pos.at >= s.length) fail();
+            const b = s[pos.at++];
+            value += (b & 127) * 2 ** shift;
+            if (!(b & 128)) break;
+        }
+        return value;
+    };
+    try {
+        const head = { at: 0 };
+        const outputSize = varint(stream, head), commandsSize = varint(stream, head);
+        at = head.at;
+        if (at + commandsSize > stream.length || outputSize > 1 << 28) fail();
+        const commands = stream.subarray(at, at + commandsSize), cmd = { at: 0 };
+        let data = stream.subarray(at + commandsSize);
+        const headerSize = Math.min(outputSize, 128);
+        if (data.length < headerSize) fail();
+        const out = new Uint8Array(outputSize);
+        let o = 0;
+        const push = (...bytes: number[]): void => pushBytes(bytes);
+        const pushBytes = (bytes: ArrayLike<number>): void => {
+            if (o + bytes.length > outputSize) fail();
+            out.set(bytes, o);
+            o += bytes.length;
+        };
+        const pushText = (t: string): void => pushBytes([...t].map(c => c.charCodeAt(0)));
+        const u32 = (v: number): number[] => [v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255];
+        const take = (n: number): Uint8Array => {
+            if (n > data.length) fail();
+            const bytes = data.subarray(0, n);
+            data = data.subarray(n);
+            return bytes;
+        };
+
+        // the header: predicted, the stream has the differences
+        const header = take(headerSize);
+        const predict = (i: number): number => {
+            const h40 = String.fromCharCode(header[40]), h41 = String.fromCharCode(header[41]);
+            if (i <= 3) return u32(outputSize)[i];
+            if (i === 8) return 4;
+            if (i >= 12 && i <= 23) return 'mntrRGB XYZ '.charCodeAt(i - 12);
+            if (i >= 36 && i <= 39) return 'acsp'.charCodeAt(i - 36);
+            if (h40 === 'A' && i >= 41 && i <= 43) return 'PPL'.charCodeAt(i - 41);
+            if (h40 === 'M' && i >= 41 && i <= 43) return 'SFT'.charCodeAt(i - 41);
+            if (h40 === 'S' && h41 === 'G' && (i === 42 || i === 43)) return 'I '.charCodeAt(i - 42);
+            if (h40 === 'S' && h41 === 'U' && (i === 42 || i === 43)) return 'NW'.charCodeAt(i - 42);
+            if (i === 70) return 246;
+            if (i === 71) return 214;
+            if (i === 73) return 1;
+            if (i === 78) return 211;
+            if (i === 79) return 45;
+            if (i >= 80 && i <= 83) return header[4 + i - 80];
+            return 0;
+        };
+        for (let i = 0; i < headerSize; i++) push(predict(i) + header[i] & 255);
+        if (outputSize <= 128) return out;
+
+        // the tag table
+        const v = varint(commands, cmd);
+        if (v > 0) {
+            const numTags = v - 1;
+            if ((outputSize - 128) / 12 < numTags) fail();
+            push(...u32(numTags));
+            let prevStart = numTags * 12 + 128, prevSize = 0;
+            for (; ;) {
+                // (like jxl-oxide: the commands may end here)
+                if (cmd.at >= commands.length) return out.subarray(0, o);
+                const command = commands[cmd.at++], code = command & 63;
+                if (code === 0) break;
+                let tag: string;
+                if (code === 1) tag = String.fromCharCode(...take(4));
+                else if (code <= 20) tag = COMMON_TAGS[code - 2];
+                else return fail();
+                const start = command & 64 ? varint(commands, cmd) : prevStart + prevSize;
+                const size = command & 128 ? varint(commands, cmd) : ['rXYZ', 'gXYZ', 'bXYZ', 'kXYZ', 'wtpt', 'bkpt', 'lumi'].includes(tag) ? 20 : prevSize;
+                if (start + size > outputSize) fail();
+                prevStart = start;
+                prevSize = size;
+                pushText(tag);
+                push(...u32(start), ...u32(size));
+                if (code === 2) {
+                    pushText('gTRC');
+                    push(...u32(start), ...u32(size));
+                    pushText('bTRC');
+                    push(...u32(start), ...u32(size));
+                } else if (code === 3) {
+                    pushText('gXYZ');
+                    push(...u32(start + size), ...u32(size));
+                    pushText('bXYZ');
+                    push(...u32(start + 2 * size), ...u32(size));
+                }
+            }
+        }
+
+        // the rest: copies, shuffled copies, predicted numbers, abbreviated XYZ values and tag types
+        const shuffle = (bytes: Uint8Array, width: number): Uint8Array => {
+            const n = bytes.length, shuffled = new Uint8Array(n);
+            if (width === 2) {
+                const half = n >> 1, odd = n & 1;
+                let k = 0;
+                for (let i = 0; i < half; i++) {
+                    shuffled[k++] = bytes[i];
+                    shuffled[k++] = bytes[i + half + odd];
+                }
+                if (odd) shuffled[k] = bytes[half];
+            } else {
+                const step = n >> 2, wide = n & 3;
+                let k = 0;
+                for (let i = 0; i < step; i++) {
+                    let base = i;
+                    for (let j = 0; j < wide; j++, base += step + 1) shuffled[k++] = bytes[base];
+                    for (let j = wide; j < 4; j++, base += step) shuffled[k++] = bytes[base];
+                }
+                for (let i = 1; i <= wide; i++) shuffled[k++] = bytes[(step + 1) * i - 1];
+            }
+            return shuffled;
+        };
+        while (cmd.at < commands.length) {
+            const command = commands[cmd.at++];
+            if (command === 1) pushBytes(take(varint(commands, cmd)));
+            else if (command === 2 || command === 3) pushBytes(shuffle(take(varint(commands, cmd)), command === 2 ? 2 : 4));
+            else if (command === 4) {
+                if (cmd.at >= commands.length) fail();
+                const flags = commands[cmd.at++], width = (flags & 3) + 1, order = flags >> 2 & 3;
+                if (width === 3 || order === 3) fail();
+                const stride = flags & 16 ? varint(commands, cmd) : width;
+                if (stride < width || stride * 4 >= o) fail();
+                const num = varint(commands, cmd), raw = take(num), bytes = width === 1 ? raw : shuffle(raw, width);
+                for (let i = 0; i < num; i += width) {
+                    const prev = [0, 0, 0];
+                    for (let j = 0; j <= order; j++) {
+                        const from = o - stride * (j + 1);
+                        let value = 0;
+                        for (let k = 0; k < width; k++) value = (value << 8 | out[from + k]) >>> 0;
+                        prev[j] = value;
+                    }
+                    const p = order === 0 ? prev[0] : order === 1 ? 2 * prev[0] - prev[1] >>> 0 : 3 * (prev[0] - prev[1]) + prev[2] >>> 0;
+                    for (let j = 0; j < Math.min(width, num - i); j++) push(bytes[i + j] + (p >>> 8 * (width - 1 - j)) & 255);
+                }
+            } else if (command === 10) {
+                pushText('XYZ ');
+                push(0, 0, 0, 0);
+                pushBytes(take(12));
+            }
+            else if (command >= 16 && command <= 23) {
+                pushText(COMMON_DATA[command - 16]);
+                push(0, 0, 0, 0);
+            } else fail();
+        }
+        return o === outputSize ? out : null;
+    } catch (e) {
+        if (e instanceof RangeError) return null;
+        throw e;
+    }
 }
 
 // the default upsampling weights

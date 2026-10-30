@@ -3,9 +3,11 @@
 # ImageCms) converts them to, relative colorimetric to sRGB, as PNGs: from the source pixels for the lossless formats,
 # from what Pillow decodes for JPEG and AVIF. The profiles are matrix/TRC ones written here (Display P3 with a
 # parametric curve, Adobe RGB with a gamma, P3 with a table curve, Rec. 2020 with a type 4 parametric curve, gray), and
-# one that is sRGB (its pixels stay as they are), and a gray one on a color image (not applied). Needs Pillow (with AVIF) and numpy:
-#   python scripts/icc-fixtures.py
-import io, struct
+# one that is sRGB (its pixels stay as they are), and a gray one on a color image (not applied). Also JPEG XLs by
+# cjxl: lossless ones (their pixels are in the profile's space) and a lossy one (XYB, decoded to sRGB: its profile is
+# only what the image was before). Needs Pillow (with AVIF), numpy and cjxl (libjxl):
+#   CJXL=path/to/cjxl python scripts/icc-fixtures.py
+import io, os, struct, subprocess
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageCms
@@ -129,3 +131,8 @@ gray.save(out / 'gray.png', icc_profile=gray_profile)
 convert(gray, gray_profile).save(out / 'gray.ref.png')
 # a gray profile on a color image (invalid, like libpng says: not applied)
 source.save(out / 'gray-on-rgb.png', icc_profile=gray_profile)
+
+# JPEG XLs: lossless (the pixels in the profile's space, compared with the PNGs' references) and lossy (XYB with the
+# profile, decoded to sRGB without it)
+for name, distance in [('display-p3', 0), ('gray', 0), ('rec2020', 1)]:
+    subprocess.run([os.environ.get('CJXL', 'cjxl'), '-d', str(distance), str(out / f'{name}.png'), str(out / f'{name}{"-xyb" if distance else ""}.jxl')], check=True, capture_output=True)

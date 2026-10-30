@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.11.0
+
+### Changes
+
+- JPEG XLs with an embedded ICC profile whose pixels are in its color space (lossless ones and recompressed JPEGs, not
+  XYB) are converted to sRGB when decoding, like the other formats' (`applyColorProfile: false` keeps the stored
+  values): the profile's stream is decoded (ported from jxl-oxide; the same profiles as libjxl's), then applied like
+  PNGs' and JPEGs'. Lossy (XYB) JPEG XLs already decode to sRGB, their profiles only say what the image was before.
+
 ## 3.10.0
 
 ### Performance
