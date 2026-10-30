@@ -150,6 +150,8 @@ const DEFAULTS: Record<string, string> = {
 };
 
 const SAMPLES = 16; // sub-scanlines per pixel
+// (the sub-scanlines' offsets in a pixel row)
+const OFFSETS = Float64Array.from({ length: SAMPLES }, (_, s) => (s + 0.5) / SAMPLES);
 
 /**
  * @param {string|Uint8Array} source
@@ -2830,6 +2832,18 @@ class Layer {
 // rasterization
 // ---------------------------------------------------------------------------
 
+// the rasterizer's working arrays, kept between calls (it isn't reentrant) and grown as needed: by kind and slot, at
+// least n long, their contents left from before
+const scratch = (() => {
+    const arrays: Record<string, Float64Array[] | Float32Array[] | Int32Array[]> = { f64: [], f32: [], i32: [] };
+    const get = <T extends Float64Array | Float32Array | Int32Array>(kind: string, Type: new (n: number) => T) => (slot: number, n: number): T => {
+        const list = arrays[kind] as T[];
+        if (!list[slot] || list[slot].length < n) list[slot] = new Type(Math.max(n, 2 * (list[slot]?.length ?? 0), 64));
+        return list[slot];
+    };
+    return { f64: get('f64', Float64Array), f32: get('f32', Float32Array), i32: get('i32', Int32Array) };
+})();
+
 /**
  * Computes anti-aliased coverage of polygons with a nonzero or even-odd fill rule:
  * SAMPLES sub-scanlines per pixel row with exact horizontal span coverage
@@ -2845,8 +2859,11 @@ function crisp(coverage: Coverage, style: Style): Coverage {
 }
 
 function rasterize(polygons: number[][], evenOdd: boolean, width: number, height: number): Coverage | null {
-    const edges: Array<{ top: number, bottom: number, x: number, slope: number, dir: number }> = [];
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    // the edges (not horizontal ones) as columns: top, bottom, x at the top, slope, direction
+    let numPoints = 0;
+    for (const points of polygons) numPoints += points.length >> 1;
+    const tops = scratch.f64(0, numPoints), bottoms = scratch.f64(1, numPoints), xs = scratch.f64(2, numPoints), slopes = scratch.f64(3, numPoints), dirs = scratch.i32(0, numPoints);
+    let numEdges = 0, minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
     for (const points of polygons) {
         const n = points.length >> 1;
@@ -2860,8 +2877,11 @@ function rasterize(polygons: number[][], evenOdd: boolean, width: number, height
 
             const down = ay < by;
             const top = down ? ay : by, bottom = down ? by : ay;
-            const topX = down ? ax : bx;
-            edges.push({ top, bottom, x: topX, slope: (down ? bx - ax : ax - bx) / (bottom - top), dir: down ? 1 : -1 });
+            tops[numEdges] = top;
+            bottoms[numEdges] = bottom;
+            xs[numEdges] = down ? ax : bx;
+            slopes[numEdges] = (down ? bx - ax : ax - bx) / (bottom - top);
+            dirs[numEdges++] = down ? 1 : -1;
 
             minY = Math.min(minY, top);
             maxY = Math.max(maxY, bottom);
@@ -2870,7 +2890,7 @@ function rasterize(polygons: number[][], evenOdd: boolean, width: number, height
         }
     }
 
-    if (!edges.length) return null;
+    if (!numEdges) return null;
 
     const x0 = Math.max(0, Math.floor(minX)), x1 = Math.min(width, Math.ceil(maxX));
     const y0 = Math.max(0, Math.floor(minY)), y1 = Math.min(height, Math.ceil(maxY));
@@ -2878,14 +2898,24 @@ function rasterize(polygons: number[][], evenOdd: boolean, width: number, height
 
     const w = x1 - x0, h = y1 - y0;
     const data = new Float32Array(w * h);
-    const row = new Float32Array(w + 2);
-    const steps = new Float32Array(w + 2);
+    const row = scratch.f32(0, w + 2);
+    const steps = scratch.f32(1, w + 2);
     const weight = 1 / SAMPLES;
 
-    edges.sort((a, b) => a.top - b.top);
-    let next = 0;
-    let active: typeof edges = [];
-    const crossings: number[] = [];
+    // the edges by the row they become active in (the first with a top below its end; ones above the image in the
+    // first), the active ones kept in the order of their x in the row's middle, so each sub-scanline's crossings come
+    // nearly sorted (the order of crossings of the same x doesn't matter: the span between them is empty, the winding
+    // after them their sum)
+    const rowStarts = scratch.i32(1, h + 1).fill(0, 0, h + 1), order = scratch.i32(2, numEdges);
+    const startRow = (e: number): number => Math.max(0, Math.floor(tops[e]) - y0);
+    for (let e = 0; e < numEdges; e++) if (startRow(e) < h) rowStarts[startRow(e) + 1]++;
+    for (let r = 0; r < h; r++) rowStarts[r + 1] += rowStarts[r];
+    const placed = scratch.i32(3, h);
+    placed.set(rowStarts.subarray(0, h));
+    for (let e = 0; e < numEdges; e++) if (startRow(e) < h) order[placed[startRow(e)]++] = e;
+    let numActive = 0;
+    const active = scratch.i32(4, numEdges), keys = scratch.f64(4, numEdges), firsts = scratch.i32(5, numEdges), lasts = scratch.i32(6, numEdges);
+    const counts = new Int32Array(SAMPLES), starts = new Int32Array(SAMPLES), ends = new Int32Array(SAMPLES);
 
     const span = (a: number, b: number): void => {
         a = Math.max(a, x0) - x0;
@@ -2903,26 +2933,66 @@ function rasterize(polygons: number[][], evenOdd: boolean, width: number, height
     };
 
     for (let py = y0; py < y1; py++) {
-        row.fill(0);
-        steps.fill(0);
+        row.fill(0, 0, w + 2);
+        steps.fill(0, 0, w + 2);
 
-        while (next < edges.length && edges[next].top < py + 1) active.push(edges[next++]);
-        active = active.filter(edge => edge.bottom > py);
+        let kept = 0;
+        for (let k = 0; k < numActive; k++) if (bottoms[active[k]] > py) active[kept++] = active[k];
+        numActive = kept;
+        for (let k = rowStarts[py - y0]; k < rowStarts[py - y0 + 1]; k++) active[numActive++] = order[k];
+        // (insertion sort by x in the row's middle: nearly sorted from the row before)
+        const mid = py + 0.5;
+        for (let k = 0; k < numActive; k++) {
+            const e = active[k], key = xs[e] + (Math.min(Math.max(mid, tops[e]), bottoms[e]) - tops[e]) * slopes[e];
+            let j = k - 1;
+            for (; j >= 0 && keys[j] > key; j--) {
+                keys[j + 1] = keys[j];
+                active[j + 1] = active[j];
+            }
+            keys[j + 1] = key;
+            active[j + 1] = e;
+        }
+
+        // each active edge's crossings go to the sub-scanlines it spans (the bounds by the test of each sub-scanline,
+        // sy >= top and sy < bottom), each sub-scanline's in the edges' order
+        counts.fill(0);
+        let total = 0;
+        for (let k = 0; k < numActive; k++) {
+            const e = active[k], top = tops[e], bottom = bottoms[e];
+            let s0 = Math.max(0, Math.ceil((top - py) * SAMPLES - 0.5)), s1 = Math.min(SAMPLES - 1, Math.ceil((bottom - py) * SAMPLES - 0.5) - 1);
+            while (s0 > 0 && py + OFFSETS[s0 - 1] >= top) s0--;
+            while (s0 < SAMPLES && !(py + OFFSETS[s0] >= top)) s0++;
+            while (s1 < SAMPLES - 1 && py + OFFSETS[s1 + 1] < bottom) s1++;
+            while (s1 >= 0 && !(py + OFFSETS[s1] < bottom)) s1--;
+            firsts[k] = s0;
+            lasts[k] = s1;
+            for (let s = s0; s <= s1; s++) counts[s]++;
+            if (s1 >= s0) total += s1 - s0 + 1;
+        }
+        const crossings = scratch.f64(5, 2 * total);
+        for (let s = 0, at = 0; s < SAMPLES; s++) {
+            starts[s] = at;
+            at += 2 * counts[s];
+        }
+        for (let s = 0; s < SAMPLES; s++) ends[s] = starts[s];
+        for (let k = 0; k < numActive; k++) {
+            const e = active[k];
+            for (let s = firsts[k]; s <= lasts[k]; s++) {
+                const sy = py + OFFSETS[s];
+                crossings[ends[s]++] = xs[e] + (sy - tops[e]) * slopes[e];
+                crossings[ends[s]++] = dirs[e];
+            }
+        }
 
         for (let s = 0; s < SAMPLES; s++) {
-            const sy = py + (s + 0.5) / SAMPLES;
-            crossings.length = 0;
-
-            for (const edge of active)
-                if (sy >= edge.top && sy < edge.bottom) crossings.push(edge.x + (sy - edge.top) * edge.slope, edge.dir);
-
-            if (crossings.length < 4) continue;
+            const base = starts[s], end = ends[s];
+            if (end - base < 4) continue;
 
             // insertion sort pairs by x
-            for (let i = 2; i < crossings.length; i += 2) {
+            for (let i = base + 2; i < end; i += 2) {
                 const x = crossings[i], dir = crossings[i + 1];
                 let j = i - 2;
-                for (; j >= 0 && crossings[j] > x; j -= 2) {
+                for (; j >= base && crossings[j] > x; j -= 2) {
                     crossings[j + 2] = crossings[j];
                     crossings[j + 3] = crossings[j + 1];
                 }
@@ -2931,7 +3001,7 @@ function rasterize(polygons: number[][], evenOdd: boolean, width: number, height
             }
 
             let winding = 0;
-            for (let i = 0; i < crossings.length - 2; i += 2) {
+            for (let i = base; i < end - 2; i += 2) {
                 winding += crossings[i + 1];
                 if (evenOdd ? winding & 1 : winding !== 0) span(crossings[i], crossings[i + 2]);
             }

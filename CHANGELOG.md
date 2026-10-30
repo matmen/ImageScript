@@ -24,6 +24,9 @@
   instead of 640 ms lossy and 328 ms instead of 671 ms lossless, a 5120x2880 one in 568 ms instead of 1121 ms and
   487 ms instead of 1122 ms. Lossy frames no longer keep the coefficients of the whole frame (about 100 MB at 4K): each
   group is rendered once its passes are read.
+- SVG rendering rasterizes paths 23-36% faster (a 1000x1000 SVG of 500 text labels: about 15% faster in all, the
+  test SVG at 1920 pixels wide about 13%), with the same pixels: the edges in typed arrays bucketed by their first
+  row, the active ones kept sorted by x so each sub-scanline's crossings come nearly sorted, the working arrays reused.
 - `encodeJXL({ quality, effort: 2 })` searches patches about 30% faster (the connected components with a typed stack of
   pixel indices instead of an array of coordinates, in the same order): the same files.
 - Lossless `encodeWebP()` searches the predictors and the prefix groups (the k-means of the blocks' histograms) in
