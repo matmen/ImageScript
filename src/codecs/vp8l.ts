@@ -2,7 +2,8 @@
  * WebP lossless (VP8L) bitstream, as specified in RFC 9649 ("WebP Image Format") section 3 onwards, including its
  * table of short distance codes. Copyright (c) 2024 IETF Trust and the persons identified as the document authors,
  * Revised BSD License (see THIRD_PARTY_NOTICES.md). The encoder's choice of transforms follows libwebp's entropy
- * analysis (src/enc/vp8l_enc.c, AnalyzeEntropy). Copyright (c) 2012 Google Inc., BSD-3-Clause License
+ * analysis (src/enc/vp8l_enc.c, AnalyzeEntropy), its color transform search libwebp's (src/enc/predictor_enc.c).
+ * Copyright (c) 2012 Google Inc., BSD-3-Clause License
  */
 
 import { ByteWriter } from '../util/bytes.ts';
@@ -1228,6 +1229,167 @@ const BYTE_COST = Uint8Array.from({ length: 256 }, (_, c) => c < 128 ? c : 256 -
 // cost estimate of a residual: sum of the channels' distances to zero
 const residualCost = (r: number): number => BYTE_COST[r & 255] + BYTE_COST[r >>> 8 & 255] + BYTE_COST[r >>> 16 & 255] + BYTE_COST[r >>> 24];
 
+// the bits of the red and blue values of pixels (their histograms' entropy)
+function redBlueBits(p: Uint32Array): number {
+    const red = new Uint32Array(256), blue = new Uint32Array(256);
+    for (let i = 0; i < p.length; i++) {
+        red[p[i] >> 16 & 255]++;
+        blue[p[i] & 255]++;
+    }
+    let bits = 0;
+    for (const h of [red, blue]) for (const n of h) if (n) bits += n * Math.log2(p.length / n);
+    return bits;
+}
+
+const slog = (v: number): number => v ? v * Math.log2(v) : 0;
+// (v log v up to 65536, built when first needed)
+let SLOG: Float64Array | undefined;
+
+/**
+ * The bits a tile's histogram takes when added to the accumulated one (libwebp's CombinedShannonEntropy, in bits),
+ * with a bias favoring values near 0 (PredictionCostBias): over the n symbols the tile has (touched), with the
+ * accumulated histogram's sum and the sum of its entries' v log v
+ */
+function crossColorCost(accumulated: Uint32Array, accumulatedSlogs: Float64Array, accumulatedLogs: Float64Array, counts: Uint32Array, touched: Int32Array, n: number, accumulatedSum: number, accumulatedSlog: number): number {
+    const table = SLOG!;
+    let sum = accumulatedSlog, sumX = 0;
+    for (let k = 0; k < n; k++) {
+        const i = touched[k], x = counts[i], y = accumulated[i];
+        sumX += x;
+        // ((x + y) log (x + y) - y log y = x log y + (x + y) log(1 + x / y), the latter's series exact enough for y
+        // beyond the table, where x / y is at most 1/255)
+        if (x + y < table.length) sum += table[x] + table[x + y] - accumulatedSlogs[i];
+        else {
+            const t = x / y;
+            sum += table[x] + x * accumulatedLogs[i] + (x + y) * (t - t * t / 2 + t * t * t / 3) * Math.LOG2E;
+        }
+    }
+    let bias = 3 * counts[0], weight = 240;
+    for (let i = 1; i < 16; i++) {
+        bias += weight * (counts[i] + counts[256 - i]) / 100;
+        weight *= 0.6;
+    }
+    return slog(sumX) + slog(sumX + accumulatedSum) - sum - bias / 10;
+}
+
+/**
+ * libwebp's color transform search (src/enc/predictor_enc.c, VP8LColorSpaceTransform): per block of 2^bits pixels the
+ * multipliers (3.5 bit fixed point) of green for red, and of green and red for blue, whose residuals take the fewest
+ * bits with the blocks' before (blocks keeping their neighbors' multipliers or 0 favored), applied to the pixels;
+ * returns the sub-image of the multipliers. Coarser than libwebp's: the costs are of every fourth pixel and the search
+ * for blue's multipliers stops at steps of 4, which compresses about as well (0.1% larger) at a third of the time
+ */
+function colorTransform(p: Uint32Array, width: number, height: number, bits: number): Uint32Array {
+    const size = 1 << bits, blocksX = subSize(width, bits), blocksY = subSize(height, bits);
+    const image = new Uint32Array(blocksX * blocksY);
+    const accumulatedRed = new Uint32Array(256), accumulatedBlue = new Uint32Array(256), histo = new Uint32Array(256), touched = new Int32Array(256);
+    // (a tile's green and red as signed bytes, red and blue as they are)
+    const green = new Int32Array(size * size), red = new Int32Array(size * size), redByte = new Int32Array(size * size), blue = new Int32Array(size * size);
+    const s8 = (v: number): number => v << 24 >> 24;
+    // (an accumulated histogram's sum, its entries' v log v and logs, and the sum of the former)
+    SLOG ??= Float64Array.from({ length: 65536 }, (_, v) => slog(v));
+    const redSlogs = new Float64Array(256), blueSlogs = new Float64Array(256), redLogs = new Float64Array(256), blueLogs = new Float64Array(256);
+    const sums = (h: Uint32Array, slogs: Float64Array, logs: Float64Array): [number, number] => {
+        let total = 0, entropy = 0;
+        for (let i = 0; i < 256; i++) {
+            total += h[i];
+            entropy += slogs[i] = slog(h[i]);
+            logs[i] = h[i] ? Math.log2(h[i]) : 0;
+        }
+        return [total, entropy];
+    };
+    let prevX = [0, 0, 0], prevY = [0, 0, 0];
+    for (let by = 0; by < blocksY; by++) {
+        for (let bx = 0; bx < blocksX; bx++) {
+            const x0 = bx * size, y0 = by * size, x1 = Math.min(width, x0 + size), y1 = Math.min(height, y0 + size);
+            if (by) {
+                const above = image[(by - 1) * blocksX + bx];
+                prevY = [above & 255, above >> 8 & 255, above >> 16 & 255];
+            }
+            // (the pixels the costs are of: every fourth, shifted by one each row)
+            let count = 0;
+            for (let y = y0; y < y1; y++)
+                for (let i = y * width + x0 + (y & 3), end = y * width + x1; i < end; i += 4, count++) {
+                    const v = p[i];
+                    green[count] = s8(v >> 8);
+                    red[count] = s8(v >> 16);
+                    redByte[count] = v >> 16 & 255;
+                    blue[count] = v & 255;
+                }
+            // (green to red: by halving steps from 32)
+            const [redSum, redSlog] = sums(accumulatedRed, redSlogs, redLogs);
+            const redCost = (gtr: number): number => {
+                const m = s8(gtr);
+                let n = 0;
+                for (let k = 0; k < count; k++) {
+                    const v = redByte[k] - (m * green[k] >> 5) & 255;
+                    if (!histo[v]++) touched[n++] = v;
+                }
+                let cost = crossColorCost(accumulatedRed, redSlogs, redLogs, histo, touched, n, redSum, redSlog);
+                for (let k = 0; k < n; k++) histo[touched[k]] = 0;
+                if ((gtr & 255) === prevX[0]) cost -= 3;
+                if ((gtr & 255) === prevY[0]) cost -= 3;
+                if (gtr === 0) cost -= 3;
+                return cost;
+            };
+            let gtr = 0, best = redCost(0);
+            for (let iter = 0; iter < 6; iter++) {
+                const step = 32 >> iter;
+                for (const offset of [-step, step]) {
+                    const cost = redCost(gtr + offset);
+                    if (cost < best) [best, gtr] = [cost, gtr + offset];
+                }
+            }
+            // (green and red to blue: along the axes and diagonals)
+            const [blueSum, blueSlog] = sums(accumulatedBlue, blueSlogs, blueLogs);
+            const blueCost = (gtb: number, rtb: number): number => {
+                const mg = s8(gtb), mr = s8(rtb);
+                let n = 0;
+                for (let k = 0; k < count; k++) {
+                    const v = blue[k] - (mg * green[k] >> 5) - (mr * red[k] >> 5) & 255;
+                    if (!histo[v]++) touched[n++] = v;
+                }
+                let cost = crossColorCost(accumulatedBlue, blueSlogs, blueLogs, histo, touched, n, blueSum, blueSlog);
+                for (let k = 0; k < n; k++) histo[touched[k]] = 0;
+                if ((gtb & 255) === prevX[1]) cost -= 3;
+                if ((gtb & 255) === prevY[1]) cost -= 3;
+                if ((rtb & 255) === prevX[2]) cost -= 3;
+                if ((rtb & 255) === prevY[2]) cost -= 3;
+                if (gtb === 0) cost -= 3;
+                if (rtb === 0) cost -= 3;
+                return cost;
+            };
+            let gtb = 0, rtb = 0;
+            best = blueCost(0, 0);
+            for (const step of [16, 8, 4]) {
+                for (const [dg, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [-1, 1], [1, -1], [1, 1]]) {
+                    const cost = blueCost(gtb + dg * step, rtb + dr * step);
+                    if (cost < best) [best, gtb, rtb] = [cost, gtb + dg * step, rtb + dr * step];
+                }
+            }
+            prevX = [gtr & 255, gtb & 255, rtb & 255];
+            image[by * blocksX + bx] = (0xff000000 | prevX[2] << 16 | prevX[1] << 8 | prevX[0]) >>> 0;
+            // the block transformed, its pixels accumulated (but repeated ones: backward references take them)
+            const mgr = s8(gtr), mgb = s8(gtb), mrb = s8(rtb);
+            for (let y = y0; y < y1; y++)
+                for (let i = y * width + x0, end = y * width + x1; i < end; i++) {
+                    const v = p[i], g = s8(v >> 8), rs = s8(v >> 16);
+                    const r = (v >> 16) - (mgr * g >> 5) & 255, b = v - (mgb * g >> 5) - (mrb * rs >> 5) & 255;
+                    p[i] = (v & 0xff00ff00 | r << 16 | b) >>> 0;
+                }
+            for (let y = y0; y < y1; y++)
+                for (let i = y * width + x0, end = y * width + x1; i < end; i++) {
+                    const v = p[i];
+                    if (i >= 2 && v === p[i - 2] && v === p[i - 1]) continue;
+                    if (i >= width + 2 && p[i - 2] === p[i - width - 2] && p[i - 1] === p[i - width - 1] && v === p[i - width]) continue;
+                    accumulatedRed[v >> 16 & 255]++;
+                    accumulatedBlue[v & 255]++;
+                }
+        }
+    }
+    return image;
+}
+
 /**
  * libwebp's entropy analysis (AnalyzeEntropy): which of the pixels and their differences to the pixel left of them,
  * each with green subtracted from red and blue or not, take the fewest bits (the predictor with the cost of its
@@ -1414,6 +1576,20 @@ async function encodeWith(argb: Uint32Array, width: number, height: number, colo
             w.write(bits - 2, 3);
             const modes = await applyPredictor(pixels, width, height, bits, threads);
             await writeImage(w, modes, subSize(width, bits), false);
+            // (the residuals' red and blue predicted from their green, like libwebp does with the predictor; not if no block
+            // gains from it, all multipliers 0 leave the pixels as they are)
+            if (redBlue) {
+                const colorBits = 5, before = pixels.slice(), multipliers = colorTransform(pixels, width, height, colorBits);
+                // (nor if red and blue don't take fewer bits in all, with about 12 bits per block that changes them)
+                const changed = multipliers.reduce((n, m) => n + (m !== 0xff000000 ? 1 : 0), 0);
+                if (changed && redBlueBits(pixels) + 12 * changed >= redBlueBits(before)) pixels.set(before);
+                else if (changed) {
+                    w.write(1, 1);
+                    w.write(Transform.COLOR, 2);
+                    w.write(colorBits - 2, 3);
+                    await writeImage(w, multipliers, subSize(width, colorBits), false);
+                }
+            }
         }
     }
 

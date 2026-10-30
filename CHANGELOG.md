@@ -9,6 +9,9 @@
   predictor. The 1434x1434 benchmark graphic takes 277 kB instead of 557 kB (cwebp: 278 kB), screenshots and images
   with transparency 15-30% less; photos stay the same. Over 39 test images the bitstreams went from 1.11 to 1.05
   times cwebp's (`-m 4 -q 75`, like sharp's default).
+- Lossless `encodeWebP()` uses the color transform after the predictor, choosing per 32x32 block how much of green to
+  subtract from red and of green and red from blue, like libwebp: 5-6% smaller for images like emoji and rendered
+  graphics, about 0.6% on average, and about 9% slower. Over the same 39 images: 1.04 times cwebp's.
 
 ## 3.12.0
 
