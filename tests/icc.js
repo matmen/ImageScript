@@ -23,6 +23,8 @@ const difference = (a, b) => {
         ['display-p3.webp', 'display-p3.ref.png', 1], ['display-p3.tiff', 'display-p3.ref.png', 1],
         ['display-p3.jpg', 'display-p3.jpg.ref.png', 2], ['display-p3.avif', 'display-p3.avif.ref.png', 2],
         ['display-p3.jxl', 'display-p3.ref.png', 1], ['gray.jxl', 'gray.ref.png', 1],
+        // (AVIFs without a profile, their nclx box's color primaries: Display P3, BT.2020)
+        ['display-p3-nclx.avif', 'display-p3.ref.png', 1], ['bt2020-nclx.avif', 'bt2020-nclx.ref.png', 1],
     ];
     for (const [file, reference, tolerance] of cases) {
         const data = await fs.readFile(`./tests/icc/${file}`), ref = await Image.decode(await fs.readFile(`./tests/icc/${reference}`));

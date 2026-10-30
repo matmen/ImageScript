@@ -125,7 +125,53 @@ export function profileTransform(icc: Uint8Array): ((rgba: Uint8Array | Uint8Cla
     } catch {
         return null;
     }
-    if (!p || isSRGB(p)) return null;
+    return p && transform(p);
+}
+
+// the primaries (red, green, blue) and white of CICP's color primaries codes (ITU-T H.273) as xy chromaticities
+const CICP_PRIMARIES: Record<number, number[][]> = {
+    1: [[0.64, 0.33], [0.30, 0.60], [0.15, 0.06], [0.3127, 0.3290]],
+    4: [[0.67, 0.33], [0.21, 0.71], [0.14, 0.08], [0.310, 0.316]],
+    5: [[0.64, 0.33], [0.29, 0.60], [0.15, 0.06], [0.3127, 0.3290]],
+    6: [[0.630, 0.340], [0.310, 0.595], [0.155, 0.070], [0.3127, 0.3290]],
+    7: [[0.630, 0.340], [0.310, 0.595], [0.155, 0.070], [0.3127, 0.3290]],
+    8: [[0.681, 0.319], [0.243, 0.692], [0.145, 0.049], [0.310, 0.316]],
+    9: [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046], [0.3127, 0.3290]],
+    11: [[0.680, 0.320], [0.265, 0.690], [0.150, 0.060], [0.314, 0.351]],
+    12: [[0.680, 0.320], [0.265, 0.690], [0.150, 0.060], [0.3127, 0.3290]],
+    22: [[0.630, 0.340], [0.295, 0.605], [0.155, 0.077], [0.3127, 0.3290]],
+};
+const D50 = [0.9642, 1, 0.8249];
+const BRADFORD = [0.8951, 0.2664, -0.1614, -0.7502, 1.7135, 0.0367, 0.0389, -0.0685, 1.0296];
+
+/**
+ * The transform of 8-bit RGBA pixels with CICP color primaries and transfer characteristics (like an AVIF's nclx box)
+ * to sRGB, like an ICC profile's: null for sRGB's, unknown primaries and HDR transfers (PQ, HLG). Transfers other than
+ * gamma 2.2, 2.8 and linear are taken as sRGB's (the BT.709 family's curve describes cameras, displays show it as
+ * sRGB)
+ */
+export function cicpTransform(primaries: number, transfer: number): ((rgba: Uint8Array | Uint8ClampedArray) => void) | null {
+    const xy = CICP_PRIMARIES[primaries];
+    if (!xy || transfer === 16 || transfer === 18) return null;
+    const xyz = ([x, y]: number[]): number[] => [x / y, 1, (1 - x - y) / y];
+    // the primaries' XYZ (columns) scaled so they add up to the white, then adapted to D50 by Bradford
+    const p = [0, 1, 2].map(i => xyz(xy[i])), white = xyz(xy[3]);
+    const columns = [p[0][0], p[1][0], p[2][0], p[0][1], p[1][1], p[2][1], p[0][2], p[1][2], p[2][2]];
+    const inverse = invert3(columns);
+    if (!inverse) return null;
+    const scale = [0, 1, 2].map(r => inverse[r * 3] * white[0] + inverse[r * 3 + 1] * white[1] + inverse[r * 3 + 2] * white[2]);
+    const matrix = columns.map((v, i) => v * scale[i % 3]);
+    const cone = (v: number[]): number[] => [0, 1, 2].map(r => BRADFORD[r * 3] * v[0] + BRADFORD[r * 3 + 1] * v[1] + BRADFORD[r * 3 + 2] * v[2]);
+    const from = cone(white), to = cone(D50);
+    const adapt = multiply3(invert3(BRADFORD) as number[], multiply3([to[0] / from[0], 0, 0, 0, to[1] / from[1], 0, 0, 0, to[2] / from[2]], BRADFORD));
+    const curve: Curve = transfer === 4 ? v => v ** 2.2 : transfer === 5 ? v => v ** 2.8 : transfer === 8 ? v => v
+        : v => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    return transform({ gray: false, matrix: multiply3(adapt, matrix), curves: [curve, curve, curve] });
+}
+
+// a profile's transform of 8-bit RGBA pixels to sRGB (see profileTransform)
+function transform(p: Profile): ((rgba: Uint8Array | Uint8ClampedArray) => void) | null {
+    if (isSRGB(p)) return null;
 
     // 8-bit values to linear light per channel, linear sRGB to 8 bits through a fine table
     const linear = p.curves.map(c => Float32Array.from({ length: 256 }, (_, i) => c(i / 255)));

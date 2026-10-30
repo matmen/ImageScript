@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.12.0
+
+### Changes
+
+- AVIFs without an ICC profile whose nclx box (or sequence header) gives other color primaries than sRGB's (Display
+  P3, BT.2020, DCI-P3, ...) or a gamma 2.2, 2.8 or linear transfer are converted to sRGB when decoding, like browsers
+  show them (`applyColorProfile: false` keeps the stored values): as a matrix/TRC profile of those primaries,
+  relative colorimetric, within 1 of LittleCMS. Transfers of the BT.709 family are taken as sRGB's curve, so most
+  AVIFs (BT.709 or unspecified primaries) stay the same.
+
 ## 3.11.0
 
 ### Fixes

@@ -568,7 +568,7 @@ const MIN_THREADED_PIXELS = 4 << 20, PIXELS_PER_THREAD = 1 << 20;
 const TILES_PER_THREAD = 4;
 
 /** Decodes an AVIF's primary item or first frame, the conversion to RGBA in up to threads worker threads */
-export async function decode(d: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard', threads = 1): Promise<{ width: number, height: number, pixels: Uint8Array, icc?: Uint8Array }> {
+export async function decode(d: Uint8Array, maxPixels = MAX_PIXELS, toneMapping: ToneMapping = 'reinhard', threads = 1): Promise<{ width: number, height: number, pixels: Uint8Array, icc?: Uint8Array, cicp?: [number, number] }> {
     if (!isAVIF(d)) throw new Error('AVIF: invalid header');
     let meta: Box | undefined, moov: Box | undefined;
     for (const box of boxes(d, 0, d.length)) {
@@ -608,7 +608,7 @@ export async function decode(d: Uint8Array, maxPixels = MAX_PIXELS, toneMapping:
 }
 
 /** Decodes an image item (with its alpha item) and converts it to RGBA, in the threads if there are */
-async function decodeImage(d: Uint8Array, it: Item, items: Map<number, Item>, idat: Box | undefined, alphaItem: Item | undefined, alphaOf: (id: number) => Item | undefined, maxPixels: number, toneMapping: ToneMapping, threads: Thread[] | null): Promise<{ width: number, height: number, pixels: Uint8Array, icc?: Uint8Array }> {
+async function decodeImage(d: Uint8Array, it: Item, items: Map<number, Item>, idat: Box | undefined, alphaItem: Item | undefined, alphaOf: (id: number) => Item | undefined, maxPixels: number, toneMapping: ToneMapping, threads: Thread[] | null): Promise<{ width: number, height: number, pixels: Uint8Array, icc?: Uint8Array, cicp?: [number, number] }> {
     const color = await decodeItem(d, it, items, idat, maxPixels, threads);
     applyColr(d, it, color);
     // an ICC profile describes the RGB values (rather than the primaries and transfer of the nclx box or the
@@ -632,7 +632,8 @@ async function decodeImage(d: Uint8Array, it: Item, items: Map<number, Item>, id
         else if (box.type === 'irot') ({ width, height, pixels } = rotate(pixels, width, height, d[box.start] & 3));
         else if (box.type === 'imir') pixels = mirror(pixels, width, height, d[box.start] & 1);
     }
-    return { width, height, pixels, icc };
+    // (without a profile, the color primaries and transfer of the nclx box or the sequence header: see cicpTransform)
+    return { width, height, pixels, icc, cicp: icc ? undefined : [color.primaries, color.transfer] };
 }
 
 // the ICC profile of a colr box (prof or rICC)
@@ -701,7 +702,7 @@ function mirror(pixels: Uint8Array, width: number, height: number, axis: number)
 }
 
 // the first frame of an image sequence (the color track, and the alpha track that refers to it)
-async function decodeSequence(d: Uint8Array, moov: Box, maxPixels: number, toneMapping: ToneMapping): Promise<{ width: number, height: number, pixels: Uint8Array }> {
+async function decodeSequence(d: Uint8Array, moov: Box, maxPixels: number, toneMapping: ToneMapping): Promise<{ width: number, height: number, pixels: Uint8Array, cicp: [number, number] }> {
     const view = new DataView(d.buffer, d.byteOffset, d.byteLength);
     const tracks: Array<{ id: number, handler: string, auxl: number[], sample: Uint8Array, config: Uint8Array | null }> = [];
     for (const trak of boxes(d, moov.start, moov.end)) {
@@ -744,5 +745,5 @@ async function decodeSequence(d: Uint8Array, moov: Box, maxPixels: number, toneM
         return fromFrame(decodeAV1(data, 0, data.length, { maxPixels }));
     };
     const color = frame(colorTrack);
-    return { width: color.width, height: color.height, pixels: await toRgba(color, alphaTrack ? frame(alphaTrack) : null, toneMapping) };
+    return { width: color.width, height: color.height, pixels: await toRgba(color, alphaTrack ? frame(alphaTrack) : null, toneMapping), cicp: [color.primaries, color.transfer] };
 }

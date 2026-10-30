@@ -5,8 +5,10 @@
 # parametric curve, Adobe RGB with a gamma, P3 with a table curve, Rec. 2020 with a type 4 parametric curve, gray), and
 # one that is sRGB (its pixels stay as they are), and a gray one on a color image (not applied). Also JPEG XLs by
 # cjxl: lossless ones (their pixels are in the profile's space) and a lossy one (XYB, decoded to sRGB: its profile is
-# only what the image was before). Needs Pillow (with AVIF), numpy and cjxl (libjxl):
-#   CJXL=path/to/cjxl python scripts/icc-fixtures.py
+# only what the image was before). And lossless AVIFs without a profile but other color primaries in their nclx box
+# (Display P3; BT.2020 with BT.709's transfer, taken as sRGB's curve) by avifenc, with LittleCMS's references of the
+# same primaries. Needs Pillow (with AVIF), numpy, cjxl (libjxl) and avifenc (libavif):
+#   CJXL=path/to/cjxl AVIFENC=path/to/avifenc python scripts/icc-fixtures.py
 import io, os, struct, subprocess
 from pathlib import Path
 import numpy as np
@@ -136,3 +138,16 @@ source.save(out / 'gray-on-rgb.png', icc_profile=gray_profile)
 # profile, decoded to sRGB without it)
 for name, distance in [('display-p3', 0), ('gray', 0), ('rec2020', 1)]:
     subprocess.run([os.environ.get('CJXL', 'cjxl'), '-d', str(distance), str(out / f'{name}.png'), str(out / f'{name}{"-xyb" if distance else ""}.jxl')], check=True, capture_output=True)
+
+# AVIFs with nclx primaries instead of a profile (lossless: their pixels are the source's)
+plain = source.copy()
+plain.putalpha(alpha)
+plain.save(out / 'nclx-source.png')
+bt2020 = rgb_profile([(0.708, 0.292), (0.170, 0.797), (0.131, 0.046)], SRGB_TRC, 'BT.2020 with sRGB curve')
+ref = convert(source, bt2020)
+ref.putalpha(alpha)
+ref.save(out / 'bt2020-nclx.ref.png')
+for name, cicp in [('display-p3-nclx', '12/13/0'), ('bt2020-nclx', '9/1/0')]:
+    subprocess.run([os.environ.get('AVIFENC', 'avifenc'), '--lossless', '--cicp', cicp, str(out / 'nclx-source.png'), str(out / f'{name}.avif')], check=True, capture_output=True)
+(out / 'nclx-source.png').unlink()
+
