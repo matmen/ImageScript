@@ -670,78 +670,85 @@ function buildPlane(component: Component): { plane: Uint8Array, stride: number }
     return { plane, stride };
 }
 
-// upsamples a component to full resolution, following libjpeg's fancy upsampling
-function upsample(component: Component, frame: Frame): { samples: Uint8Array, stride: number } {
+// a component at full resolution, following libjpeg's fancy upsampling: the plane itself if it isn't subsampled, else
+// a row buffer that fill(y) upsamples output row y into
+interface Samples {
+    samples: Uint8Array;
+    stride: number;
+    fill?: (y: number) => void;
+}
+
+function upsample(component: Component, frame: Frame): Samples {
     const { plane, stride } = buildPlane(component);
     const hf = frame.hmax / component.h;
     const vf = frame.vmax / component.v;
     const w = component.width, h = component.height;
-    const W = Math.ceil(w * hf), H = Math.ceil(h * vf);
-    const out = new Uint8Array(W * H);
+    const W = Math.ceil(w * hf);
+    const out = new Uint8Array(W);
     const fancy = w > 2;
 
-    if (hf === 1 && vf === 1) {
-        for (let y = 0; y < h; y++) out.set(plane.subarray(y * stride, y * stride + w), y * W);
-    } else if (hf === 2 && vf === 1 && fancy) {
-        for (let y = 0; y < h; y++) {
-            const i = y * stride, o = y * W;
-            out[o] = plane[i];
-            out[o + 1] = plane[i] * 3 + plane[i + 1] + 2 >> 2;
+    if (hf === 1 && vf === 1) return { samples: plane, stride };
+
+    if (hf === 2 && vf === 1 && fancy) return {
+        samples: out, stride: 0, fill: y => {
+            const i = y * stride;
+            out[0] = plane[i];
+            out[1] = plane[i] * 3 + plane[i + 1] + 2 >> 2;
             for (let x = 1; x < w - 1; x++) {
                 const v = plane[i + x] * 3;
-                out[o + 2 * x] = v + plane[i + x - 1] + 1 >> 2;
-                out[o + 2 * x + 1] = v + plane[i + x + 1] + 2 >> 2;
+                out[2 * x] = v + plane[i + x - 1] + 1 >> 2;
+                out[2 * x + 1] = v + plane[i + x + 1] + 2 >> 2;
             }
-            out[o + 2 * w - 2] = plane[i + w - 1] * 3 + plane[i + w - 2] + 1 >> 2;
-            out[o + 2 * w - 1] = plane[i + w - 1];
+            out[2 * w - 2] = plane[i + w - 1] * 3 + plane[i + w - 2] + 1 >> 2;
+            out[2 * w - 1] = plane[i + w - 1];
         }
-    } else if (hf === 1 && vf === 2 && fancy) {
-        for (let y = 0; y < h; y++) {
-            const i = y * stride;
-            const above = Math.max(0, y - 1) * stride;
-            const below = Math.min(h - 1, y + 1) * stride;
-            for (let x = 0; x < w; x++) {
-                const v = plane[i + x] * 3;
-                out[2 * y * W + x] = v + plane[above + x] + 1 >> 2;
-                out[(2 * y + 1) * W + x] = v + plane[below + x] + 2 >> 2;
+    };
+
+    if (hf === 1 && vf === 2 && fancy) return {
+        samples: out, stride: 0, fill: y => {
+            const i = (y >> 1) * stride;
+            if (y & 1) {
+                const below = Math.min(h - 1, (y >> 1) + 1) * stride;
+                for (let x = 0; x < w; x++) out[x] = plane[i + x] * 3 + plane[below + x] + 2 >> 2;
+            } else {
+                const above = Math.max(0, (y >> 1) - 1) * stride;
+                for (let x = 0; x < w; x++) out[x] = plane[i + x] * 3 + plane[above + x] + 1 >> 2;
             }
         }
-    } else if (hf === 2 && vf === 2 && fancy) {
-        for (let y = 0; y < h; y++) {
-            const i = y * stride;
+    };
 
-            for (let pass = 0; pass < 2; pass++) {
-                const other = (pass === 0 ? Math.max(0, y - 1) : Math.min(h - 1, y + 1)) * stride;
-                const o = (2 * y + pass) * W;
+    if (hf === 2 && vf === 2 && fancy) return {
+        samples: out, stride: 0, fill: y => {
+            const i = (y >> 1) * stride;
+            const other = (y & 1 ? Math.min(h - 1, (y >> 1) + 1) : Math.max(0, (y >> 1) - 1)) * stride;
 
-                let thisSum = plane[i] * 3 + plane[other];
-                let nextSum = plane[i + 1] * 3 + plane[other + 1];
-                out[o] = thisSum * 4 + 8 >> 4;
-                out[o + 1] = thisSum * 3 + nextSum + 7 >> 4;
-                let lastSum = thisSum;
+            let thisSum = plane[i] * 3 + plane[other];
+            let nextSum = plane[i + 1] * 3 + plane[other + 1];
+            out[0] = thisSum * 4 + 8 >> 4;
+            out[1] = thisSum * 3 + nextSum + 7 >> 4;
+            let lastSum = thisSum;
+            thisSum = nextSum;
+
+            for (let x = 1; x < w - 1; x++) {
+                nextSum = plane[i + x + 1] * 3 + plane[other + x + 1];
+                out[2 * x] = thisSum * 3 + lastSum + 8 >> 4;
+                out[2 * x + 1] = thisSum * 3 + nextSum + 7 >> 4;
+                lastSum = thisSum;
                 thisSum = nextSum;
-
-                for (let x = 1; x < w - 1; x++) {
-                    nextSum = plane[i + x + 1] * 3 + plane[other + x + 1];
-                    out[o + 2 * x] = thisSum * 3 + lastSum + 8 >> 4;
-                    out[o + 2 * x + 1] = thisSum * 3 + nextSum + 7 >> 4;
-                    lastSum = thisSum;
-                    thisSum = nextSum;
-                }
-
-                out[o + 2 * w - 2] = thisSum * 3 + lastSum + 8 >> 4;
-                out[o + 2 * w - 1] = thisSum * 4 + 7 >> 4;
             }
-        }
-    } else {
-        // plain replication for every other sampling ratio
-        for (let y = 0; y < H; y++) {
-            const i = Math.min(h - 1, y / vf | 0) * stride;
-            for (let x = 0; x < W; x++) out[y * W + x] = plane[i + Math.min(w - 1, x / hf | 0)];
-        }
-    }
 
-    return { samples: out, stride: W };
+            out[2 * w - 2] = thisSum * 3 + lastSum + 8 >> 4;
+            out[2 * w - 1] = thisSum * 4 + 7 >> 4;
+        }
+    };
+
+    // plain replication for every other sampling ratio
+    return {
+        samples: out, stride: 0, fill: y => {
+            const i = Math.min(h - 1, y / vf | 0) * stride;
+            for (let x = 0; x < W; x++) out[x] = plane[i + Math.min(w - 1, x / hf | 0)];
+        }
+    };
 }
 
 // libjpeg's fixed point YCbCr -> RGB tables
@@ -787,6 +794,7 @@ function output(frame: Frame, adobe: { transform: number } | null, jfif: boolean
         // (YCbCr a pixel at a time as a 32-bit word, little endian)
         const words = littleEndian ? new Uint32Array(pixels.buffer) : null;
         for (let y = 0, o = 0; y < height; y++, o = y * width * 4) {
+            for (const p of planes) p.fill?.(y);
             const r0 = y * p0.stride, r1 = p1 ? y * p1.stride : r0, r2 = p2 ? y * p2.stride : r0;
             if (grey) for (let x = 0; x < width; x++, o += 4) {
                 pixels[o] = pixels[o + 1] = pixels[o + 2] = s0[r0 + x];
@@ -811,6 +819,7 @@ function output(frame: Frame, adobe: { transform: number } | null, jfif: boolean
     }
 
     for (let y = 0, o = 0; y < height; y++) {
+        for (const p of planes) p.fill?.(y);
         const r0 = y * p0.stride, r1 = y * p1.stride, r2 = y * p2.stride, r3 = y * p3.stride;
 
         for (let x = 0; x < width; x++, o += 4) {

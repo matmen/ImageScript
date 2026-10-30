@@ -4,9 +4,12 @@
 
 ### Performance
 
-- `encodeJPEG()` is 15-25% faster with the same output: the chroma planes are converted and subsampled two rows at a
-  time (instead of full-size planes first, 16 MB less for a 1920x1080 image), and the entropy coding counts and
+- `encodeJPEG()` is about 20% faster with the same output: the chroma planes are converted and subsampled two rows at
+  a time (instead of full-size planes first, 16 MB less for a 1920x1080 image), and the entropy coding counts and
   writes symbols in two specialized passes.
+- JPEG decoding upsamples chroma a row at a time while converting to RGB, and uses unscaled planes as they are,
+  instead of first building full-size copies of all of them (about 6 MB less for a 1920x1080 image). Same output and
+  speed.
 
 ## 3.12.1
 
