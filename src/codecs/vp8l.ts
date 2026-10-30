@@ -1,7 +1,8 @@
 /*!
  * WebP lossless (VP8L) bitstream, as specified in RFC 9649 ("WebP Image Format") section 3 onwards, including its
  * table of short distance codes. Copyright (c) 2024 IETF Trust and the persons identified as the document authors,
- * Revised BSD License (see THIRD_PARTY_NOTICES.md)
+ * Revised BSD License (see THIRD_PARTY_NOTICES.md). The encoder's choice of transforms follows libwebp's entropy
+ * analysis (src/enc/vp8l_enc.c, AnalyzeEntropy). Copyright (c) 2012 Google Inc., BSD-3-Clause License
  */
 
 import { ByteWriter } from '../util/bytes.ts';
@@ -1228,6 +1229,50 @@ const BYTE_COST = Uint8Array.from({ length: 256 }, (_, c) => c < 128 ? c : 256 -
 const residualCost = (r: number): number => BYTE_COST[r & 255] + BYTE_COST[r >>> 8 & 255] + BYTE_COST[r >>> 16 & 255] + BYTE_COST[r >>> 24];
 
 /**
+ * libwebp's entropy analysis (AnalyzeEntropy): which of the pixels and their differences to the pixel left of them,
+ * each with green subtracted from red and blue or not, take the fewest bits (the predictor with the cost of its
+ * sub-image of 2^bits blocks); pixels repeating the left or upper one are left out, backward references take them
+ */
+function analyze(argb: Uint32Array, width: number, height: number, bits: number): { predict: boolean, subtractGreen: boolean } {
+    // the histograms: alpha, red, green, blue of the pixels (0-3) and of the differences (4-7), red and blue less green
+    // of the pixels (8, 9) and of the differences (10, 11)
+    const h = Array.from({ length: 12 }, () => new Uint32Array(256));
+    let prev = argb[0];
+    for (let i = 0; i < argb.length; i++) {
+        const p = argb[i], d = subPixels(p, prev);
+        prev = p;
+        if (d === 0 || (i >= width && p === argb[i - width])) continue;
+        h[0][p >>> 24]++;
+        h[1][p >> 16 & 255]++;
+        h[2][p >> 8 & 255]++;
+        h[3][p & 255]++;
+        h[4][d >>> 24]++;
+        h[5][d >> 16 & 255]++;
+        h[6][d >> 8 & 255]++;
+        h[7][d & 255]++;
+        h[8][(p >> 16) - (p >> 8) & 255]++;
+        h[9][p - (p >> 8) & 255]++;
+        h[10][(d >> 16) - (d >> 8) & 255]++;
+        h[11][d - (d >> 8) & 255]++;
+    }
+    // (one zero for the differences: comparing with 0 removes them too well)
+    for (const k of [4, 5, 6, 7, 10, 11]) h[k][0]++;
+    const bitsOf = (counts: Uint32Array): number => {
+        let total = 0, sum = 0;
+        for (const n of counts) total += n;
+        for (const n of counts) if (n) sum += n * Math.log2(total / n);
+        return sum;
+    };
+    const e = h.map(bitsOf), blocks = subSize(width, bits) * subSize(height, bits);
+    const entropy = [
+        e[0] + e[1] + e[2] + e[3], e[4] + e[5] + e[6] + e[7] + blocks * Math.log2(14),
+        e[0] + e[8] + e[2] + e[9], e[4] + e[10] + e[6] + e[11] + blocks * Math.log2(24),
+    ];
+    const best = entropy.indexOf(Math.min(...entropy));
+    return { predict: best === 1 || best === 3, subtractGreen: best >= 2 };
+}
+
+/**
  * Picks a predictor per block and replaces the pixels with their residuals
  * @return the sub-image of modes
  */
@@ -1349,7 +1394,10 @@ async function encodeWith(argb: Uint32Array, width: number, height: number, colo
         // (subtracting green: not if red and blue are zero, like alpha planes', it would copy green into them)
         let redBlue = false;
         for (let i = 0; i < pixels.length && !redBlue; i++) if (pixels[i] & 0x00ff00ff) redBlue = true;
-        if (redBlue) {
+        // (and the predictor and subtracting green only where they're estimated to pay off: graphics with flat areas
+        // and repeated parts compress better without the predictor)
+        const { predict, subtractGreen } = analyze(argb, width, height, 4);
+        if (redBlue && subtractGreen) {
             w.write(1, 1);
             w.write(Transform.SUBTRACT_GREEN, 2);
             for (let i = 0; i < pixels.length; i++) {
@@ -1360,11 +1408,13 @@ async function encodeWith(argb: Uint32Array, width: number, height: number, colo
         }
 
         const bits = 4;
-        w.write(1, 1);
-        w.write(Transform.PREDICTOR, 2);
-        w.write(bits - 2, 3);
-        const modes = await applyPredictor(pixels, width, height, bits, threads);
-        await writeImage(w, modes, subSize(width, bits), false);
+        if (predict) {
+            w.write(1, 1);
+            w.write(Transform.PREDICTOR, 2);
+            w.write(bits - 2, 3);
+            const modes = await applyPredictor(pixels, width, height, bits, threads);
+            await writeImage(w, modes, subSize(width, bits), false);
+        }
     }
 
     w.write(0, 1); // no more transforms

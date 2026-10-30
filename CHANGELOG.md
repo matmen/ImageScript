@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.13.0
+
+### Changes
+
+- Lossless `encodeWebP()` chooses whether to use the predictor and to subtract green by libwebp's entropy analysis,
+  instead of always predicting: graphics with flat areas and repeated parts compress much better without the
+  predictor. The 1434x1434 benchmark graphic takes 277 kB instead of 557 kB (cwebp: 278 kB), screenshots and images
+  with transparency 15-30% less; photos stay the same. Over 39 test images the bitstreams went from 1.11 to 1.05
+  times cwebp's (`-m 4 -q 75`, like sharp's default).
+
 ## 3.12.0
 
 ### New
