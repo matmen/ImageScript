@@ -19,8 +19,9 @@
   and 4.8 s instead of 19.2 s (8 threads). Images under about 1.5 megapixels at effort 0, 512x512 pixels at 1 and
   384x384 at 2 encode without threads.
 - JPEG XL decoding uses worker threads (`DecodeOptions.threads` and `AnimationDecodeOptions.threads`, the same
-  default), lossy images from 4 megapixels on (one thread per 2 megapixels at most), lossless ones from 1.5: the groups (with all their passes), Gaborish, the
-  EPF's strips and the conversion to sRGB run in parallel, with the same pixels. A 3840x2160 image decodes in 395 ms
+  default), lossy images from 4 megapixels on (one thread per 2 megapixels at most), lossless ones from 1.5 megapixels
+  and 512 KiB on: the groups (with all their passes), Gaborish, the EPF's strips and the conversion to sRGB run in
+  parallel, with the same pixels. A 3840x2160 image decodes in 395 ms
   instead of 640 ms lossy and 328 ms instead of 671 ms lossless, a 5120x2880 one in 568 ms instead of 1121 ms and
   487 ms instead of 1122 ms. Lossy frames no longer keep the coefficients of the whole frame (about 100 MB at 4K): each
   group is rendered once its passes are read.
@@ -43,9 +44,9 @@
   grid of 20 tiles in 1.12 s instead of 2.68 s (8 threads). 4:2:0 and 4:2:2 images convert about 7% faster on one
   thread too.
 - Lossless JPEG XLs shown as they are (integer samples, no filters or upsampling) become RGBA bytes right away instead
-  of through float planes, in threads from 1 megapixel on, with an RCT of the colors undone in the same pass: the same
-  pixels. A 3840x2160 image from `encodeJXL()` decodes in 304 ms instead of 379 ms with 8 threads, 548 ms instead of
-  581 ms with one.
+  of through float planes, in the threads, with an RCT of the colors undone in the same pass: the same pixels. A
+  3840x2160 image from `encodeJXL()` decodes in 304 ms instead of 379 ms with 8 threads, 548 ms instead of 581 ms
+  with one.
 
 ### Tests
 
