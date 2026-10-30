@@ -9,8 +9,8 @@
 
 **ImageScript** decodes, edits and encodes images in pure TypeScript: no WebAssembly, no native binaries, no
 dependencies. It runs in Node.js 22.13+, Deno, Bun, browsers and edge runtimes (Cloudflare Workers, Vercel's Edge
-Runtime, Deno Deploy), with `import` or `require()`, and includes type definitions. Encoders use worker threads where
-the runtime has them and images are large enough to gain from them.
+Runtime, Deno Deploy), works with both `import` and `require()`, and ships with type definitions. Large images are
+encoded and decoded on several threads wherever the runtime supports workers.
 
 ```sh
 npm install imagescript              # Node.js, Bun and bundlers
@@ -30,8 +30,8 @@ image.resize(256, Image.RESIZE_AUTO).roundCorners(16);
 await writeFile('output.png', await image.encode());
 ```
 
-Coordinates are 0-based, `(0, 0)` is the top left pixel. A bigger example is the
-[README image generation](https://github.com/matmen/ImageScript/blob/master/tests/readme.js):
+Coordinates start at `(0, 0)`, the top left pixel. For a bigger example, see the
+[script that generates this image](https://github.com/matmen/ImageScript/blob/master/tests/readme.js):
 
 [![Example](https://github.com/matmen/ImageScript/raw/master/tests/targets/readme.png)](https://github.com/matmen/ImageScript/blob/master/tests/readme.js)
 
@@ -50,14 +50,15 @@ Coordinates are 0-based, `(0, 0)` is the top left pixel. A bigger example is the
 | BMP, QOI, TGA, Netpbm | ✓ | ✓ |
 | TIFF, ICO/CUR, Radiance HDR | ✓ | |
 
-Animated WebPs and JPEG XLs decode too, and [animations](https://imagescript.matmen.dev/classes/Animation.html)
-encode as GIF, APNG or WebP, also [a frame at a time](https://imagescript.matmen.dev/classes/Animation.html#webpencoder).
-Embedded ICC color profiles (Display P3, Adobe RGB, ...) are converted to sRGB when decoding, like browsers show them.
+[Animations](https://imagescript.matmen.dev/classes/Animation.html) can be decoded from GIF, APNG, WebP and JPEG XL,
+and encoded as GIF, APNG or WebP, all at once or
+[frame by frame](https://imagescript.matmen.dev/classes/Animation.html#webpencoder). Embedded color profiles (Display
+P3, Adobe RGB, ...) are converted to sRGB when decoding, so images look the way browsers show them.
 
-- [Text rendering](https://imagescript.matmen.dev/classes/Image.html#rendertext) with TrueType and OpenType fonts,
-  in every script, with color emoji
-- [SVG rendering](https://imagescript.matmen.dev/classes/Image.html#rendersvg), text included (with the fonts you
-  pass or the SVG embeds)
+- [Text rendering](https://imagescript.matmen.dev/classes/Image.html#rendertext) with TrueType and OpenType fonts:
+  all scripts, color emoji
+- [SVG rendering](https://imagescript.matmen.dev/classes/Image.html#rendersvg), including text (with fonts you pass
+  or fonts embedded in the SVG)
 - [Resizing](https://imagescript.matmen.dev/classes/Image.html#resize),
   [cropping](https://imagescript.matmen.dev/classes/Image.html#crop),
   [rotating](https://imagescript.matmen.dev/classes/Image.html#rotate),
@@ -69,9 +70,9 @@ Embedded ICC color profiles (Display P3, Adobe RGB, ...) are converted to sRGB w
   [brightness](https://imagescript.matmen.dev/classes/Image.html#brightness),
   [hueShift](https://imagescript.matmen.dev/classes/Image.html#hueshift), ...
 
-See the [documentation](https://imagescript.matmen.dev/) for everything else, and the
-[changelog](https://github.com/matmen/ImageScript/blob/master/CHANGELOG.md) when upgrading from an older major version.
-[bench/](bench/README.md) compares ImageScript to Jimp, sharp and others.
+The [documentation](https://imagescript.matmen.dev/) covers the full API. When upgrading from an older major version,
+see the [changelog](https://github.com/matmen/ImageScript/blob/master/CHANGELOG.md). [bench/](bench/README.md)
+compares ImageScript's speed and file sizes with Jimp, sharp and other libraries.
 
 ---
 
