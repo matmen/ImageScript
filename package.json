@@ -79,7 +79,7 @@
   "bugs": {
     "url": "https://github.com/matmen/ImageScript/issues"
   },
-  "homepage": "https://github.com/matmen/ImageScript#readme",
+  "homepage": "https://imagescript.dev/",
   "engines": {
     "node": ">=22.13.0"
   },

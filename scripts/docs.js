@@ -1,5 +1,5 @@
 // builds the documentation site into docs/ with typedoc, plus redirects from the pages of the old jsdoc site
-// (imagescript.matmen.dev/Image.html#resize -> classes/Image.html#resize) so existing links keep working
+// (imagescript.dev/Image.html#resize -> classes/Image.html#resize) so existing links keep working
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');

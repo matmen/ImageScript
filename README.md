@@ -1,7 +1,7 @@
 # ImageScript
 ##### zero-dependency JavaScript image manipulation
 [![Discord Server](https://img.shields.io/discord/691713541262147687.svg?label=Discord&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2&style=for-the-badge)](https://discord.gg/8hPrwAH)
-[![Documentation](https://img.shields.io/badge/Documentation-informational?style=for-the-badge)](https://imagescript.matmen.dev/)
+[![Documentation](https://img.shields.io/badge/Documentation-informational?style=for-the-badge)](https://imagescript.dev/)
 [![Github](https://img.shields.io/badge/Github-Repository-181717?logo=github&style=for-the-badge)](https://github.com/matmen/ImageScript)
 [![NPM](https://nodei.co/npm/imagescript.png)](https://www.npmjs.com/package/imagescript)
 
@@ -50,27 +50,27 @@ Coordinates start at `(0, 0)`, the top left pixel. For a bigger example, see the
 | BMP, QOI, TGA, Netpbm | ✓ | ✓ |
 | TIFF, ICO/CUR, Radiance HDR | ✓ | |
 
-[Animations](https://imagescript.matmen.dev/classes/Animation.html) can be decoded from GIF, APNG, WebP and JPEG XL,
+[Animations](https://imagescript.dev/classes/Animation.html) can be decoded from GIF, APNG, WebP and JPEG XL,
 and encoded as GIF, APNG or WebP, all at once or
-[frame by frame](https://imagescript.matmen.dev/classes/Animation.html#webpencoder). Embedded color profiles (Display
+[frame by frame](https://imagescript.dev/classes/Animation.html#webpencoder). Embedded color profiles (Display
 P3, Adobe RGB, ...) are converted to sRGB when decoding, so images look the way browsers show them.
 
-- [Text rendering](https://imagescript.matmen.dev/classes/Image.html#rendertext) with TrueType and OpenType fonts:
+- [Text rendering](https://imagescript.dev/classes/Image.html#rendertext) with TrueType and OpenType fonts:
   all scripts, color emoji, variable fonts
-- [SVG rendering](https://imagescript.matmen.dev/classes/Image.html#rendersvg), including text (with fonts you pass
+- [SVG rendering](https://imagescript.dev/classes/Image.html#rendersvg), including text (with fonts you pass
   or fonts embedded in the SVG)
-- [Resizing](https://imagescript.matmen.dev/classes/Image.html#resize),
-  [cropping](https://imagescript.matmen.dev/classes/Image.html#crop),
-  [rotating](https://imagescript.matmen.dev/classes/Image.html#rotate),
-  [trimming](https://imagescript.matmen.dev/classes/Image.html#trim),
-  [rounded corners](https://imagescript.matmen.dev/classes/Image.html#roundcorners), ...
-- [Compositing](https://imagescript.matmen.dev/classes/Image.html#composite) with opacity and blend modes
-- Filters and color adjustments: [blur](https://imagescript.matmen.dev/classes/Image.html#blur),
-  [sharpen](https://imagescript.matmen.dev/classes/Image.html#sharpen),
-  [brightness](https://imagescript.matmen.dev/classes/Image.html#brightness),
-  [hueShift](https://imagescript.matmen.dev/classes/Image.html#hueshift), ...
+- [Resizing](https://imagescript.dev/classes/Image.html#resize),
+  [cropping](https://imagescript.dev/classes/Image.html#crop),
+  [rotating](https://imagescript.dev/classes/Image.html#rotate),
+  [trimming](https://imagescript.dev/classes/Image.html#trim),
+  [rounded corners](https://imagescript.dev/classes/Image.html#roundcorners), ...
+- [Compositing](https://imagescript.dev/classes/Image.html#composite) with opacity and blend modes
+- Filters and color adjustments: [blur](https://imagescript.dev/classes/Image.html#blur),
+  [sharpen](https://imagescript.dev/classes/Image.html#sharpen),
+  [brightness](https://imagescript.dev/classes/Image.html#brightness),
+  [hueShift](https://imagescript.dev/classes/Image.html#hueshift), ...
 
-The [documentation](https://imagescript.matmen.dev/) covers the full API. When upgrading from an older major version,
+The [documentation](https://imagescript.dev/) covers the full API. When upgrading from an older major version,
 see the [changelog](https://github.com/matmen/ImageScript/blob/master/CHANGELOG.md). [bench/](bench/README.md)
 compares ImageScript's speed and file sizes with Jimp, sharp and other libraries.
 

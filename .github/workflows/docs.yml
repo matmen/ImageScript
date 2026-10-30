@@ -1,6 +1,6 @@
 name: docs
 
-# publishes the documentation to GitHub Pages (imagescript.matmen.dev). release.yml runs it after a release reached
+# publishes the documentation to GitHub Pages (imagescript.dev). release.yml runs it after a release reached
 # npm, so the site documents what is on npm; can also be run by hand from the Actions tab
 on:
   workflow_call:
