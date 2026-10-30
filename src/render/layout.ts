@@ -524,7 +524,7 @@ export class LayoutTable {
     private lookupList = 0;
     readonly lookupCount: number = 0;
     private lookups = new Map<number, Lookup | null>();
-    /** feature tables substituted by the feature variations that apply at the default instance */
+    /** feature tables substituted by the feature variations that apply at the font's coordinates */
     private substitutions = new Map<number, number>();
 
     constructor(readonly font: Font, readonly tag: 'GSUB' | 'GPOS', readonly offset: number) {
@@ -536,7 +536,8 @@ export class LayoutTable {
         if (f.u16(offset + 2) >= 1 && f.u16(offset) === 1 && f.u32(offset + 10)) this.featureVariations(offset + f.u32(offset + 10));
     }
 
-    // the first feature variation record whose conditions hold with all axes at their defaults
+    // the first feature variation record whose conditions hold at the font's coordinates (its instance's, or all axes at
+    // their defaults)
     private featureVariations(table: number): void {
         const f = this.font;
         for (let i = 0, count = f.u32(table + 4); i < count; i++) {
@@ -547,9 +548,12 @@ export class LayoutTable {
                 const set = table + conditions;
                 for (let j = 0, n = f.u16(set); j < n && matches; j++) {
                     const condition = set + f.u32(set + 2 + j * 4);
-                    // format 1: an axis range (F2DOT14), the default coordinate is 0
+                    // format 1: an axis's range (F2DOT14)
                     if (f.u16(condition) !== 1) matches = false;
-                    else matches = f.i16(condition + 4) <= 0 && 0 <= f.i16(condition + 6);
+                    else {
+                        const v = f.coords[f.u16(condition + 2)] ?? 0;
+                        matches = f.i16(condition + 4) / 16384 <= v && v <= f.i16(condition + 6) / 16384;
+                    }
                 }
             }
             if (!matches) continue;
@@ -924,7 +928,7 @@ export class LayoutTable {
                 const valueFormat = f.u16(offset + 4), size = valueSize(valueFormat);
                 if (format === 1) return { coverage: has, apply: c => {
                     if (coverage(c.buffer.cur().codepoint) < 0) return false;
-                    applyValue(f, valueFormat, offset + 6, c.buffer.cur());
+                    applyValue(f, valueFormat, offset + 6, c.buffer.cur(), offset);
                     c.buffer.idx++;
                     return true;
                 } };
@@ -932,7 +936,7 @@ export class LayoutTable {
                 return { coverage: has, apply: c => {
                     const index = coverage(c.buffer.cur().codepoint);
                     if (index < 0 || index >= f.u16(offset + 6)) return false;
-                    applyValue(f, valueFormat, offset + 8 + index * size, c.buffer.cur());
+                    applyValue(f, valueFormat, offset + 8 + index * size, c.buffer.cur(), offset);
                     c.buffer.idx++;
                     return true;
                 } };
@@ -967,8 +971,8 @@ export class LayoutTable {
                             }
                         }
                         if (record < 0) return false;
-                        if (len1) applyValue(f, format1, record + 2, buffer.cur());
-                        if (len2) applyValue(f, format2, record + 2 + len1, buffer.info[pos]);
+                        if (len1) applyValue(f, format1, record + 2, buffer.cur(), offset);
+                        if (len2) applyValue(f, format2, record + 2 + len1, buffer.info[pos], offset);
                         buffer.idx = len2 ? pos + 1 : pos;
                         return true;
                     } };
@@ -987,8 +991,8 @@ export class LayoutTable {
                     const k1 = class1(buffer.cur().codepoint), k2 = class2(buffer.info[pos].codepoint);
                     if (k1 >= class1Count || k2 >= class2Count) return false;
                     const v = records + (k1 * class2Count + k2) * (len1 + len2);
-                    if (len1) applyValue(f, format1, v, buffer.cur());
-                    if (len2) applyValue(f, format2, v + len1, buffer.info[pos]);
+                    if (len1) applyValue(f, format1, v, buffer.cur(), offset);
+                    if (len2) applyValue(f, format2, v + len1, buffer.info[pos], offset);
                     buffer.idx = len2 ? pos + 1 : pos;
                     return true;
                 } };
@@ -1189,21 +1193,39 @@ const valueSize = (format: number): number => {
     return n * 2;
 };
 
-// a value record's placement and advance (device tables don't apply without a pixel size or variations)
-function applyValue(f: Font, format: number, offset: number, info: GlyphInfo): void {
-    if (format & 1) {
-        info.xOffset += f.i16(offset);
-        offset += 2;
-    }
-    if (format & 2) {
-        info.yOffset += f.i16(offset);
-        offset += 2;
-    }
-    if (format & 4) info.xAdvance += f.i16(offset);
+// a device table's delta: a variation index's (deltaFormat 0x8000) at the font's coordinates; ones for pixel sizes
+// (hinting) don't apply without one
+function deviceDelta(f: Font, device: number): number {
+    if (!f.coords.length || f.u16(device + 4) !== 0x8000) return 0;
+    return f.variationDelta(f.u16(device), f.u16(device + 2));
 }
 
+// a value record's placement and advance, with its device tables' deltas (offsets from base, the subtable's start)
+function applyValue(f: Font, format: number, offset: number, info: GlyphInfo, base: number): void {
+    const fields = [0, 0, 0, 0];
+    for (let k = 0; k < 4; k++) if (format & 1 << k) {
+        fields[k] = f.i16(offset);
+        offset += 2;
+    }
+    if (format & 0xf0 && f.coords.length) for (let k = 0; k < 4; k++) if (format & 0x10 << k) {
+        const device = f.u16(offset);
+        offset += 2;
+        if (device) fields[k] += deviceDelta(f, base + device);
+    }
+    info.xOffset += fields[0];
+    info.yOffset += fields[1];
+    info.xAdvance += fields[2];
+}
+
+// an anchor point, with format 3's device tables' deltas
 function anchor(f: Font, offset: number): [number, number] {
-    return [f.i16(offset + 2), f.i16(offset + 4)];
+    let x = f.i16(offset + 2), y = f.i16(offset + 4);
+    if (f.u16(offset) === 3 && f.coords.length) {
+        const dx = f.u16(offset + 6), dy = f.u16(offset + 8);
+        if (dx) x += deviceDelta(f, offset + dx);
+        if (dy) y += deviceDelta(f, offset + dy);
+    }
+    return [x, y];
 }
 
 // the anchor of a mark array's record for a base (anchor matrix row), attaches the current mark to the glyph at

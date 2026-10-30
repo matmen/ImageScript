@@ -1,3 +1,5 @@
+import { type Axis, Gvar, ItemVariationStore, cvarDeltas, deltaSetIndexMap, normalize, parseAvar, parseFvar } from './variations.ts';
+
 
 /**
  * A path command in font units (y up) or user units:
@@ -28,6 +30,18 @@ interface CFF {
 
 type Dict = Record<number, number[]>;
 
+// a variable font's tables (parsed when first needed)
+interface VariationTables {
+    avar: number[][] | null;
+    gvar: Gvar | null;
+    /** HVAR: the item variation store and the advance widths' mapping (null: by glyph index) */
+    hvar: { store: ItemVariationStore, advances: ((glyph: number) => [number, number]) | null } | null;
+    /** MVAR: its item variation store and the items of the values by tag */
+    mvar: { store: ItemVariationStore, records: Map<string, [number, number]> } | null;
+    /** GDEF's item variation store (for GPOS's variation indices) */
+    gdef: ItemVariationStore | null;
+}
+
 // the most path commands of a glyph outline
 const MAX_COMMANDS = 100000;
 
@@ -54,6 +68,13 @@ export class Font {
     kernTable: ((left: number, right: number) => number) | null;
     /** glyphs for variation sequences (cmap format 14): the glyph, -1 for the default one, 0 if the font has none */
     variation: ((codepoint: number, selector: number) => number) | null;
+    /** a variable font's axes (fvar; none for other fonts) */
+    axes: Axis[];
+    /** the normalized coordinates of this instance of a variable font, empty for its default instance */
+    coords: number[] = [];
+    private variationTables: VariationTables | null = null;
+    /** a variable font's instances by their coordinates (kept on the font they come from) */
+    private instances: Map<string, Font> | null = null;
 
     constructor(data: Uint8Array) {
         this.data = data;
@@ -102,6 +123,71 @@ export class Font {
         this.outlineCache = new Map();
         this.kernTable = this.tables.kern && parseKern(this, this.tables.kern.offset) || null;
         this.variation = parseVariations(this, this.tables.cmap.offset);
+        this.axes = this.tables.fvar ? parseFvar(this, this.tables.fvar.offset) : [];
+    }
+
+    /** the variation tables, parsed the first time */
+    private get vary(): VariationTables {
+        if (this.variationTables) return this.variationTables;
+        const t = this.tables, at = (tag: string): number => t[tag].offset;
+        const hvar = t.HVAR ? (() => {
+            const o = at('HVAR'), map = this.u32(o + 8);
+            return { store: new ItemVariationStore(this, o + this.u32(o + 4)), advances: map ? deltaSetIndexMap(this, o + map) : null };
+        })() : null;
+        const mvar = t.MVAR && this.u16(at('MVAR') + 10) ? (() => {
+            const o = at('MVAR'), size = this.u16(o + 6), count = this.u16(o + 8), records = new Map<string, [number, number]>();
+            for (let i = 0; i < count; i++) {
+                const r = o + 12 + i * size;
+                records.set(String.fromCharCode(...this.data.subarray(r, r + 4)), [this.u16(r + 4), this.u16(r + 6)]);
+            }
+            return { store: new ItemVariationStore(this, o + this.u16(o + 10)), records };
+        })() : null;
+        const gdef = t.GDEF && this.u16(at('GDEF') + 2) >= 3 && this.u32(at('GDEF') + 14) ? new ItemVariationStore(this, at('GDEF') + this.u32(at('GDEF') + 14)) : null;
+        // (shared by the instances: stored on the font they come from)
+        const base = Object.getPrototypeOf(this) instanceof Font ? Object.getPrototypeOf(this) as Font : this;
+        base.variationTables = {
+            avar: t.avar ? parseAvar(this, at('avar'), this.axes.length) : null,
+            gvar: t.gvar && this.outlines === 'glyf' ? new Gvar(this, at('gvar')) : null,
+            hvar, mvar, gdef,
+        };
+        return base.variationTables;
+    }
+
+    /**
+     * An instance of a variable font at axis values in their user units by tag (like wght: 700; missing axes at their
+     * default, values clamped to the axes' ranges): the font itself for fonts without axes or at the default
+     */
+    withVariations(values: Record<string, number>): Font {
+        if (!this.axes.length) return this;
+        const coords = normalize(this.axes, this.vary.avar, values);
+        if (coords.every(c => c === 0)) return Object.getPrototypeOf(this) instanceof Font ? Object.getPrototypeOf(this) as Font : this;
+        const base = Object.getPrototypeOf(this) instanceof Font ? Object.getPrototypeOf(this) as Font : this;
+        const key = coords.join(',');
+        const cached = base.instances?.get(key);
+        if (cached) return cached;
+        const instance = Object.create(base) as Font;
+        (base.instances ??= new Map()).set(key, instance);
+        instance.coords = coords;
+        instance.outlineCache = new Map();
+        // (the metrics MVAR varies)
+        const metric = (tag: string, value: number): number => {
+            const item = this.vary.mvar?.records.get(tag);
+            return item ? value + (this.vary.mvar as { store: ItemVariationStore }).store.delta(coords, item[0], item[1]) : value;
+        };
+        instance.ascender = metric('hasc', base.ascender);
+        instance.descender = metric('hdsc', base.descender);
+        instance.lineGap = metric('hlgn', base.lineGap);
+        return instance;
+    }
+
+    /** the delta of GDEF's item (outer, inner) at this instance's coordinates (for GPOS's device tables), 0 without */
+    variationDelta(outer: number, inner: number): number {
+        return this.coords.length && this.vary.gdef ? this.vary.gdef.delta(this.coords, outer, inner) : 0;
+    }
+
+    /** the deltas of the control values (cvar) at this instance's coordinates, null without */
+    cvtDeltas(count: number): Float64Array | null {
+        return this.coords.length && this.tables.cvar ? cvarDeltas(this, this.tables.cvar.offset, this.axes.length, this.coords, count) : null;
     }
 
     u8(o: number): number { return this.data[o]; }
@@ -126,7 +212,40 @@ export class Font {
     advance(glyph: number): number {
         const hmtx = this.tables.hmtx.offset;
         const index = Math.min(glyph, this.numberOfHMetrics - 1);
-        return this.u16(hmtx + index * 4);
+        const advance = this.u16(hmtx + index * 4);
+        if (!this.coords.length) return advance;
+        // (varied: by HVAR, else by gvar's phantom points)
+        const hvar = this.vary.hvar;
+        if (hvar) {
+            const [outer, inner] = hvar.advances ? hvar.advances(glyph) : [0, glyph];
+            return advance + hvar.store.delta(this.coords, outer, inner);
+        }
+        const phantom = this.phantomDeltas(glyph);
+        return phantom ? advance + phantom[2] - phantom[0] : advance;
+    }
+
+    // the deltas (x, y) of a glyph's 4 phantom points (origin, advance, top, bottom) at this instance's coordinates
+    private phantomDeltas(glyph: number): Float64Array | null {
+        const varied = this.varied(glyph);
+        return varied && varied.deltas && varied.deltas.subarray(2 * varied.count);
+    }
+
+    // a TrueType glyph's points (or its components' offsets) at this instance's coordinates: the default ones and their
+    // deltas (count points, then the 4 phantom ones); null for empty or damaged glyphs
+    private varied(glyph: number): { count: number, deltas: Float64Array | null, simple: { xs: Int32Array, ys: Int32Array, flags: Uint8Array, ends: number[], instructions: Uint8Array } | null } | null {
+        if (this.outlines !== 'glyf' || glyph >= this.numGlyphs) return null;
+        const offset = this.glyfOffset(glyph);
+        const gvar = this.coords.length ? this.vary.gvar : null;
+        if (offset < 0) return { count: 0, deltas: gvar ? gvar.deltas(glyph, this.coords, 4, null, [], []) : null, simple: null };
+        const contours = this.i16(offset);
+        if (contours < 0) {
+            const count = this.components(offset).components.length;
+            return { count, deltas: gvar ? gvar.deltas(glyph, this.coords, count + 4, null, [], []) : null, simple: null };
+        }
+        const simple = this.simplePoints(offset, contours);
+        if (!simple) return null;
+        const count = simple.xs.length;
+        return { count, deltas: gvar ? gvar.deltas(glyph, this.coords, count + 4, simple.ends, simple.xs, simple.ys) : null, simple };
     }
 
     /** the glyph for a variation sequence, 0 if the font has none */
@@ -137,7 +256,8 @@ export class Font {
 
     /** a glyph's ink box in font units (the glyf header's for TrueType outlines), null if it has none */
     extents(glyph: number): { xMin: number, yMin: number, xMax: number, yMax: number } | null {
-        if (this.outlines === 'glyf' && glyph < this.numGlyphs) {
+        // (varied glyphs: their outline's)
+        if (this.outlines === 'glyf' && glyph < this.numGlyphs && !this.coords.length) {
             const o = this.glyfOffset(glyph);
             if (o < 0) return { xMin: 0, yMin: 0, xMax: 0, yMax: 0 };
             return { xMin: this.i16(o + 2), yMin: this.i16(o + 4), xMax: this.i16(o + 6), yMax: this.i16(o + 8) };
@@ -171,13 +291,19 @@ export class Font {
         const contourCount = this.i16(offset);
         const xMin = this.i16(offset + 2);
 
+        // (varied: the points and component offsets moved by their deltas, rounded to font units like FreeType does,
+        // the origin by the first phantom point's)
+        const varied = this.coords.length ? this.varied(glyph) : null, d = varied?.deltas;
+        const at = (i: number, axis: number): number => d ? Math.round(d[2 * i + axis]) : 0;
+        const origin = d && varied ? at(varied.count, 0) : 0;
+
         if (contourCount < 0) {
             const { components, end } = this.components(offset);
             const instructions = components[components.length - 1].flags & 0x100 ? this.data.subarray(end + 2, end + 2 + this.u16(end)) : new Uint8Array(0);
             return {
-                xs: [], ys: [], on: [], ends: [], instructions, xMin,
-                components: components.map(({ glyph, flags, arg1, arg2, matrix }) => ({
-                    glyph, dx: flags & 2 ? arg1 : 0, dy: flags & 2 ? arg2 : 0, matrix,
+                xs: [], ys: [], on: [], ends: [], instructions, xMin: xMin + origin,
+                components: components.map(({ glyph, flags, arg1, arg2, matrix }, i) => ({
+                    glyph, dx: flags & 2 ? arg1 + at(i, 0) : 0, dy: flags & 2 ? arg2 + at(i, 1) : 0, matrix,
                     round: (flags & 4) !== 0, match: flags & 2 ? null : [arg1, arg2], useMetrics: (flags & 0x200) !== 0,
                 })),
             };
@@ -186,7 +312,10 @@ export class Font {
         const points = this.simplePoints(offset, contourCount);
         if (!points) return null;
         const { xs, ys, flags, ends, instructions } = points;
-        return { xs: Array.from(xs), ys: Array.from(ys), on: Array.from(flags, f => (f & 1) === 1), ends, instructions, xMin, components: null };
+        return {
+            xs: Array.from(xs, (x, i) => x + at(i, 0)), ys: Array.from(ys, (y, i) => y + at(i, 1)), on: Array.from(flags, f => (f & 1) === 1), ends,
+            instructions, xMin: xMin + origin, components: null,
+        };
     }
 
     /** where a glyph's glyf data starts, -1 for empty glyphs */
@@ -301,34 +430,43 @@ export class Font {
         const contours = this.i16(offset);
 
         if (contours >= 0) {
-            const path = this.simpleGlyph(offset, contours);
+            const path = this.simpleGlyph(offset, contours, glyph);
             expanding.budget -= path.length;
             return expanding.budget >= 0 ? path : [];
         }
         expanding.expanding.add(glyph);
-        const path = this.compositeGlyph(offset, expanding);
+        const path = this.compositeGlyph(offset, expanding, glyph);
         expanding.expanding.delete(glyph);
         return path;
     }
 
-    simpleGlyph(offset: number, contourCount: number): PathCommand[] {
+    simpleGlyph(offset: number, contourCount: number, glyph: number): PathCommand[] {
         // (damaged glyphs are left empty)
         const points = this.simplePoints(offset, contourCount);
         if (!points) return [];
+        let xs: ArrayLike<number> = points.xs, ys: ArrayLike<number> = points.ys;
+        // (varied: the points moved by their deltas)
+        const d = this.coords.length ? this.varied(glyph)?.deltas : null;
+        if (d) {
+            xs = Float64Array.from(points.xs, (x, i) => x + d[2 * i]);
+            ys = Float64Array.from(points.ys, (y, i) => y + d[2 * i + 1]);
+        }
         const path: PathCommand[] = [];
         let first = 0;
         for (const last of points.ends) {
-            contourToPath(path, points.xs, points.ys, points.flags, first, last);
+            contourToPath(path, xs, ys, points.flags, first, last);
             first = last + 1;
         }
         return path;
     }
 
-    compositeGlyph(offset: number, expanding: { expanding: Set<number>, budget: number }): PathCommand[] {
+    compositeGlyph(offset: number, expanding: { expanding: Set<number>, budget: number }, composite: number): PathCommand[] {
         const path: PathCommand[] = [];
-        for (const { glyph, flags, arg1, arg2, matrix: [a, b, c, d] } of this.components(offset).components) {
+        // (varied: the components' offsets moved by their deltas)
+        const deltas = this.coords.length ? this.varied(composite)?.deltas : null;
+        for (const [k, { glyph, flags, arg1, arg2, matrix: [a, b, c, d] }] of this.components(offset).components.entries()) {
             // point matching (ARGS_ARE_XY_VALUES unset) is rare, treated as no offset
-            const dx = flags & 2 ? arg1 : 0, dy = flags & 2 ? arg2 : 0;
+            const dx = flags & 2 ? arg1 + (deltas ? deltas[2 * k] : 0) : 0, dy = flags & 2 ? arg2 + (deltas ? deltas[2 * k + 1] : 0) : 0;
             for (const command of this.glyfOutline(glyph, expanding)) {
                 const transformed: PathCommand = [command[0]];
                 for (let i = 1; i < command.length; i += 2) {
