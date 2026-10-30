@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.12.2
+
+### Performance
+
+- `encodeJPEG()` is 15-25% faster with the same output: the chroma planes are converted and subsampled two rows at a
+  time (instead of full-size planes first, 16 MB less for a 1920x1080 image), and the entropy coding counts and
+  writes symbols in two specialized passes.
+
 ## 3.12.1
 
 ### Changes

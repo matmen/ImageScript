@@ -904,47 +904,47 @@ export function encode(pixels: Uint8Array, width: number, height: number, qualit
     const mcusPerLine = Math.ceil(width / mcuSize);
     const mcusPerColumn = Math.ceil(height / mcuSize);
 
-    // convert to YCbCr planes padded to whole MCUs by edge replication
-    const W = mcusPerLine * mcuSize, H = mcusPerColumn * mcuSize;
-    const Y = new Float32Array(W * H), Cb = new Float32Array(W * H), Cr = new Float32Array(W * H);
+    // convert to YCbCr planes padded to whole MCUs by edge replication, subsampled chroma by a 2x2 box filter (from
+    // pairs of full rows, the planes stay a quarter)
+    const W = mcusPerLine * mcuSize, H = mcusPerColumn * mcuSize, chromaStride = subsample ? W / 2 : W;
+    const Y = new Float32Array(W * H), Cb = new Float32Array(chromaStride * H / hmax), Cr = new Float32Array(chromaStride * H / hmax);
+    const cbRows = subsample ? new Float32Array(2 * W) : Cb, crRows = subsample ? new Float32Array(2 * W) : Cr;
 
-    for (let y = 0; y < height; y++) {
-        let i = y * width * 4, o = y * W;
+    for (let y = 0; y < H; y++) {
+        const row = subsample ? (y & 1) * W : y * W;
+        if (y < height) {
+            let i = y * width * 4, o = y * W, c = row;
 
-        for (let x = 0; x < width; x++, i += 4, o++) {
-            const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
-            Y[o] = 0.299 * r + 0.587 * g + 0.114 * b - 128;
-            Cb[o] = -0.168735892 * r - 0.331264108 * g + 0.5 * b;
-            Cr[o] = 0.5 * r - 0.418687589 * g - 0.081312411 * b;
+            for (let x = 0; x < width; x++, i += 4, o++, c++) {
+                const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+                Y[o] = 0.299 * r + 0.587 * g + 0.114 * b - 128;
+                cbRows[c] = -0.168735892 * r - 0.331264108 * g + 0.5 * b;
+                crRows[c] = 0.5 * r - 0.418687589 * g - 0.081312411 * b;
+            }
+
+            Y.fill(Y[o - 1], o, (y + 1) * W);
+            cbRows.fill(cbRows[c - 1], c, row + W);
+            crRows.fill(crRows[c - 1], c, row + W);
+        } else {
+            Y.copyWithin(y * W, (height - 1) * W, height * W);
+            const last = subsample ? (height - 1 & 1) * W : (height - 1) * W;
+            if (row !== last) {
+                cbRows.copyWithin(row, last, last + W);
+                crRows.copyWithin(row, last, last + W);
+            }
         }
 
-        Y.fill(Y[o - 1], o, (y + 1) * W);
-        Cb.fill(Cb[o - 1], o, (y + 1) * W);
-        Cr.fill(Cr[o - 1], o, (y + 1) * W);
-    }
-
-    for (let y = height; y < H; y++) {
-        Y.copyWithin(y * W, (height - 1) * W, height * W);
-        Cb.copyWithin(y * W, (height - 1) * W, height * W);
-        Cr.copyWithin(y * W, (height - 1) * W, height * W);
-    }
-
-    // 2x2 box filter for subsampled chroma
-    const downsample = (plane: Float32Array): Float32Array => {
-        const out = new Float32Array(W * H / 4);
-        for (let y = 0, o = 0; y < H; y += 2)
-            for (let x = 0; x < W; x += 2, o++) {
-                const i = y * W + x;
-                out[o] = (plane[i] + plane[i + 1] + plane[i + W] + plane[i + W + 1]) * 0.25;
+        if (subsample && y & 1)
+            for (let x = 0, o = (y >> 1) * chromaStride; x < W; x += 2, o++) {
+                Cb[o] = (cbRows[x] + cbRows[x + 1] + cbRows[x + W] + cbRows[x + W + 1]) * 0.25;
+                Cr[o] = (crRows[x] + crRows[x + 1] + crRows[x + W] + crRows[x + W + 1]) * 0.25;
             }
-        return out;
-    };
+    }
 
-    const chromaStride = subsample ? W / 2 : W;
     const components = [
         { plane: Y, stride: W, h: hmax, v: hmax, table: 0 },
-        { plane: subsample ? downsample(Cb) : Cb, stride: chromaStride, h: 1, v: 1, table: 1 },
-        { plane: subsample ? downsample(Cr) : Cr, stride: chromaStride, h: 1, v: 1, table: 1 }
+        { plane: Cb, stride: chromaStride, h: 1, v: 1, table: 1 },
+        { plane: Cr, stride: chromaStride, h: 1, v: 1, table: 1 }
     ];
 
     // quantized blocks in MCU order (Y blocks, then Cb, then Cr), their coefficients in zigzag order, with the index
@@ -989,7 +989,7 @@ export function encode(pixels: Uint8Array, width: number, height: number, qualit
 
     // pass 1: gather symbol statistics, pass 2: write with optimal tables
     const frequencies = [new Int32Array(257), new Int32Array(257), new Int32Array(257), new Int32Array(257)];
-    encodeBlocks(blocks, (table, symbol) => frequencies[table][symbol]++, () => { });
+    countSymbols(blocks, frequencies);
 
     const huffman = frequencies.map(buildOptimalTable);
     const writer = new BitWriter(width * height);
@@ -1029,10 +1029,7 @@ export function encode(pixels: Uint8Array, width: number, height: number, qualit
     // SOS
     writer.bytes(0xff, 0xda, 0x00, 0x0c, 0x03, 1, 0x00, 2, 0x11, 3, 0x11, 0x00, 0x3f, 0x00);
 
-    encodeBlocks(blocks,
-        (table, symbol) => writer.write(huffman[table].codes[symbol], huffman[table].sizes[symbol]),
-        (value, size) => writer.write(value, size));
-
+    writeBlocks(blocks, huffman, writer);
     writer.flush();
     writer.bytes(0xff, 0xd9);
     return writer.finish();
@@ -1046,43 +1043,87 @@ interface Blocks {
     count: number;
 }
 
-function encodeBlocks({ coefficients, owners, ends, count }: Blocks, symbol: (table: number, symbol: number) => void, bits: (value: number, size: number) => void): void {
+// counts the symbols the blocks take (the DC differences' sizes, AC runs and sizes)
+function countSymbols({ coefficients, owners, ends, count }: Blocks, frequencies: Int32Array[]): void {
     const pred = [0, 0, 0];
 
     for (let n = 0; n < count; n++) {
-        const component = owners[n];
-        const o = n * 64;
-        const dcTable = component === 0 ? 0 : 2;
-        const acTable = dcTable + 1;
+        const component = owners[n], o = n * 64;
+        const dc = frequencies[component === 0 ? 0 : 2], ac = frequencies[component === 0 ? 1 : 3];
 
-        const diff = coefficients[o] - pred[component];
+        dc[magnitude(coefficients[o] - pred[component])]++;
         pred[component] = coefficients[o];
-        const size = magnitude(diff);
-        symbol(dcTable, size);
-        if (size) bits(diff < 0 ? diff - 1 & (1 << size) - 1 : diff, size);
 
         let run = 0;
         for (let k = 1, end = ends[n]; k <= end; k++) {
             const value = coefficients[o + k];
-
             if (value === 0) {
                 run++;
                 continue;
             }
-
-            while (run > 15) {
-                symbol(acTable, 0xf0);
-                run -= 16;
-            }
-
-            const s = magnitude(value);
-            symbol(acTable, run << 4 | s);
-            bits(value < 0 ? value - 1 & (1 << s) - 1 : value, s);
+            for (; run > 15; run -= 16) ac[0xf0]++;
+            ac[run << 4 | magnitude(value)]++;
             run = 0;
         }
 
-        if (ends[n] < 63) symbol(acTable, 0x00);
+        if (ends[n] < 63) ac[0]++;
     }
+}
+
+// writes the blocks' symbols and bits
+function writeBlocks({ coefficients, owners, ends, count }: Blocks, huffman: OptimalTable[], writer: BitWriter): void {
+    const pred = [0, 0, 0];
+    let { bits, count: pending, buffer, length } = writer;
+
+    // (the bits in a local, bytes stuffed with a zero after 0xff, like BitWriter.write)
+    const put = (value: number, size: number): void => {
+        bits = bits << size | value & (1 << size) - 1;
+        pending += size;
+        while (pending >= 8) {
+            pending -= 8;
+            const byte = bits >>> pending & 0xff;
+            if (length + 2 > buffer.length) {
+                writer.length = length;
+                writer.reserve(2);
+                buffer = writer.buffer;
+            }
+            buffer[length++] = byte;
+            if (byte === 0xff) buffer[length++] = 0x00;
+        }
+        bits &= (1 << pending) - 1;
+    };
+
+    for (let n = 0; n < count; n++) {
+        const component = owners[n], o = n * 64;
+        const dc = huffman[component === 0 ? 0 : 2], ac = huffman[component === 0 ? 1 : 3];
+        const dcCodes = dc.codes, dcSizes = dc.sizes, acCodes = ac.codes, acSizes = ac.sizes;
+
+        const diff = coefficients[o] - pred[component];
+        pred[component] = coefficients[o];
+        const size = magnitude(diff);
+        put(dcCodes[size], dcSizes[size]);
+        if (size) put(diff < 0 ? diff - 1 : diff, size);
+
+        let run = 0;
+        for (let k = 1, end = ends[n]; k <= end; k++) {
+            const value = coefficients[o + k];
+            if (value === 0) {
+                run++;
+                continue;
+            }
+            for (; run > 15; run -= 16) put(acCodes[0xf0], acSizes[0xf0]);
+            const s = magnitude(value), symbol = run << 4 | s;
+            put(acCodes[symbol], acSizes[symbol]);
+            put(value < 0 ? value - 1 : value, s);
+            run = 0;
+        }
+
+        if (ends[n] < 63) put(acCodes[0], acSizes[0]);
+    }
+
+    writer.bits = bits;
+    writer.count = pending;
+    writer.length = length;
 }
 
 // the bits a value takes
