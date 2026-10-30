@@ -1,7 +1,7 @@
 {
   "ImageScript 3": {
-    "package": "imagescript@3.9.0",
-    "bytes": 2304203,
+    "package": "imagescript@3.10.0",
+    "bytes": 2345042,
     "packages": 1
   },
   "ImageScript 1": {
@@ -33,6 +33,11 @@
     "package": "sharp@0.35.5",
     "bytes": 20305488,
     "packages": 6
+  },
+  "jsquash": {
+    "package": "@jsquash/avif@2.1.1 @jsquash/jxl@1.3.0",
+    "bytes": 14244760,
+    "packages": 3
   },
   "@napi-rs/canvas": {
     "package": "@napi-rs/canvas@1.0.11",
