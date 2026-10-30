@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.13.0
+## 3.12.1
 
 ### Changes
 
@@ -12,6 +12,7 @@
 - Lossless `encodeWebP()` uses the color transform after the predictor, choosing per 32x32 block how much of green to
   subtract from red and of green and red from blue, like libwebp: 5-6% smaller for images like emoji and rendered
   graphics, about 0.6% on average, and about 9% slower. Over the same 39 images: 1.04 times cwebp's.
+- The documentation moved to [imagescript.dev](https://imagescript.dev/); imagescript.matmen.dev redirects there.
 
 ## 3.12.0
 
