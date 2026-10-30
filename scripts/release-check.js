@@ -56,6 +56,12 @@ async function main() {
     if (!changelog.split('\n').some(line => /^##\s/.test(line) && line.replace(/^##\s+v?/, '').trim().split(/\s/)[0] === version))
         fail(`CHANGELOG.md has no "## ${version}" section`);
 
+    // what JSR refuses when publishing, after npm has published (deno publish --dry-run doesn't check it): declaring
+    // global types
+    const sources = fs.readdirSync(path.join(root, 'src'), { recursive: true }).filter(f => f.endsWith('.ts'));
+    for (const file of sources)
+        if (/^\s*declare\s+global\b/m.test(fs.readFileSync(path.join(root, 'src', file), 'utf8'))) fail(`src/${file} declares global types, which JSR doesn't allow`);
+
     // what npm has already
     const res = await fetch(`https://registry.npmjs.org/${name}`, { headers: { accept: 'application/vnd.npm.install-v1+json' } });
     if (!res.ok && res.status !== 404) throw new Error(`npm registry answered ${res.status}`);

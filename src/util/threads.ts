@@ -1,16 +1,13 @@
 // worker threads: Web Workers (Deno, Bun, browsers) or node:worker_threads (Node), sharing memory through
 // SharedArrayBuffers. Accessed through feature detection with minimal local types, like node:zlib (see zlib.ts)
 
-// (URL and import.meta.url aren't in the es2022 lib)
+// (URL and import.meta.url aren't in the es2022 lib: URL declared here, import.meta's type where it's used, as JSR
+// doesn't allow declaring it globally; the build's JavaScript has import.meta.url written out, for bundlers)
 declare const URL: new (url: string, base: string) => URL;
 interface URL {
     readonly href: string;
 }
-declare global {
-    interface ImportMeta {
-        readonly url: string;
-    }
-}
+type Meta = ImportMeta & { url: string };
 
 interface NodeWorker {
     on(event: 'message' | 'error', listener: (value: unknown) => void): void;
@@ -104,7 +101,7 @@ export function startThreads(n: number): Thread[] | null {
             if (globals.Worker) {
                 // (written like this, bundlers find the worker's module and bundle it too; the build points it at
                 // worker.js)
-                const w = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+                const w = new Worker(new URL('./worker.ts', (import.meta as Meta).url), { type: 'module' });
                 threads.push(thread(m => w.postMessage(m), (message, error) => {
                     w.onmessage = e => message(e.data as Reply);
                     w.onerror = e => {
@@ -114,7 +111,8 @@ export function startThreads(n: number): Thread[] | null {
                 }, () => w.terminate()));
             } else {
                 const { Worker } = builtin('node:worker_threads') as { Worker: new (url: URL) => NodeWorker };
-                const w = new Worker(new URL(import.meta.url.endsWith('.ts') ? './worker.ts' : './worker.js', import.meta.url));
+                const url = (import.meta as Meta).url;
+                const w = new Worker(new URL(url.endsWith('.ts') ? './worker.ts' : './worker.js', url));
                 // (an idle worker doesn't keep the process alive)
                 w.unref();
                 threads.push(thread(m => w.postMessage(m), (message, error) => {

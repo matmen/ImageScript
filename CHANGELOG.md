@@ -2,6 +2,11 @@
 
 ## 3.11.0
 
+### Fixes
+
+- 3.10.0 is on npm but not on JSR, which refused it for declaring `import.meta.url`'s type globally; this version
+  is published to both again.
+
 ### Changes
 
 - JPEG XLs with an embedded ICC profile whose pixels are in its color space (lossless ones and recompressed JPEGs, not
