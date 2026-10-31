@@ -18,7 +18,34 @@ const expected = {
 	'tiny-17x9-prog': '3e23bd12158aa8c323b80b7480d401ba3135f2e3dec708b5942d7a1326c57bcf', // partial MCUs
 };
 
+// sha256 of cjpeg -quality <q> -baseline -optimize (-sample 1x1 above 90) of the decoded images, libjpeg-turbo 2.1.5:
+// the encoder writes the same bytes, but for its Exif segment
+const encoded = {
+	'external@10': 'd1c9d6f323aace423439f3133aa161fad2b7b30a8fd72d7dc4f0cfe620a15a45',
+	'external@50': 'babb66fd617da2773d57e849b949051e9a90c790f888a4b79d83261388997d78',
+	'external@90': '05e8d09c19e04d9abd77fe4a957b5cc9b7cb095ec3d0eae1ac0903b092bea648',
+	'external@100': 'c2b61dcda49efa9cd998bb84b5de7a820f62395840ce8cfbda648fbde2b924ec',
+	'tiny-17x9-prog@10': 'd4397b2b63d57a8effc18a76073c012a7cf204a29e20ecb2ef9a76f04dd3240e',
+	'tiny-17x9-prog@50': 'a486ba21b4354bc52f4ccf0ce71bfc6b6675c0a8d9684db87f61573b959b6a8e',
+	'tiny-17x9-prog@90': 'dd4d05fa35270afdbe6e6ae4947d8816f3a75280387cedf1d3fd2812de116ff0',
+	'tiny-17x9-prog@100': 'f938598c831005837ac429312fa659d0022a776c1933d23a824975df436ca8bf',
+};
+
+// removes the APP1 (Exif) segment following SOI and APP0
+const withoutExif = data => {
+	if (data[20] !== 0xff || data[21] !== 0xe1) panic('no Exif segment after APP0');
+	return Buffer.concat([data.subarray(0, 20), data.subarray(22 + (data[22] << 8 | data[23]))]);
+};
+
 (async () => {
+	for (const [key, hash] of Object.entries(encoded)) {
+		const [name, quality] = key.split('@');
+		const file = name === 'external' ? './tests/targets/external.jpg' : `./tests/jpegs/${name}.jpg`;
+		const data = withoutExif(await (await Image.decode(await fs.readFile(file))).encodeJPEG(Number(quality)));
+		if (crypto.createHash('sha256').update(data).digest('hex') !== hash)
+			panic(`${key}: encoded bytes don't match cjpeg's`);
+	}
+
 	const binary = await fs.readFile('./tests/targets/external.jpg');
 	const image = await Image.decode(binary);
 

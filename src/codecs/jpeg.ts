@@ -1,7 +1,7 @@
 /*!
  * JPEG codec. This software is based in part on the work of the Independent JPEG Group: the IDCT, FDCT, upsampling,
- * color conversion, progressive refinement and optimal Huffman tables are translated from libjpeg/libjpeg-turbo
- * (IJG license, see licenses/README.ijg). The scan decoder follows the structure of pdf.js' jpg.js
+ * downsampling, color conversion, quantization, progressive refinement and optimal Huffman tables are translated from
+ * libjpeg/libjpeg-turbo (IJG license, see licenses/README.ijg). The scan decoder follows the structure of pdf.js' jpg.js
  * (Copyright 2014 Mozilla Foundation, Apache License 2.0). See THIRD_PARTY_NOTICES.md
  */
 
@@ -874,11 +874,50 @@ const CHROMA_QUANTIZATION = [
     99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99
 ];
 
-const AAN_SCALE = [1, 1.387039845, 1.306562965, 1.175875602, 1, 0.785694958, 0.5411961, 0.275899379];
+// libjpeg's fixed point RGB -> YCbCr tables (jccolor.c): Y = (Y_R[r] + Y_G[g] + Y_B[b]) >> 16, Cb with CB_R, CB_G and
+// CB_B, Cr with CB_B (for red), CR_G and CR_B
+const fix16 = (x: number): number => Math.round(x * 65536);
+const Y_R = new Int32Array(256), Y_G = new Int32Array(256), Y_B = new Int32Array(256);
+const CB_R = new Int32Array(256), CB_G = new Int32Array(256), CB_B = new Int32Array(256);
+const CR_G = new Int32Array(256), CR_B = new Int32Array(256);
+for (let i = 0; i < 256; i++) {
+    Y_R[i] = fix16(0.299) * i;
+    Y_G[i] = fix16(0.587) * i;
+    Y_B[i] = fix16(0.114) * i + 32768;
+    CB_R[i] = -fix16(0.16874) * i;
+    CB_G[i] = -fix16(0.33126) * i;
+    // (128 << 16 for the offset, 32767 to round)
+    CB_B[i] = fix16(0.5) * i + (128 << 16) + 32767;
+    CR_G[i] = -fix16(0.41869) * i;
+    CR_B[i] = -fix16(0.08131) * i;
+}
+
+// libjpeg-turbo's quantization by reciprocals (jcdctmgr.c, compute_reciprocal, with 16-bit DCT elements): a coefficient's
+// magnitude t quantizes to (t + correction) * reciprocal >>> shift, for the divisors of a table (its values times 8,
+// the DCT's scale)
+function reciprocals(table: number[]): Int32Array {
+    // reciprocals, corrections and shifts in natural order
+    const r = new Int32Array(3 * 64);
+    for (let i = 0; i < 64; i++) {
+        const divisor = table[i] * 8;
+        const b = 31 - Math.clz32(divisor), shift = 16 + b;
+        let fq = Math.floor(2 ** shift / divisor), c = divisor >> 1, bits = shift;
+        const fr = 2 ** shift % divisor;
+        if (fr === 0) {
+            fq >>= 1;
+            bits--;
+        } else if (fr <= divisor >> 1) c++;
+        else fq++;
+        r[i] = fq;
+        r[64 + i] = c;
+        r[128 + i] = bits;
+    }
+    return r;
+}
 
 /**
- * Encodes RGBA pixel data into a baseline JPEG (alpha is ignored)
- * Uses 4:2:0 chroma subsampling up to quality 90 and 4:4:4 above, with optimized huffman tables
+ * Encodes RGBA pixel data into a baseline JPEG (alpha is ignored), byte for byte like libjpeg-turbo's
+ * `cjpeg -quality <quality> -baseline -optimize`: 4:2:0 chroma subsampling up to quality 90 and 4:4:4 above (-sample 1x1)
  * @param {Uint8Array} pixels
  * @param {number} width
  * @param {number} height
@@ -896,102 +935,120 @@ export function encode(pixels: Uint8Array, width: number, height: number, qualit
     if (!width || !height || width > 0xffff || height > 0xffff) throw new RangeError('JPEG: invalid dimensions');
 
     quality = Math.min(100, Math.max(1, Math.round(quality)));
-    const scale = quality < 50 ? 5000 / quality : 200 - quality * 2;
+    const scale = quality < 50 ? Math.floor(5000 / quality) : 200 - quality * 2;
     const scaleTable = (base: number[]): number[] => base.map(v => Math.min(255, Math.max(1, Math.floor((v * scale + 50) / 100))));
     const tables = [scaleTable(LUMA_QUANTIZATION), scaleTable(CHROMA_QUANTIZATION)];
+    const divisors = tables.map(reciprocals);
 
-    // reciprocal divisors for the float AAN FDCT
-    const divisors = tables.map(table => {
-        const d = new Float64Array(64);
-        for (let i = 0; i < 64; i++) d[i] = 1 / (table[i] * AAN_SCALE[i >> 3] * AAN_SCALE[i & 7] * 8);
-        return d;
-    });
-
+    // like libjpeg-turbo (cjpeg -optimize, -sample 1x1 above 90), byte for byte: its color conversion, downsampling,
+    // integer DCT, quantization and padding
     const subsample = quality <= 90;
     const hmax = subsample ? 2 : 1;
     const mcuSize = 8 * hmax;
     const mcusPerLine = Math.ceil(width / mcuSize);
     const mcusPerColumn = Math.ceil(height / mcuSize);
 
-    // convert to YCbCr planes padded to whole MCUs by edge replication, subsampled chroma by a 2x2 box filter (from
-    // pairs of full rows, the planes stay a quarter)
-    const W = mcusPerLine * mcuSize, H = mcusPerColumn * mcuSize, chromaStride = subsample ? W / 2 : W;
-    const Y = new Float32Array(W * H), Cb = new Float32Array(chromaStride * H / hmax), Cr = new Float32Array(chromaStride * H / hmax);
-    const cbRows = subsample ? new Float32Array(2 * W) : Cb, crRows = subsample ? new Float32Array(2 * W) : Cr;
+    // the planes in whole blocks, edges replicated
+    const chromaWidth = Math.ceil(width / hmax), chromaHeight = Math.ceil(height / hmax);
+    const lumaBlocksX = Math.ceil(width / 8), lumaBlocksY = Math.ceil(height / 8);
+    const chromaBlocksX = Math.ceil(chromaWidth / 8), chromaBlocksY = Math.ceil(chromaHeight / 8);
+    const W = lumaBlocksX * 8, CW = chromaBlocksX * 8;
+    const Y = new Uint8Array(W * lumaBlocksY * 8), Cb = new Uint8Array(CW * chromaBlocksY * 8), Cr = new Uint8Array(CW * chromaBlocksY * 8);
+    // (subsampled chroma from pairs of full rows, replicated to twice the planes' width)
+    const rowWidth = CW * hmax;
+    const cbRows = subsample ? new Uint8Array(2 * rowWidth) : Cb, crRows = subsample ? new Uint8Array(2 * rowWidth) : Cr;
 
-    for (let y = 0; y < H; y++) {
-        const row = subsample ? (y & 1) * W : y * W;
-        if (y < height) {
-            let i = y * width * 4, o = y * W, c = row;
+    // (pixels a 32-bit word at a time where they're aligned, little endian)
+    const words = littleEndian && pixels.byteOffset % 4 === 0 ? new Uint32Array(pixels.buffer, pixels.byteOffset, width * height) : null;
+    for (let y = 0; y < height; y++) {
+        const row = subsample ? (y & 1) * rowWidth : y * CW;
+        let i = y * width * 4, o = y * W, c = row;
 
-            for (let x = 0; x < width; x++, i += 4, o++, c++) {
-                const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
-                Y[o] = 0.299 * r + 0.587 * g + 0.114 * b - 128;
-                cbRows[c] = -0.168735892 * r - 0.331264108 * g + 0.5 * b;
-                crRows[c] = 0.5 * r - 0.418687589 * g - 0.081312411 * b;
-            }
-
-            Y.fill(Y[o - 1], o, (y + 1) * W);
-            cbRows.fill(cbRows[c - 1], c, row + W);
-            crRows.fill(crRows[c - 1], c, row + W);
-        } else {
-            Y.copyWithin(y * W, (height - 1) * W, height * W);
-            const last = subsample ? (height - 1 & 1) * W : (height - 1) * W;
-            if (row !== last) {
-                cbRows.copyWithin(row, last, last + W);
-                crRows.copyWithin(row, last, last + W);
-            }
+        if (words) for (let x = 0, w = i >> 2; x < width; x++, w++, o++, c++) {
+            const p = words[w], r = p & 255, g = p >> 8 & 255, b = p >> 16 & 255;
+            Y[o] = Y_R[r] + Y_G[g] + Y_B[b] >> 16;
+            cbRows[c] = CB_R[r] + CB_G[g] + CB_B[b] >> 16;
+            crRows[c] = CB_B[r] + CR_G[g] + CR_B[b] >> 16;
+        } else for (let x = 0; x < width; x++, i += 4, o++, c++) {
+            const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+            Y[o] = Y_R[r] + Y_G[g] + Y_B[b] >> 16;
+            cbRows[c] = CB_R[r] + CB_G[g] + CB_B[b] >> 16;
+            crRows[c] = CB_B[r] + CR_G[g] + CR_B[b] >> 16;
         }
 
-        if (subsample && y & 1)
-            for (let x = 0, o = (y >> 1) * chromaStride; x < W; x += 2, o++) {
-                Cb[o] = (cbRows[x] + cbRows[x + 1] + cbRows[x + W] + cbRows[x + W + 1]) * 0.25;
-                Cr[o] = (crRows[x] + crRows[x + 1] + crRows[x + W] + crRows[x + W + 1]) * 0.25;
+        Y.fill(Y[o - 1], o, (y + 1) * W);
+        cbRows.fill(cbRows[c - 1], c, row + rowWidth);
+        crRows.fill(crRows[c - 1], c, row + rowWidth);
+
+        // (h2v2_downsample: the sums of 2x2 samples, rounded up and down by turns)
+        if (subsample && (y & 1 || y === height - 1)) {
+            if (!(y & 1)) {
+                cbRows.copyWithin(rowWidth, 0, rowWidth);
+                crRows.copyWithin(rowWidth, 0, rowWidth);
             }
+            for (let x = 0, o = (y >> 1) * CW, bias = 1; x < rowWidth; x += 2, o++, bias ^= 3) {
+                Cb[o] = cbRows[x] + cbRows[x + 1] + cbRows[x + rowWidth] + cbRows[x + rowWidth + 1] + bias >> 2;
+                Cr[o] = crRows[x] + crRows[x + 1] + crRows[x + rowWidth] + crRows[x + rowWidth + 1] + bias >> 2;
+            }
+        }
+    }
+
+    for (let y = height; y < lumaBlocksY * 8; y++) Y.copyWithin(y * W, (height - 1) * W, height * W);
+    for (let y = chromaHeight; y < chromaBlocksY * 8; y++) {
+        Cb.copyWithin(y * CW, (chromaHeight - 1) * CW, chromaHeight * CW);
+        Cr.copyWithin(y * CW, (chromaHeight - 1) * CW, chromaHeight * CW);
     }
 
     const components = [
-        { plane: Y, stride: W, h: hmax, v: hmax, table: 0 },
-        { plane: Cb, stride: chromaStride, h: 1, v: 1, table: 1 },
-        { plane: Cr, stride: chromaStride, h: 1, v: 1, table: 1 }
+        { plane: Y, stride: W, h: hmax, v: hmax, blocksX: lumaBlocksX, blocksY: lumaBlocksY, table: 0 },
+        { plane: Cb, stride: CW, h: 1, v: 1, blocksX: chromaBlocksX, blocksY: chromaBlocksY, table: 1 },
+        { plane: Cr, stride: CW, h: 1, v: 1, blocksX: chromaBlocksX, blocksY: chromaBlocksY, table: 1 }
     ];
 
     // quantized blocks in MCU order (Y blocks, then Cb, then Cr), their coefficients in zigzag order, with the index
-    // of each block's last nonzero coefficient
+    // of each block's last nonzero coefficient. MCUs reaching past a component's blocks get dummy blocks (jccoefct.c):
+    // without AC coefficients, with the DC coefficient of the block before (below the image: of the MCU's block
+    // before the row)
     const blocksPerMcu = hmax * hmax + 2;
     const count = mcusPerLine * mcusPerColumn * blocksPerMcu;
     const coefficients = new Int16Array(count * 64);
     const owners = new Uint8Array(count), ends = new Uint8Array(count);
-    const block = new Float64Array(64);
+    const block = new Int32Array(64);
     let n = 0;
 
     for (let my = 0; my < mcusPerColumn; my++)
         for (let mx = 0; mx < mcusPerLine; mx++)
             for (let c = 0; c < 3; c++) {
-                const { plane, stride, h: ch, v: cv, table } = components[c];
-                const d = divisors[table];
+                const { plane, stride, h: ch, v: cv, blocksX, blocksY, table } = components[c];
+                const reciprocal = divisors[table];
 
-                for (let v = 0; v < cv; v++)
+                for (let v = 0; v < cv; v++) {
+                    const by = my * cv + v, rowStart = n;
                     for (let h = 0; h < ch; h++, n++) {
-                        const x0 = (mx * ch + h) * 8, y0 = (my * cv + v) * 8;
+                        const bx = mx * ch + h, o = n * 64;
+                        owners[n] = c;
 
-                        for (let y = 0; y < 8; y++) {
-                            const row = (y0 + y) * stride + x0;
-                            for (let x = 0; x < 8; x++) block[y * 8 + x] = plane[row + x];
+                        if (by >= blocksY) {
+                            coefficients[o] = coefficients[(rowStart - 1) * 64];
+                            continue;
+                        }
+                        if (bx >= blocksX) {
+                            coefficients[o] = coefficients[o - 64];
+                            continue;
                         }
 
-                        fdct(block);
-                        const o = n * 64;
-                        // round half up like libjpeg, without Math.round
+                        fdct(plane, by * 8 * stride + bx * 8, stride, block);
                         let end = 0;
                         for (let k = 0; k < 64; k++) {
-                            const i = ZIGZAG[k], value = (block[i] * d[i] + 16384.5 | 0) - 16384;
+                            // (the magnitude's, the product below 2^32, signed again)
+                            const i = ZIGZAG[k], t = block[i], sign = t >> 31;
+                            const value = (Math.imul((t ^ sign) - sign + reciprocal[64 + i], reciprocal[i]) >>> reciprocal[128 + i] ^ sign) - sign;
                             coefficients[o + k] = value;
                             if (value) end = k;
                         }
-                        owners[n] = c;
                         ends[n] = end;
                     }
+                }
             }
 
     const blocks = { coefficients, owners, ends, count };
@@ -1015,10 +1072,9 @@ export function encode(pixels: Uint8Array, width: number, height: number, qualit
     if (exif) segment(0xe1, concat([[0x45, 0x78, 0x69, 0x66, 0, 0], exif]));
     if (comment) segment(0xfe, comment);
 
-    // DQT
-    writer.bytes(0xff, 0xdb, 0x00, 0x84);
+    // DQT, a segment per table like libjpeg
     for (let t = 0; t < 2; t++) {
-        writer.bytes(t);
+        writer.bytes(0xff, 0xdb, 0x00, 0x43, t);
         for (let k = 0; k < 64; k++) writer.bytes(tables[t][ZIGZAG[k]]);
     }
 
@@ -1226,42 +1282,69 @@ function buildOptimalTable(frequencies: Int32Array): OptimalTable {
 }
 
 // libjpeg's jpeg_fdct_float (AAN), output scaled by AAN_SCALE[row] * AAN_SCALE[col] * 8
-function fdct(d: Float64Array): void {
-    for (let p = 0; p < 64; p += 8) fdctPass(d, p, 1);
-    for (let p = 0; p < 8; p++) fdctPass(d, p, 8);
-}
+// libjpeg's integer forward DCT (jfdctint.c, jpeg_fdct_islow) of the block at `offset` in a plane, its samples
+// centered around 0, into d (scaled up by 8)
+function fdct(plane: Uint8Array, offset: number, stride: number, d: Int32Array): void {
+    const P1 = CONST_BITS - PASS1_BITS, R1 = 1 << P1 - 1;
 
-function fdctPass(d: Float64Array, o: number, s: number): void {
-    const tmp0 = d[o] + d[o + 7 * s], tmp7 = d[o] - d[o + 7 * s];
-    const tmp1 = d[o + s] + d[o + 6 * s], tmp6 = d[o + s] - d[o + 6 * s];
-    const tmp2 = d[o + 2 * s] + d[o + 5 * s], tmp5 = d[o + 2 * s] - d[o + 5 * s];
-    const tmp3 = d[o + 3 * s] + d[o + 4 * s], tmp4 = d[o + 3 * s] - d[o + 4 * s];
+    for (let row = 0; row < 64; row += 8, offset += stride) {
+        const s0 = plane[offset] - 128, s1 = plane[offset + 1] - 128, s2 = plane[offset + 2] - 128, s3 = plane[offset + 3] - 128;
+        const s4 = plane[offset + 4] - 128, s5 = plane[offset + 5] - 128, s6 = plane[offset + 6] - 128, s7 = plane[offset + 7] - 128;
+        let tmp4 = s3 - s4, tmp5 = s2 - s5, tmp6 = s1 - s6, tmp7 = s0 - s7;
+        const tmp0 = s0 + s7, tmp1 = s1 + s6, tmp2 = s2 + s5, tmp3 = s3 + s4;
 
-    let tmp10 = tmp0 + tmp3;
-    const tmp13 = tmp0 - tmp3;
-    let tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
+        const tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3, tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
+        d[row] = tmp10 + tmp11 << PASS1_BITS;
+        d[row + 4] = tmp10 - tmp11 << PASS1_BITS;
+        const z1 = (tmp12 + tmp13) * FIX_0_541196100;
+        d[row + 2] = z1 + tmp13 * FIX_0_765366865 + R1 >> P1;
+        d[row + 6] = z1 - tmp12 * FIX_1_847759065 + R1 >> P1;
 
-    d[o] = tmp10 + tmp11;
-    d[o + 4 * s] = tmp10 - tmp11;
+        let o1 = tmp4 + tmp7, o2 = tmp5 + tmp6, o3 = tmp4 + tmp6, o4 = tmp5 + tmp7;
+        const z5 = (o3 + o4) * FIX_1_175875602;
+        tmp4 *= FIX_0_298631336;
+        tmp5 *= FIX_2_053119869;
+        tmp6 *= FIX_3_072711026;
+        tmp7 *= FIX_1_501321110;
+        o1 *= -FIX_0_899976223;
+        o2 *= -FIX_2_562915447;
+        o3 = o3 * -FIX_1_961570560 + z5;
+        o4 = o4 * -FIX_0_390180644 + z5;
+        d[row + 7] = tmp4 + o1 + o3 + R1 >> P1;
+        d[row + 5] = tmp5 + o2 + o4 + R1 >> P1;
+        d[row + 3] = tmp6 + o2 + o3 + R1 >> P1;
+        d[row + 1] = tmp7 + o1 + o4 + R1 >> P1;
+    }
 
-    const z1 = (tmp12 + tmp13) * 0.707106781;
-    d[o + 2 * s] = tmp13 + z1;
-    d[o + 6 * s] = tmp13 - z1;
+    const P2 = CONST_BITS + PASS1_BITS, R2 = 1 << P2 - 1;
 
-    tmp10 = tmp4 + tmp5;
-    tmp11 = tmp5 + tmp6;
-    tmp12 = tmp6 + tmp7;
+    for (let c = 0; c < 8; c++) {
+        const s0 = d[c], s1 = d[c + 8], s2 = d[c + 16], s3 = d[c + 24], s4 = d[c + 32], s5 = d[c + 40], s6 = d[c + 48], s7 = d[c + 56];
+        let tmp4 = s3 - s4, tmp5 = s2 - s5, tmp6 = s1 - s6, tmp7 = s0 - s7;
+        const tmp0 = s0 + s7, tmp1 = s1 + s6, tmp2 = s2 + s5, tmp3 = s3 + s4;
 
-    const z5 = (tmp10 - tmp12) * 0.382683433;
-    const z2 = 0.5411961 * tmp10 + z5;
-    const z4 = 1.306562965 * tmp12 + z5;
-    const z3 = tmp11 * 0.707106781;
+        const tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3, tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
+        d[c] = tmp10 + tmp11 + (1 << PASS1_BITS - 1) >> PASS1_BITS;
+        d[c + 32] = tmp10 - tmp11 + (1 << PASS1_BITS - 1) >> PASS1_BITS;
+        const z1 = (tmp12 + tmp13) * FIX_0_541196100;
+        d[c + 16] = z1 + tmp13 * FIX_0_765366865 + R2 >> P2;
+        d[c + 48] = z1 - tmp12 * FIX_1_847759065 + R2 >> P2;
 
-    const z11 = tmp7 + z3, z13 = tmp7 - z3;
-    d[o + 5 * s] = z13 + z2;
-    d[o + 3 * s] = z13 - z2;
-    d[o + s] = z11 + z4;
-    d[o + 7 * s] = z11 - z4;
+        let o1 = tmp4 + tmp7, o2 = tmp5 + tmp6, o3 = tmp4 + tmp6, o4 = tmp5 + tmp7;
+        const z5 = (o3 + o4) * FIX_1_175875602;
+        tmp4 *= FIX_0_298631336;
+        tmp5 *= FIX_2_053119869;
+        tmp6 *= FIX_3_072711026;
+        tmp7 *= FIX_1_501321110;
+        o1 *= -FIX_0_899976223;
+        o2 *= -FIX_2_562915447;
+        o3 = o3 * -FIX_1_961570560 + z5;
+        o4 = o4 * -FIX_0_390180644 + z5;
+        d[c + 56] = tmp4 + o1 + o3 + R2 >> P2;
+        d[c + 40] = tmp5 + o2 + o4 + R2 >> P2;
+        d[c + 24] = tmp6 + o2 + o3 + R2 >> P2;
+        d[c + 8] = tmp7 + o1 + o4 + R2 >> P2;
+    }
 }
 
 class BitWriter extends ByteWriter {

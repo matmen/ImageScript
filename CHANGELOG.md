@@ -2,11 +2,17 @@
 
 ## 3.12.2
 
+### Changes
+
+- `encodeJPEG()` encodes like libjpeg-turbo: its integer color conversion, downsampling, DCT and quantization instead
+  of floating point ones, so the files are byte for byte what `cjpeg -quality <q> -baseline -optimize` writes (with
+  `-sample 1x1` above quality 90), but for the Exif segment. Quality 1-49 also uses libjpeg's integer scaling of the
+  quantization tables now. Files differ slightly from before, at about the same size and quality.
+
 ### Performance
 
-- `encodeJPEG()` is about 20% faster with the same output: the chroma planes are converted and subsampled two rows at
-  a time (instead of full-size planes first, 16 MB less for a 1920x1080 image), and the entropy coding counts and
-  writes symbols in two specialized passes.
+- `encodeJPEG()` is about 30% faster: the integer pipeline, chroma converted and subsampled two rows at a time
+  (instead of full-size planes first, 16 MB less for a 1920x1080 image), and entropy coding in two specialized passes.
 - JPEG decoding upsamples chroma a row at a time while converting to RGB, and uses unscaled planes as they are,
   instead of first building full-size copies of all of them (about 6 MB less for a 1920x1080 image). Same output and
   speed.
