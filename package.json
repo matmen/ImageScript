@@ -1,7 +1,7 @@
 {
   "name": "imagescript",
   "version": "3.12.1",
-  "description": "zero-dependency javascript image manipulation",
+  "description": "Pure TypeScript image processing that runs everywhere",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
