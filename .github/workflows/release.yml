@@ -83,6 +83,25 @@ jobs:
     with:
       version: ${{ needs.check.outputs.version }}
 
+  # posts the notes of regular releases to Discord once npm and JSR have them (the DISCORD_WEBHOOK secret: a channel's
+  # webhook URL; without it nothing is posted)
+  announce:
+    needs: [check, publish, jsr]
+    if: needs.check.outputs.dist-tag == 'latest'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24.x
+    - run: node scripts/discord.js
+      env:
+        WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        NAME: ${{ github.event.release.name }}
+        VERSION: ${{ needs.check.outputs.version }}
+        URL: ${{ github.event.release.html_url }}
+        BODY: ${{ github.event.release.body }}
+
   # regular releases commit their version to the default branch (on top of what was merged since the tag), so
   # package.json there shows the latest release; prereleases and fixes for older majors leave it alone
   # (once npm has the release: a failing JSR publish can be repeated by hand, see jsr.yml)
