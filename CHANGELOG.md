@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.12.3
+
+### Performance
+
+- Lossy WebP decoding is about 45% faster (1920x1080 at quality 75: 184 -> 100 ms of CPU time): reading a DC
+  prediction mode returned -0, a floating point number to V8, which kept deoptimizing the decoder's main loop. Blocks
+  with only a DC coefficient also skip the full inverse transform. Same pixels.
+
 ## 3.12.2
 
 ### Changes

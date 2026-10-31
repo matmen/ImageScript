@@ -75,7 +75,8 @@ class BoolDecoder {
     tree(tree: Int8Array, probs: ArrayLike<number>, offset = 0): number {
         let i = 0;
         while ((i = tree[i + this.read(probs[offset + (i >> 1)])]) > 0);
-        return -i;
+        // (| 0: the leaf 0 would be -0, a double, which keeps deoptimizing the callers)
+        return -i | 0;
     }
 
     /** whether the decoder read beyond its data */
@@ -283,6 +284,7 @@ export function decode(data: Uint8Array, maxPixels = MAX_PIXELS): { width: numbe
             const an = mbx * 9; // above non-zero flags: 0-3 Y, 4-5 U, 6-7 V, 8 Y2
             coeffs.fill(0);
             let nonZero = 0; // bit per block (0-15 Y, 16-23 U/V) with a non-zero coefficient, 24: Y2 AC
+            let ac = 0; // bit per block with AC coefficients (the others only add their DC's share to the prediction)
 
             if (!skip) {
                 const q = h.quant[segment];
@@ -300,6 +302,7 @@ export function decode(data: Uint8Array, maxPixels = MAX_PIXELS): { width: numbe
                     const n = readCoefficients(tokens, h.coeffProbs, type, ctx, first, q[0], q[1], coeffs, b * 16);
                     aboveNz[an + x] = leftNz[y] = n > first ? 1 : 0;
                     if (n > first || coeffs[b * 16] !== 0) nonZero |= 1 << b;
+                    if (n > 1) ac |= 1 << b;
                 }
 
                 for (let b = 16; b < 24; b++) {
@@ -308,6 +311,7 @@ export function decode(data: Uint8Array, maxPixels = MAX_PIXELS): { width: numbe
                     const n = readCoefficients(tokens, h.coeffProbs, TYPE_UV, ctx, 0, q[4], q[5], coeffs, b * 16);
                     aboveNz[an + plane + x] = leftNz[plane + y] = n > 0 ? 1 : 0;
                     if (n > 0) nonZero |= 1 << b;
+                    if (n > 1) ac |= 1 << b;
                 }
             } else {
                 // a skipped macroblock has no coefficients, its contexts are cleared (Y2's only if it has one)
@@ -335,12 +339,12 @@ export function decode(data: Uint8Array, maxPixels = MAX_PIXELS): { width: numbe
                     }
                     for (let i = 0; i < 4; i++) left[i] = Y[base + i * ys - 1];
                     predictSubblock(bmodes[b], edge, left, Y, base, ys);
-                    if (nonZero >> b & 1) inverseDCT(coeffs, b * 16, Y, base, ys);
+                    if (nonZero >> b & 1) inverseDCT(coeffs, b * 16, Y, base, ys, ac >> b & 1);
                 }
             } else {
                 predictBlock(ymode, Y, yBase, ys, 16, mbx, mby);
                 for (let b = 0; b < 16; b++)
-                    if (nonZero >> b & 1) inverseDCT(coeffs, b * 16, Y, yBase + (b >> 2) * 4 * ys + (b & 3) * 4, ys);
+                    if (nonZero >> b & 1) inverseDCT(coeffs, b * 16, Y, yBase + (b >> 2) * 4 * ys + (b & 3) * 4, ys, ac >> b & 1);
             }
 
             const cBase = (mby * 8 + 1) * cs + mbx * 8 + 1;
@@ -349,7 +353,7 @@ export function decode(data: Uint8Array, maxPixels = MAX_PIXELS): { width: numbe
             for (let b = 16; b < 24; b++) {
                 if (!(nonZero >> b & 1)) continue;
                 const plane = b < 20 ? U : V, i = b & 3;
-                inverseDCT(coeffs, b * 16, plane, cBase + (i >> 1) * 4 * cs + (i & 1) * 4, cs);
+                inverseDCT(coeffs, b * 16, plane, cBase + (i >> 1) * 4 * cs + (i & 1) * 4, cs, ac >> b & 1);
             }
         }
 
@@ -438,7 +442,19 @@ function inverseWHT(c: Int16Array, offset: number, count: number): void {
 // inverse DCT (RFC 6386 section 14.4), added to the prediction in place
 const tmp = new Int32Array(16);
 
-function inverseDCT(c: Int16Array, offset: number, dst: Uint8Array, base: number, stride: number): void {
+function inverseDCT(c: Int16Array, offset: number, dst: Uint8Array, base: number, stride: number, ac: number): void {
+    // (a DC alone adds the same to every pixel, what the full transform gives too)
+    if (!ac) {
+        const dc = c[offset] + 4 >> 3;
+        for (let o = base, end = base + 4 * stride; o < end; o += stride) {
+            dst[o] = clamp255(dst[o] + dc);
+            dst[o + 1] = clamp255(dst[o + 1] + dc);
+            dst[o + 2] = clamp255(dst[o + 2] + dc);
+            dst[o + 3] = clamp255(dst[o + 3] + dc);
+        }
+        return;
+    }
+
     for (let i = 0; i < 4; i++) {
         const i0 = c[offset + i], i4 = c[offset + 4 + i], i8 = c[offset + 8 + i], i12 = c[offset + 12 + i];
         const a1 = i0 + i8, b1 = i0 - i8;
@@ -485,13 +501,16 @@ function predictBlock(mode: number, p: Uint8Array, base: number, stride: number,
             count++;
         }
         const v = count === 0 ? 128 : sum + (1 << shift + count - 1) >> shift + count;
-        for (let y = 0; y < size; y++) p.fill(v, base + y * stride, base + y * stride + size);
+        // (rows by loops: for 8 or 16 bytes, fill and copyWithin cost more than they do)
+        for (let y = 0; y < size; y++)
+            for (let row = base + y * stride, x = 0; x < size; x++) p[row + x] = v;
     } else if (mode === V_PRED) {
-        for (let y = 0; y < size; y++) p.copyWithin(base + y * stride, above, above + size);
+        for (let y = 0; y < size; y++)
+            for (let row = base + y * stride, x = 0; x < size; x++) p[row + x] = p[above + x];
     } else if (mode === H_PRED) {
         for (let y = 0; y < size; y++) {
-            const row = base + y * stride;
-            p.fill(p[row - 1], row, row + size);
+            const row = base + y * stride, v = p[row - 1];
+            for (let x = 0; x < size; x++) p[row + x] = v;
         }
     } else {
         const corner = p[above - 1];
