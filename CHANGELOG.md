@@ -6,7 +6,8 @@
 
 - PNG and APNG encoding (`encode()`, `encodePNG()`, `encodeAPNG()`, `apngEncoder()`) default to compression level 4
   instead of 1: 7-22% smaller files (graphics 11%, photos 10%, screenshots 22%) for about 30% more time. zlib's lazy
-  matching starts at level 4, so levels 2-3 save less. Pass `compression: 1` for the previous speed.
+  matching starts at level 4, so levels 2-3 save less. Pass `compression: 1` for the previous speed. (Node.js and
+  Bun; elsewhere levels 1-6 compress with `CompressionStream`, whose level is fixed at 6.)
 
 ### Performance
 
