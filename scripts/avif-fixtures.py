@@ -124,20 +124,34 @@ def av1c(unit, layout, bits):
             v = v << 1 | payload[bitpos >> 3] >> (7 - (bitpos & 7)) & 1
             bitpos += 1
         return v
+    def uvlc():
+        zeros = 0
+        while not read(1): zeros += 1
+        return read(zeros) if zeros < 32 else 0
     profile, _, reduced = read(3), read(1), read(1)
     tier = 0
     if reduced:
         level = read(5)
     else:
-        assert not read(1), 'timing info'
+        # (timing and decoder model info, then the operating points: the first one's level and tier)
+        timing = read(1)
+        model = buffer_delay = 0
+        if timing:
+            read(32), read(32)
+            if read(1): uvlc()
+            model = read(1)
+            if model:
+                buffer_delay = read(5) + 1
+                read(32), read(5), read(5)
         delay = read(1)
-        read(5)
-        read(12)
-        level = read(5)
-        if level > 7:
-            tier = read(1)
-        if delay and read(1):
-            read(4)
+        points = read(5) + 1
+        for i in range(points):
+            read(12)
+            lv = read(5)
+            t = read(1) if lv > 7 else 0
+            if i == 0: level, tier = lv, t
+            if model and read(1): read(buffer_delay), read(buffer_delay), read(1)
+            if delay and read(1): read(4)
     ssx, ssy = {'420': (1, 1), '422': (1, 0), '444': (0, 0), 'mono': (1, 1)}[layout]
     return box(b'av1C', bytes([0x81, profile << 5 | level, tier << 7 | (bits > 8) << 6 | (bits == 12) << 5 |
                                (layout == 'mono') << 4 | ssx << 3 | ssy << 2, 0]) + seq)
@@ -167,8 +181,9 @@ def ftyp(major, *brands):
     return box(b'ftyp', major + b'\0\0\0\0' + major + b''.join(brands))
 
 
-def avif(items, primary=1):
-    """an AVIF of items (their properties: (box, essential)), the data in an mdat after the meta box"""
+def avif(items, primary=1, wide=False, split=False):
+    """an AVIF of items (their properties: (box, essential)), the data in an mdat after the meta box; wide: 16-bit
+    property indices, split: every item's data in two extents"""
     properties = []
     for it in items:
         for p, _ in it.props:
@@ -178,15 +193,19 @@ def avif(items, primary=1):
     def meta(offsets):
         hdlr = fullbox(b'hdlr', 0, 0, b'\0' * 4 + b'pict' + b'\0' * 12 + b'\0')
         pitm = fullbox(b'pitm', 0, 0, struct.pack('>H', primary))
+        extents = lambda it, o: [(o, len(it.data) // 2), (o + len(it.data) // 2, len(it.data) - len(it.data) // 2)] if split else [(o, len(it.data))]
         iloc = fullbox(b'iloc', 0, 0, bytes([0x44, 0]) + struct.pack('>H', len(items)) + b''.join(
-            struct.pack('>HHHII', it.id, 0, 1, offsets[i], len(it.data)) for i, it in enumerate(items)))
+            struct.pack('>HHH', it.id, 0, len(extents(it, offsets[i]))) + b''.join(struct.pack('>II', *e) for e in extents(it, offsets[i]))
+            for i, it in enumerate(items)))
         iinf = fullbox(b'iinf', 0, 0, struct.pack('>H', len(items)) + b''.join(
             fullbox(b'infe', 2, int(it.hidden), struct.pack('>HH', it.id, 0) + it.type + b'\0') for it in items))
         refs = b''.join(box(t, struct.pack('>HH', it.id, len(to)) + b''.join(struct.pack('>H', i) for i in to))
                         for it in items for t, to in it.refs)
         ipco = box(b'ipco', b''.join(properties))
-        ipma = fullbox(b'ipma', 0, 0, struct.pack('>I', len(items)) + b''.join(
-            struct.pack('>HB', it.id, len(it.props)) + bytes(essential << 7 | (properties.index(p) + 1) for p, essential in it.props)
+        ipma = fullbox(b'ipma', 0, int(wide), struct.pack('>I', len(items)) + b''.join(
+            struct.pack('>HB', it.id, len(it.props)) + b''.join(
+                struct.pack('>H', essential << 15 | (properties.index(p) + 1)) if wide else bytes([essential << 7 | (properties.index(p) + 1)])
+                for p, essential in it.props)
             for it in items))
         return fullbox(b'meta', 0, 0, hdlr + pitm + iloc + iinf + (fullbox(b'iref', 0, 0, refs) if refs else b'') + box(b'iprp', ipco + ipma))
     head = ftyp(b'avif', b'mif1', b'miaf')
@@ -341,6 +360,21 @@ for name, signal, transfer in [('pq', pq, 'smpte2084'), ('hlg', hlg, 'hlg')]:
     planes = tuple(p * 1023 for p in gbr(signal))
     units = encode([planes], '444', 10, ['--lossless=1', '--matrix-coefficients=identity', '--color-primaries=bt2020', f'--transfer-characteristics={transfer}'], full=True)
     write(name, avif([image(units, '444', 10, 48, 40, [(colr(9, 16 if name == 'pq' else 18, 0, 1), 0)])]), None)
+
+# rarer stream and container features: timing info with a decoder model (buffer removal times in the frame header)
+# and frame ids (error resilience), timing info with a constant picture interval (a uvlc), YCgCo, a 180° rotation with
+# 16-bit property indices, an item in two extents. (The timing info streams have two frames, the item the first: a
+# single one gets the reduced still picture header, which has neither)
+two = [yuv(photo(48, 40), '420', 8)] * 2
+write('timing', avif([image(encode(two, '420', 8, ['--cq-level=30', '--timing-info=model', '--error-resilient=1'], intra=False), '420', 8, 48, 40)]))
+write('timing-constant', avif([image(encode(two, '420', 8, ['--cq-level=30', '--timing-info=constant'], intra=False), '420', 8, 48, 40)]))
+rgb = photo(48, 40)
+ycgco = [0.25 * rgb[..., 0] + 0.5 * rgb[..., 1] + 0.25 * rgb[..., 2], -0.25 * rgb[..., 0] + 0.5 * rgb[..., 1] - 0.25 * rgb[..., 2] + 128,
+         0.5 * rgb[..., 0] - 0.5 * rgb[..., 2] + 128]
+write('ycgco', avif([image(encode([ycgco], '444', 8, ['--cq-level=20', '--matrix-coefficients=ycgco'], full=True), '444', 8, 48, 40, [(colr(1, 13, 8, 1), 0)])]))
+write('rotate-180', avif([image(encode([yuv(photo(48, 40), '420', 8)], '420', 8, ['--cq-level=25']), '420', 8, 48, 40, [(box(b'irot', bytes([2])), 1)])], wide=True),
+      lambda p: np.rot90(avifdec(p), 2))
+write('extents', avif([image(encode([yuv(photo(48, 40), '420', 8)], '420', 8, ['--cq-level=25']), '420', 8, 48, 40)], split=True))
 
 for name, h in hashes.items():
     print(f"    '{name}': '{h}',")

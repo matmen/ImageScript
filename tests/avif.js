@@ -34,6 +34,13 @@ const references = {
     'threads-grid': 'eb3acc450fae0a30f888b0e1fbe43d5b15a4eec9d6a3494d2e9c98c7897fc56a',
     'transforms': '38a9ade925431f685369468071feed32b90e3e2f5c855ea8040142ef1e0051cc',
     'sequence': '1b62b5829e6d56d35ff7f0cfa6b7fef6da9c5f85e58799ea5b679f2864eef125',
+    // rarer features: timing info (a decoder model and frame ids, a constant picture interval), YCgCo, a 180°
+    // rotation (16-bit property indices), an item in two extents
+    'timing': 'fde015336350eac48fc8124e30089e8ecd570f047a27305a058bf46a8725f706',
+    'timing-constant': 'fde015336350eac48fc8124e30089e8ecd570f047a27305a058bf46a8725f706',
+    'ycgco': '5eb0ed974a95b85aab12a15d88c0c557264fea34fdb14bb9f4bc2c5030492578',
+    'rotate-180': '6c5dbd12433e9e5ec42ec89df8b87ef6978f77aa8106a3e07c6830163438dac2',
+    'extents': '8af4c3bdc4ceda1dec4d7f404232ef54f2a7aa460702c6c210a0c272b6bfab70',
 };
 
 (async () => {

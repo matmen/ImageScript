@@ -13,7 +13,11 @@ const sha256 = data => crypto.createHash('sha256').update(new Uint8Array(data)).
 const expected = {
     lossy: 'c015437d073e901626218276568b0e275d6e486b1024ad70bcd76ddeebe82b95', // VP8
     'lossy-alpha': 'f20e9fec03a515321cec9901ccd7ba9bbc4a10b9371119da7e580150fda47f93', // VP8X + ALPH + VP8
-    lossless: 'a3d6d80178932c33e744693b9ec6149f8bbbf0f84f2efc6a31cccc30bfe5f8f6' // VP8L
+    lossless: 'a3d6d80178932c33e744693b9ec6149f8bbbf0f84f2efc6a31cccc30bfe5f8f6', // VP8L
+    // scripts/webp-fixtures.py: the decoder's loop filter variants, by cwebp and vpxenc; dwebp's output
+    'simple-filter': '988ac73a3ac26650464c9e10b33222f6a2e4082d8dd7a8f77cd0f9e909c50fdc', // the simple loop filter
+    sharpness: '4142a3ac9b1577d74937f765d0b1f15b194f7c83d7f7215534058d648a27baaf', // the normal filter with sharpness
+    'lf-deltas': 'e87c427dc275f13920891b8c5d085eab91dee678ba34fa83e9670f207dbfdca1' // loop filter deltas (libvpx)
 };
 
 const animated = [

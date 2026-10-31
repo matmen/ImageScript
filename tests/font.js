@@ -8,6 +8,8 @@
  https://github.com/googlefonts/noto-emoji (subsets of Noto Color Emoji and Noto-COLRv1, SIL OFL, see OFL-NotoColorEmoji.md;
    damaged noto colrv1 subset.ttf is a damaged copy for tests/regressions.js)
  colrv1 paints.ttf is built by colrv1-paints.py, sbix.ttf by sbix.py, hinting instructions.ttf by scripts/hinting-fixtures.py
+ font features.ttf and the cmap format fonts by scripts/font-fixtures.py, which also copies cff flex.otf and
+   source han sans cid subset.otf from HarfBuzz's test fonts (SIL OFL, see OFL-HarfBuzz-Source.md)
  https://github.com/mozilla/twemoji-colr (subset, CC-BY 4.0, see CC-BY-Twemoji.md)
  */
 
@@ -164,6 +166,49 @@ const panic = message => {
                 }
                 for (const [x, y, onCurve] of points)
                     if (!(onCurve ? on : off).has(`${x},${y}`)) panic(`hinting instructions ${key}: ${onCurve ? 'on' : 'off'} curve point ${x},${y} missing`);
+            }
+        }
+
+        // the parser's rarer paths and FreeType's view of them (scripts/font-fixtures.py): CFF flex operators, CID-keyed
+        // CFF, composite glyphs scaling their components, cmap formats 0, 6 and 14 (variation sequences), advances
+        // varied by gvar's phantom points (no HVAR), and hinting with cvar and the twilight zone
+        {
+            const expected = JSON.parse(await fs.readFile('./tests/fonts/font-features.json', 'utf8'));
+            const fonts = {};
+            const load = async file => fonts[file] ??= new Font(await fs.readFile(`./tests/fonts/${file}`));
+            const at = (x, y) => `${Math.round(x)},${Math.round(y)}`;
+
+            for (const [key, points] of Object.entries(expected.outlines)) {
+                const [file, glyph] = key.split(':');
+                const font = await load(file);
+                const ours = new Set();
+                for (const command of font.outline(+glyph))
+                    for (let i = 1; i < command.length; i += 2) ours.add(at(command[i], command[i + 1]));
+                for (const [x, y] of points)
+                    if (!ours.has(at(x, y))) panic(`font features ${key}: point ${x},${y} missing`);
+                const {xMin, yMin, xMax, yMax} = font.extents(+glyph);
+                if ([xMin, yMin, xMax, yMax].join() !== expected.boxes[key].join()) panic(`font features ${key}: extents ${[xMin, yMin, xMax, yMax]} instead of ${expected.boxes[key]}`);
+            }
+
+            for (const [file, glyphs] of Object.entries(expected.cmaps)) {
+                const font = await load(file);
+                for (const [codepoint, glyph] of Object.entries(glyphs))
+                    if (font.glyphIndex(+codepoint) !== glyph) panic(`font features ${file}: U+${(+codepoint).toString(16)} maps to ${font.glyphIndex(+codepoint)}, not ${glyph}`);
+            }
+
+            const font = await load('font features.ttf');
+            for (const [codepoint, selector, glyph] of expected.variants)
+                if (font.variationGlyph(codepoint, selector) !== glyph) panic(`font features: variation sequence ${codepoint} ${selector} isn't glyph ${glyph}`);
+            for (const [weight, advance] of Object.entries(expected.advances))
+                if (font.withVariations({wght: +weight}).advance(1) !== advance) panic(`font features: advance at weight ${weight} isn't ${advance}`);
+            for (const [weight, {advance, points}] of Object.entries(expected.hinted)) {
+                const hinted = new Hinter(font.withVariations({wght: +weight})).glyph(1, 16);
+                if (!hinted || hinted.advance * 64 !== advance) panic(`font features: hinted advance at weight ${weight}`);
+                const ours = new Set();
+                for (const command of hinted.path)
+                    for (let i = 1; i < command.length; i += 2) ours.add(at(command[i] * 64, command[i + 1] * 64));
+                for (const [x, y] of points)
+                    if (!ours.has(`${x},${y}`)) panic(`font features: hinted point ${x},${y} at weight ${weight} missing`);
             }
         }
 

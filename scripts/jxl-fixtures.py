@@ -9,6 +9,7 @@ import json, os, shutil, struct, subprocess, tempfile
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
+from PIL.PngImagePlugin import PngInfo
 
 root = Path(__file__).resolve().parent.parent
 out = root / 'tests' / 'jxl'
@@ -55,6 +56,12 @@ grey = np.asarray(photo(48, 48).convert('L'), np.uint16) * 256 + np.arange(48, d
 encode('grey16', Image.fromarray(grey.astype('<u2'), 'I;16'), '-d', '0', '-e', '7')
 write_pfm(tmp / 'float.pfm', photo(32, 24))
 encode('float', tmp / 'float.pfm', '-d', '0', fmt='pfm')
+# custom primaries (Adobe RGB's) as the color encoding (lossy: XYB, which decoders convert to sRGB); tone mapping
+# fields (an intensity target)
+chrm = PngInfo()
+chrm.add(b'cHRM', struct.pack('>8I', 31270, 32900, 64000, 33000, 21000, 71000, 15000, 6000))
+encode('custom-primaries', photo(48, 32), '-d', '1', pnginfo=chrm)
+encode('tone-mapping', photo(48, 32), '-d', '1', '--intensity_target=200')
 # lossy: VarDCT (Gaborish and the edge-preserving filter by default), larger varblocks, alpha,
 # grey, lossy Modular (squeeze), progressive passes and LF frames, resampling, photon noise, patches
 encode('lossy', photo(64, 48), '-d', '1')

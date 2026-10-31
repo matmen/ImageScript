@@ -17,6 +17,21 @@ FONTS = {'Arab': 'NotoNaskhArabic.ttf', 'Hebr': 'NotoSansHebrew.ttf', 'Deva': 'N
          'Tibt': 'NotoSerifTibetan.ttf', 'Java': 'NotoSansJavanese.ttf', 'Bali': 'NotoSansBalinese.ttf', 'Hang': 'NotoSansKR.ttf',
          'Adlm': 'NotoSansAdlam.ttf'}
 RTL = {'Arab', 'Hebr', 'Syrc', 'Nkoo', 'Thaa', 'Adlm'}
+# inputs of HarfBuzz's shaping tests (test/shape/data/in-house) reaching shaper paths the texts above don't: dot reph,
+# pref blocking, joiners, vowel letter spoofing, Myanmar and Mongolian specials, Tibetan contractions, ...
+HARFBUZZ_TEXTS = {
+    'Beng': ["\u09b0\u09cd\u09a5\u09cd\u09af\u09c0"],
+    'Deva': ["\u091f\u094d\u200d\u092f\u093f", "\u0904 \u0905\u0946"],
+    'Hang': ["\uac00=>"],
+    'Java': ["\ua99f\ua9c0\ua9a2\ua9bf"],
+    'Knda': ["\u0cb0\u0ccd\u200d\u0c95"],
+    'Mlym': ["\u0d4e\u0d15", "\u0d4e\u0d15\u0d4d\u0d15\u0d4d\u0d30", "\u0d4e\u0d28\u0d4d\u0d28", "\u0d2f\u0d4d\u0d30\u0d46"],
+    'Mong': ["\u183a\u1823\u182e\u182b\u1822\u1826\u180b\u1832\u180b\u1827\u1837"],
+    'Mymr': ["\u1004\u103a\u1039\u101b\u103d\u102d", "\u1000\u1031\u1084"],
+    'Sinh': ["\u0dbb\u0dca\u200d\u0dba\u0dca\u200d\u0dba"],
+    'Taml': ["\u0ba4\u0bc6\U0001133c\u0baa\U0001133c\u0bc6\U0001133c"],
+    'Tibt': ["\ufeff\u0f40\u0f72\u0f72\u0f0b\u0f66\u0fad\u0f7c\u0f7c\u0f0b"]
+}
 random.seed(18)
 corpus = json.load(open(corpus_file))
 cases, sizes = [], 0
@@ -30,6 +45,7 @@ for script, name in FONTS.items():
     else: chars = random.sample(chars, min(len(chars), 60))
     for _ in range(12):
         texts.append(''.join(chr(random.choice([0x200c, 0x200d, 0x25cc, 0x20]) if random.random() < 0.08 else random.choice(chars)) for _ in range(random.randint(2, 8))))
+    texts += HARFBUZZ_TEXTS.get(script, [])
     used = ''.join(texts) + '◌  '
     options = subset.Options()
     options.layout_features = ['*']

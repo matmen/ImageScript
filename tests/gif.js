@@ -1,4 +1,5 @@
 const fs = require('fs').promises;
+const crypto = require('crypto');
 const {Frame, GIF} = require('..');
 
 const panic = message => {
@@ -83,5 +84,23 @@ const panic = message => {
         expect(1, 'BBBBBWBBBBBBBBBB'); // dot is restored afterwards
         expect(2, 'BBBBBBBBBBWBBBBW'); // transparent pixels keep the background
         expect(3, 'WBBBBBBBBB__BB__'); // hole is cleared to transparent
+    }
+
+    // interlaced: written by Pillow (scripts/gif-fixtures.py), the sha256 of its RGBA pixels as Pillow decodes them
+    {
+        const [frame] = await GIF.decode(await fs.readFile('./tests/gifs/interlaced.gif'));
+        if (frame.width !== 80 || frame.height !== 37) panic('interlaced: dimensions don\'t match');
+        if (crypto.createHash('sha256').update(new Uint8Array(frame.bitmap)).digest('hex') !== '854e5e98f2124a6009d5bc28748772ede25af244a2503021ef4f52e323309d46')
+            panic('interlaced: pixels don\'t match');
+    }
+
+    // damaged files keep the frames decoded so far: cut off, or an unknown block before the trailer
+    {
+        const binary = await fs.readFile('./tests/targets/gif.gif');
+        const cut = await GIF.decode(binary.subarray(0, binary.length >> 1));
+        if (!cut.length || cut.length >= 30) panic(`truncated: ${cut.length} frames decoded`);
+
+        const unknown = await GIF.decode(Buffer.concat([binary.subarray(0, -1), Buffer.from([0x99, 0x3b])]));
+        if (unknown.length !== 30) panic(`unknown block: ${unknown.length} frames decoded`);
     }
 })();

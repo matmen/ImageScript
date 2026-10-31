@@ -16,6 +16,11 @@ const expected = {
 	'rgb-keep': 'e942d039ac0f827dbce4df1df82b40e2d5a44fc0ddd9b52150bc42f4fc9fb110', // RGB without color transform
 	'restart': '0e6d2b2b65c65e55bb8b42be66bc601a2394d4bce315f8db8e655465dab4189a', // restart markers
 	'tiny-17x9-prog': '3e23bd12158aa8c323b80b7480d401ba3135f2e3dec708b5942d7a1326c57bcf', // partial MCUs
+	// scripts/jpeg-fixtures.py
+	'sub-440': '96b504d1858876b6b7fa8c0bdb7487ed5b5be1f7c5685570d03ba407b0859880', // 4:4:0 (chroma halved vertically)
+	'sub-411': 'c8148adc76174a33a76192ca6bca99b009e107707b75a52d1a71b1fa5fdc8d26', // 4:1:1 (chroma replicated)
+	'ycck': '713ebfa5853a4c11e8d8808017ee3216805770a08eacca908932b936ead6e771', // Adobe YCCK
+	'fill-bytes': 'effa4b3d6d07ae18d24beb085653d5e86b9f0e259cecd94986fdc0bf4e01663f', // 0xff fill bytes before markers
 };
 
 // sha256 of cjpeg -quality <q> -baseline -optimize (-sample 1x1 above 90) of the decoded images, libjpeg-turbo 2.1.5:
@@ -58,6 +63,25 @@ const withoutExif = data => {
 		const decoded = await Image.decode(await fs.readFile(`./tests/jpegs/${name}.jpg`));
 		if (crypto.createHash('sha256').update(new Uint8Array(decoded.bitmap)).digest('hex') !== hash)
 			panic(`${name}: decoded pixels don't match`);
+	}
+
+	// stray bytes between segments are skipped
+	{
+		const data = await fs.readFile('./tests/jpegs/orig-420-base.jpg');
+		const dqt = data.indexOf(Buffer.from([0xff, 0xdb]));
+		const stray = Buffer.concat([data.subarray(0, dqt), Buffer.from([0x12, 0x34, 0x00]), data.subarray(dqt)]);
+		const decoded = await Image.decode(stray);
+		if (crypto.createHash('sha256').update(new Uint8Array(decoded.bitmap)).digest('hex') !== expected['orig-420-base'])
+			panic('stray bytes: decoded pixels don\'t match');
+	}
+
+	// a scan with restart markers that ends early (cut, then EOI): what was decoded is kept
+	{
+		const data = await fs.readFile('./tests/jpegs/restart.jpg');
+		const sos = data.indexOf(Buffer.from([0xff, 0xda]));
+		const cut = Buffer.concat([data.subarray(0, sos + (data.length - sos >> 1)), Buffer.from([0xff, 0xd9])]);
+		const decoded = await Image.decode(cut);
+		if (decoded.width !== 227 || decoded.height !== 149) panic('early ending scan: dimensions don\'t match');
 	}
 
 	try {

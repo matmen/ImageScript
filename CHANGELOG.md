@@ -22,6 +22,22 @@
   prediction mode returned -0, a floating point number to V8, which kept deoptimizing the decoder's main loop. Blocks
   with only a DC coefficient also skip the full inverse transform. Same pixels.
 
+### Fixes
+
+- TrueType hinting scales the control values like FreeType: kept in 1/64 font units (cvar's deltas rounded to them)
+  and scaled by the scale cut to 1/64. Rounding differently moved some points by 1/64 pixel, sometimes across a pixel
+  boundary: of Ethnocentric's glyphs at 11-128 px, 60 of 72 were FreeType's before, all of them now.
+
+### Tests
+
+- Tests for the decoders' rarer paths, each against its reference implementation: JPEG 4:4:0, 4:1:1, YCCK and fill
+  bytes (Pillow), interlaced GIFs (Pillow), 16-bit RGB and interlaced RGBA PNGs (PngSuite), WebP's simple loop filter,
+  sharpness and loop filter deltas (dwebp, a libvpx keyframe), CFF flex operators, CID-keyed CFF, scaled composite
+  glyphs, cmap formats 0, 6 and 14, phantom point and cvar variations, hinting in the twilight zone (FreeType), more
+  shaping inputs of HarfBuzz's test suite (USE, Indic, Myanmar, ...), more of resvg's SVG tests, AV1 timing info
+  and frame ids, YCgCo, 180° rotations and items in several extents in AVIF (avifdec), JPEG XL custom primaries and
+  tone mapping (djxl), and the code paths for big endian machines (forced on).
+
 ## 3.12.2
 
 ### Changes
