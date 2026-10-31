@@ -1,8 +1,7 @@
 /*!
  * The JPEG XL entropy encoder: tokens of contexts as hybrid integers, the contexts clustered (like libjxl's
  * FastClusterHistograms, lib/jxl/enc_cluster.cc), the context map, ANS (libjxl's lib/jxl/enc_ans.cc: the counts
- * normalized and stored, the tokens coded in reverse) or prefix codes (Brotli's format) of length limited Huffman
- * codes. Copyright (c) the JPEG XL Project Authors, BSD-3-Clause License (see THIRD_PARTY_NOTICES.md)
+ * normalized and stored, the tokens coded in reverse). Copyright (c) the JPEG XL Project Authors, BSD-3-Clause License (see THIRD_PARTY_NOTICES.md)
  */
 import { BitWriter } from './bit-writer.ts';
 import { BitReader } from './bits.ts';
@@ -39,181 +38,6 @@ const token = (v: number): number => {
     const n = 31 - Math.clz32(v), m = v - (1 << n);
     return SPLIT + ((n - SPLIT_EXPONENT) << (MSB + LSB)) + ((m >>> (n - MSB)) << LSB) + (m & ((1 << LSB) - 1));
 };
-
-const MAX_PREFIX_BITS = 15;
-
-/** Length limited Huffman code lengths of counts (Brotli's approach: raise the smallest counts until they fit) */
-function huffmanLengths(counts: ArrayLike<number>, limit: number): Uint8Array {
-    const n = counts.length, lengths = new Uint8Array(n);
-    const used: number[] = [];
-    for (let i = 0; i < n; i++) if (counts[i] > 0) used.push(i);
-    if (used.length <= 1) {
-        if (used.length) lengths[used[0]] = 1;
-        return lengths;
-    }
-    for (let floor = 1; ; floor *= 2) {
-        // (a heap of [weight, node]; nodes: leaves 0..m-1, then internal ones)
-        const m = used.length, parent = new Int32Array(2 * m), weights: [number, number][] = [];
-        for (let i = 0; i < m; i++) weights.push([Math.max(counts[used[i]], floor), i]);
-        weights.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-        // (two queues: the sorted leaves and the internal nodes, which are made in increasing order)
-        const internal: [number, number][] = [];
-        let li = 0, ii = 0, next = m;
-        const pop = (): [number, number] => {
-            if (ii >= internal.length || (li < weights.length && weights[li][0] <= internal[ii][0])) return weights[li++];
-            return internal[ii++];
-        };
-        for (let k = 0; k < m - 1; k++) {
-            const a = pop(), b = pop();
-            parent[a[1]] = parent[b[1]] = next;
-            internal.push([a[0] + b[0], next++]);
-        }
-        const depth = new Int32Array(2 * m);
-        let max = 0;
-        for (let node = next - 2; node >= 0; node--) {
-            depth[node] = depth[parent[node]] + 1;
-            if (node < m && depth[node] > max) max = depth[node];
-        }
-        if (max > limit) continue;
-        for (let i = 0; i < m; i++) lengths[used[i]] = depth[i];
-        return lengths;
-    }
-}
-
-/** The codes of lengths (canonical, bit reversed: Brotli's codes are read from the least significant bit) */
-function canonicalCodes(lengths: Uint8Array): Uint16Array {
-    let maxLen = 0;
-    for (const l of lengths) if (l > maxLen) maxLen = l;
-    const count = new Int32Array(maxLen + 1), next = new Int32Array(maxLen + 2);
-    for (const l of lengths) if (l) count[l]++;
-    for (let len = 1, code = 0; len <= maxLen; len++) {
-        code = (code + count[len - 1]) << 1;
-        next[len] = code;
-    }
-    const codes = new Uint16Array(lengths.length);
-    for (let s = 0; s < lengths.length; s++) {
-        const len = lengths[s];
-        if (!len) continue;
-        const code = next[len]++;
-        let rev = 0;
-        for (let i = 0; i < len; i++) rev |= (code >> i & 1) << (len - 1 - i);
-        codes[s] = rev;
-    }
-    return codes;
-}
-
-/** A prefix code of an alphabet: lengths and codes */
-class PrefixCode {
-    readonly lengths: Uint8Array;
-    readonly codes: Uint16Array;
-    /** the number of symbols used, the symbols of a code of at most 4 */
-    private readonly used: number[];
-
-    constructor(readonly counts: Float64Array) {
-        this.used = [];
-        for (let i = 0; i < counts.length; i++) if (counts[i] > 0) this.used.push(i);
-        if (this.used.length > 1 && this.used.length <= 4) {
-            // (the simple codes: fixed lengths, the most frequent symbols first)
-            const syms = this.used.slice().sort((a, b) => counts[b] - counts[a] || a - b);
-            const lens = syms.length === 2 ? [1, 1] : syms.length === 3 ? [1, 2, 2] : this.fourLengths(syms);
-            this.used = syms;
-            this.lengths = new Uint8Array(counts.length);
-            syms.forEach((s, i) => this.lengths[s] = lens[i]);
-        } else this.lengths = this.used.length > 1 ? huffmanLengths(counts, MAX_PREFIX_BITS) : new Uint8Array(counts.length);
-        this.codes = canonicalCodes(this.lengths);
-    }
-
-    // [1, 2, 3, 3] if that is smaller than [2, 2, 2, 2] for the four symbols (sorted by count)
-    private fourLengths(syms: number[]): number[] {
-        const c = syms.map(s => this.counts[s]);
-        return c[0] + 2 * c[1] + 3 * (c[2] + c[3]) < 2 * (c[0] + c[1] + c[2] + c[3]) ? [1, 2, 3, 3] : [2, 2, 2, 2];
-    }
-
-    /** writes the code (its alphabet size first) */
-    write(w: BitWriter): void {
-        const size = this.counts.length;
-        if (size === 1) w.write(1, 0);
-        else {
-            const n = 31 - Math.clz32(size - 1);
-            w.write(1, 1);
-            w.write(4, n);
-            w.write(n, size - 1 - (1 << n));
-        }
-    }
-
-    /** writes the code itself (after every cluster's alphabet size) */
-    writeCode(w: BitWriter): void {
-        const size = this.counts.length;
-        if (size === 1) return;
-        const used = this.used;
-        if (used.length <= 4) {
-            // the simple code
-            const bits = 32 - Math.clz32(size - 1);
-            w.write(2, 1);
-            w.write(2, Math.max(used.length, 1) - 1);
-            for (const s of used.length ? used : [0]) w.write(bits, s);
-            if (used.length === 4) w.write(1, this.lengths[used[3]] === 3 ? 1 : 0);
-            return;
-        }
-        // the code lengths, run length coded: 0-15, 16 repeats the last non-zero length 3-6 times, 17 zero 3-10 times
-        // (never twice in a row, which would multiply the counts)
-        let last = size;
-        while (this.lengths[last - 1] === 0) last--;
-        const syms: number[] = [], extra: number[] = [];
-        let prevNonZero = 8;
-        for (let i = 0; i < last;) {
-            const l = this.lengths[i];
-            let run = 1;
-            while (i + run < last && this.lengths[i + run] === l) run++;
-            i += run;
-            if (l !== 0 && l !== prevNonZero) {
-                syms.push(l);
-                extra.push(0);
-                run--;
-                prevNonZero = l;
-            }
-            const rep = l === 0 ? 17 : 16, max = l === 0 ? 10 : 6;
-            while (run > 0) {
-                if (run < 3 || syms[syms.length - 1] === rep) {
-                    syms.push(l);
-                    extra.push(0);
-                    run--;
-                    continue;
-                }
-                const k = Math.min(run, max);
-                syms.push(rep);
-                extra.push(k - 3);
-                run -= k;
-            }
-        }
-        const clCounts = new Float64Array(18);
-        for (const s of syms) clCounts[s]++;
-        const clLengths = huffmanLengths(clCounts, 5);
-        let distinct = 0;
-        for (const l of clLengths) if (l) distinct++;
-        const clCodes = canonicalCodes(clLengths);
-        // (HSKIP 0; the code length code lengths in their order, by a fixed code, until the code is complete)
-        w.write(2, 0);
-        const ORDER = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-        const FIXED_NBITS = [2, 4, 3, 2, 2, 4], FIXED_BITS = [0, 7, 3, 2, 1, 15];
-        let space = 0;
-        for (let i = 0; i < 18; i++) {
-            const l = clLengths[ORDER[i]];
-            w.write(FIXED_NBITS[l], FIXED_BITS[l]);
-            if (l) {
-                space += 32 >> l;
-                if (distinct > 1 && space === 32) break;
-            }
-        }
-        for (let i = 0; i < syms.length; i++) {
-            const s = syms[i];
-            if (distinct > 1) w.write(clLengths[s], clCodes[s]);
-            if (s === 16) w.write(2, extra[i]);
-            else if (s === 17) w.write(3, extra[i]);
-        }
-    }
-}
-
 
 // ---- ANS
 
@@ -419,17 +243,14 @@ function cost(h: Float64Array, total: number): number {
 export interface EntropyOptions {
     /** at most this many clusters (up to 255) */
     maxClusters?: number;
-    /** prefix codes instead of ANS */
-    prefix?: boolean;
 }
 
-/** The entropy code of streams that share it: clustered contexts and their ANS distributions or prefix codes */
+/** The entropy code of streams that share it: clustered contexts and their ANS distributions */
 export class EntropyCode {
     private readonly ctxMap: Uint8Array;
-    private readonly prefix: PrefixCode[] | null = null;
-    private readonly ans: AnsCode[] | null = null;
+    private readonly ans: AnsCode[];
 
-    constructor(streams: Tokens[], readonly numContexts: number, { maxClusters = 64, prefix = false }: EntropyOptions = {}) {
+    constructor(streams: Tokens[], readonly numContexts: number, { maxClusters = 64 }: EntropyOptions = {}) {
         // the histograms of the contexts' tokens
         let alphabet = 1;
         for (const t of streams) {
@@ -451,49 +272,31 @@ export class EntropyCode {
             while (size > 1 && h[size - 1] === 0) size--;
             return h.subarray(0, size);
         });
-        if (prefix) this.prefix = clusters.map(h => new PrefixCode(h));
-        else this.ans = clusters.map(h => new AnsCode(h));
+        this.ans = clusters.map(h => new AnsCode(h));
     }
 
-    /** writes the code: no LZ77, the context map, ANS or prefix codes, their configurations, distributions or codes */
+    /** writes the code: no LZ77, the context map, ANS (not prefix codes), the configurations and distributions */
     writeHeader(w: BitWriter): void {
         w.write(1, 0);
-        const n = (this.prefix ?? this.ans as AnsCode[]).length;
+        const n = this.ans.length;
         writeContextMap(w, this.ctxMap, n);
-        w.write(1, this.prefix ? 1 : 0);
-        if (!this.prefix) w.write(2, LOG_ALPHABET_SIZE - 5);
+        w.write(1, 0);
+        w.write(2, LOG_ALPHABET_SIZE - 5);
         for (let i = 0; i < n; i++) {
-            // (the hybrid integer configuration: the same field sizes for ANS' 8 and prefix codes' 15 bit alphabets)
+            // (the hybrid integer configuration)
             w.write(4, SPLIT_EXPONENT);
             w.write(3, MSB);
             w.write(32 - Math.clz32(SPLIT_EXPONENT - MSB), LSB);
         }
-        if (this.prefix) {
-            for (const c of this.prefix) c.write(w);
-            for (const c of this.prefix) c.writeCode(w);
-        } else for (const c of this.ans as AnsCode[]) c.write(w);
+        for (const c of this.ans) c.write(w);
     }
 
     /** writes the tokens of a stream */
     writeTokens(w: BitWriter, t: Tokens): void {
         const map = this.ctxMap;
-        if (this.prefix) {
-            const codes = this.prefix;
-            for (let i = 0; i < t.length; i++) {
-                const code = codes[map[t.ctx[i]]], v = t.value[i];
-                if (v < SPLIT) {
-                    w.write(code.lengths[v], code.codes[v]);
-                    continue;
-                }
-                const n = 31 - Math.clz32(v), nbits = n - MSB - LSB, tk = token(v);
-                w.write(code.lengths[tk], code.codes[tk]);
-                w.write(nbits, (v >>> LSB) & ((1 << nbits) - 1));
-            }
-            return;
-        }
         // ANS: the tokens in reverse, the 16 bits of each renormalization read after the token's symbol (before its
         // raw bits); the final state first
-        const codes = this.ans as AnsCode[], n = t.length, chunks = new Int32Array(n);
+        const codes = this.ans, n = t.length, chunks = new Int32Array(n);
         let state = 0x130000;
         for (let i = n - 1; i >= 0; i--) {
             const code = codes[map[t.ctx[i]]], tk = token(t.value[i]), freq = code.freq[tk];
