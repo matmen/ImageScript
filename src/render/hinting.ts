@@ -192,7 +192,8 @@ export class Hinter {
     font: Font;
     fpgm: Uint8Array;
     prep: Uint8Array;
-    cvt: Int16Array;
+    /** the control values in 26.6 font units, like FreeType keeps them */
+    cvt: Int32Array;
     maxStack: number;
     maxStorage: number;
     maxTwilight: number;
@@ -212,11 +213,11 @@ export class Hinter {
         this.fpgm = table('fpgm');
         this.prep = table('prep');
         const cvt = table('cvt ');
-        this.cvt = new Int16Array(cvt.length >> 1);
-        for (let i = 0; i < this.cvt.length; i++) this.cvt[i] = font.i16(font.tables['cvt '].offset + i * 2);
-        // (a variable font's instance: the values moved by cvar's deltas, rounded to font units like FreeType does)
+        this.cvt = new Int32Array(cvt.length >> 1);
+        for (let i = 0; i < this.cvt.length; i++) this.cvt[i] = font.i16(font.tables['cvt '].offset + i * 2) * 64;
+        // (a variable font's instance: the values moved by cvar's deltas, rounded to 1/64 like FreeType does)
         const deltas = font.cvtDeltas(this.cvt.length);
-        if (deltas) for (let i = 0; i < this.cvt.length; i++) this.cvt[i] = Math.round(this.cvt[i] + deltas[i]);
+        if (deltas) for (let i = 0; i < this.cvt.length; i++) this.cvt[i] += Math.floor(deltas[i] * 64 + 0.5);
 
         const maxp = font.tables.maxp.offset;
         const version = font.u32(maxp);
@@ -238,7 +239,8 @@ export class Hinter {
         const scale = scaleFixed / 65536;
         size = {
             ppem, scale, scaleFixed,
-            cvt: Float64Array.from(this.cvt, v => mulFix(v, scaleFixed)),
+            // (scaled like FreeType: the 26.6 values by the scale cut to 1/64, see tt_size_run_prep)
+            cvt: Float64Array.from(this.cvt, v => mulFix(v, scaleFixed >> 6)),
             storage: new Int32Array(Math.max(this.maxStorage, 64)),
             state: defaultState(),
             twilight: makeZone(Math.max(this.maxTwilight, 1)),
