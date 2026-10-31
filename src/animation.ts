@@ -86,7 +86,7 @@ export interface GIFEncodeOptions extends AnimationEncodeOptions {
 
 /** Options of {@link Animation.encodeAPNG} */
 export interface APNGEncodeOptions extends AnimationEncodeOptions {
-    /** The zlib compression level (0-9), higher is smaller but slower. Default: `1` */
+    /** The zlib compression level (0-9), higher is smaller but slower. Default: `4` */
     compression?: number;
 }
 
@@ -279,11 +279,11 @@ export class Animation extends Array<Frame> {
      * the first frame. Each frame is stored as the area that changed since the frame before, identical frames are
      * merged (unless the `optimize` option is false): the file shows exactly the same animation, but doesn't
      * necessarily decode to the same frames
-     * @param compression The zlib compression level (0-9), higher is smaller but slower
+     * @param compression The zlib compression level (0-9), higher is smaller but slower. Default: `4`
      */
     encodeAPNG(compression?: number): Promise<Uint8Array>;
-    async encodeAPNG(compressionOrOptions: number | APNGEncodeOptions = 1): Promise<Uint8Array> {
-        const { compression = 1, metadata = {}, optimize = true } = isOptions(compressionOrOptions) ? compressionOrOptions : { compression: compressionOrOptions };
+    async encodeAPNG(compressionOrOptions: number | APNGEncodeOptions = 4): Promise<Uint8Array> {
+        const { compression = 4, metadata = {}, optimize = true } = isOptions(compressionOrOptions) ? compressionOrOptions : { compression: compressionOrOptions };
         this.__validate__();
         if (!this.length) throw new Error('An animation needs at least one frame');
 

@@ -44,7 +44,7 @@ export interface GIFAnimationEncoderOptions extends AnimationEncoderOptions {
 
 /** Options of {@link Animation.apngEncoder} */
 export interface APNGAnimationEncoderOptions extends AnimationEncoderOptions {
-    /** The zlib compression level (0-9), higher is smaller but slower. Default: `1` */
+    /** The zlib compression level (0-9), higher is smaller but slower. Default: `4` */
     compression?: number;
 }
 
@@ -177,7 +177,7 @@ export class AnimationEncoder {
     }
 
     /** @internal */
-    static __apng__(width: number, height: number, { loopCount = -1, metadata = {}, optimize = true, compression = 1 }: APNGAnimationEncoderOptions): AnimationEncoder {
+    static __apng__(width: number, height: number, { loopCount = -1, metadata = {}, optimize = true, compression = 4 }: APNGAnimationEncoderOptions): AnimationEncoder {
         canvas(width, height, loopCount);
         const text = pngText(resolveMetadata(metadata));
         // the frames are kept compressed (quickly): the pixel format, and whether opaque animations are stored without

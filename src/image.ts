@@ -97,7 +97,7 @@ export interface SharpenOptions {
 
 /** Options of {@link Image.encode} */
 export interface PNGEncodeOptions {
-    /** The compression level (0-9). Default: `1` */
+    /** The compression level (0-9), higher is smaller but slower. Default: `4` */
     compression?: number;
     /** Metadata to include, see {@link Metadata} */
     metadata?: Metadata;
@@ -2115,23 +2115,23 @@ export class Image {
     encode(options?: PNGEncodeOptions): Promise<Uint8Array>;
     /**
      * Encodes the image into a PNG
-     * @param compression The compression level (0-9). Default: `1`
+     * @param compression The compression level (0-9). Default: `4`
      * @param metadata Metadata to include, see {@link Metadata}
      * @return The encoded data
      */
     encode(compression?: number, metadata?: Metadata): Promise<Uint8Array>;
     /**
-     * Encodes the image into a PNG with compression level 1
+     * Encodes the image into a PNG with compression level 4
      * @param metadata Metadata to include, see {@link Metadata}
      * @return The encoded data
      */
     encode(metadata?: Metadata): Promise<Uint8Array>;
-    async encode(compressionOrOptions: number | PNGEncodeOptions | Metadata = 1, metadataArgument: Metadata = {}): Promise<Uint8Array> {
-        let compression = 1, metadata = metadataArgument;
+    async encode(compressionOrOptions: number | PNGEncodeOptions | Metadata = 4, metadataArgument: Metadata = {}): Promise<Uint8Array> {
+        let compression = 4, metadata = metadataArgument;
         if (!isOptions(compressionOrOptions)) compression = compressionOrOptions;
         // the options and the metadata have no key in common: an object with neither is empty, the same either way
         else if ('compression' in compressionOrOptions || 'metadata' in compressionOrOptions)
-            ({ compression = 1, metadata = {} } = compressionOrOptions);
+            ({ compression = 4, metadata = {} } = compressionOrOptions);
         else metadata = compressionOrOptions as Metadata;
 
         const level = Math.min(9, Math.max(0, ~~finite(compression, 'compression level')));
@@ -2144,7 +2144,7 @@ export class Image {
     encodePNG(options?: PNGEncodeOptions): Promise<Uint8Array>;
     /**
      * Encodes the image into a PNG, an alias of {@link Image.encode}
-     * @param compression The compression level (0-9). Default: `1`
+     * @param compression The compression level (0-9). Default: `4`
      * @param metadata Metadata to include, see {@link Metadata}
      */
     encodePNG(compression?: number, metadata?: Metadata): Promise<Uint8Array>;

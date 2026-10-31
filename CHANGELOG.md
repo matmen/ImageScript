@@ -1,6 +1,12 @@
 # Changelog
 
-## 3.12.3
+## 3.13.0
+
+### Changes
+
+- PNG and APNG encoding (`encode()`, `encodePNG()`, `encodeAPNG()`, `apngEncoder()`) default to compression level 4
+  instead of 1: 7-22% smaller files (graphics 11%, photos 10%, screenshots 22%) for about 30% more time. zlib's lazy
+  matching starts at level 4, so levels 2-3 save less. Pass `compression: 1` for the previous speed.
 
 ### Performance
 
