@@ -4,7 +4,7 @@
  https://www.1001fonts.com/ethnocentric-font.html
  https://github.com/adobe-fonts/source-sans (SIL OFL, see OFL-SourceSans3.md)
  https://notofonts.github.io (subsets of Noto Sans Hebrew, Noto Naskh Arabic and Noto Sans Devanagari, SIL OFL, see
-   ../shaping/OFL-Noto.md)
+   ../shaping/OFL-Noto.md; noto naskh arabic subset.woff is the .ttf as WOFF, by fontTools)
  https://github.com/googlefonts/noto-emoji (subsets of Noto Color Emoji and Noto-COLRv1, SIL OFL, see OFL-NotoColorEmoji.md;
    damaged noto colrv1 subset.ttf is a damaged copy for tests/regressions.js)
  colrv1 paints.ttf is built by colrv1-paints.py, sbix.ttf by sbix.py, hinting instructions.ttf by scripts/hinting-fixtures.py
@@ -21,6 +21,20 @@ const panic = message => {
 };
 
 (async () => {
+    // WOFF fonts render like the fonts they compress; WOFF2 ones are refused with a clear message
+    {
+        const text = 'مرحبا بالعالم';
+        const ttf = await Image.renderText(await fs.readFile('./tests/fonts/noto naskh arabic subset.ttf'), 48, text);
+        const woff = await Image.renderText(await fs.readFile('./tests/fonts/noto naskh arabic subset.woff'), 48, text);
+        if (!Buffer.from(ttf.bitmap).equals(Buffer.from(woff.bitmap))) panic('WOFF font doesn\'t render like its TTF');
+
+        const woff2 = new Uint8Array(64);
+        woff2.set([0x77, 0x4f, 0x46, 0x32]);
+        await Image.renderText(woff2, 48, text).then(() => panic('WOFF2 font was accepted'), err => {
+            if (!/WOFF2/.test(err.message)) panic(`unexpected WOFF2 error: ${err.message}`);
+        });
+    }
+
     {
         const font = await Image.renderText(await fs.readFile('./tests/fonts/carbon phyber.ttf'), 128, 'ThE qUiCk');
         const encoded = await font.encode(1, {creationTime: 0, software: ''});

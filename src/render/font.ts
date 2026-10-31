@@ -1,3 +1,4 @@
+import { decompress } from '../codecs/zlib.ts';
 import { type Axis, Gvar, ItemVariationStore, cvarDeltas, deltaSetIndexMap, normalize, parseAvar, parseFvar } from './variations.ts';
 
 
@@ -77,13 +78,16 @@ export class Font {
     private instances: Map<string, Font> | null = null;
 
     constructor(data: Uint8Array) {
+        // 'wOFF': the TrueType or OpenType font it compresses; 'wOF2' (Brotli) isn't everywhere yet
+        const woff = data.length >= 4 ? (data[0] << 24 | data[1] << 16 | data[2] << 8 | data[3]) >>> 0 : 0;
+        if (woff === 0x774f4646) data = fromWOFF(data);
+        else if (woff === 0x774f4632) throw new Error('Font: WOFF2 fonts are not supported, only WOFF');
         this.data = data;
         this.view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
         let offset = 0;
         const signature = this.u32(0);
         if (signature === 0x74746366) offset = this.u32(12); // 'ttcf', use the first font
-        else if (signature === 0x774f4646 || signature === 0x774f4632) throw new Error('Font: WOFF fonts are not supported');
 
         const version = this.u32(offset);
         if (version !== 0x00010000 && version !== 0x4f54544f && version !== 0x74727565) throw new Error('Font: invalid font file');
@@ -1102,3 +1106,30 @@ function cffCharString(cff: CFF, glyph: number): PathCommand[] {
     return path;
 }
 
+// a WOFF (1) font as the TrueType or OpenType font it compresses
+function fromWOFF(data: Uint8Array): Uint8Array {
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const count = view.getUint16(12);
+    const tables: Array<{ tag: number, data: Uint8Array, checksum: number }> = [];
+    for (let i = 0; i < count; i++) {
+        const e = 44 + i * 20, offset = view.getUint32(e + 4), compressed = view.getUint32(e + 8), length = view.getUint32(e + 12);
+        const raw = data.subarray(offset, offset + compressed);
+        tables.push({ tag: view.getUint32(e), checksum: view.getUint32(e + 16), data: compressed < length ? decompress(raw, length).subarray(0, length) : raw });
+    }
+    const header = 12 + count * 16;
+    let size = header;
+    for (const t of tables) size += t.data.length + 3 & ~3;
+    const out = new Uint8Array(size), o = new DataView(out.buffer);
+    o.setUint32(0, view.getUint32(4));
+    o.setUint16(4, count);
+    let position = header;
+    tables.forEach((t, i) => {
+        o.setUint32(12 + i * 16, t.tag);
+        o.setUint32(16 + i * 16, t.checksum);
+        o.setUint32(20 + i * 16, position);
+        o.setUint32(24 + i * 16, t.data.length);
+        out.set(t.data, position);
+        position += t.data.length + 3 & ~3;
+    });
+    return out;
+}

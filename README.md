@@ -60,7 +60,7 @@ and encoded as GIF, APNG or WebP, all at once or
 [frame by frame](https://imagescript.dev/classes/Animation.html#webpencoder). Embedded color profiles (Display
 P3, Adobe RGB, ...) are converted to sRGB when decoding, so images look the way browsers show them.
 
-- [Text rendering](https://imagescript.dev/classes/Image.html#rendertext) with TrueType and OpenType fonts:
+- [Text rendering](https://imagescript.dev/classes/Image.html#rendertext) with TrueType, OpenType and WOFF fonts:
   all scripts, color emoji, variable fonts
 - [SVG rendering](https://imagescript.dev/classes/Image.html#rendersvg), including text (with fonts you pass
   or fonts embedded in the SVG)

@@ -2,6 +2,13 @@
 
 ## 3.13.0
 
+### New
+
+- WOFF fonts work everywhere fonts do: `renderText()`, `TextLayout`, and SVG rendering's `fonts` option (before, only
+  fonts an SVG embeds with `@font-face` could be WOFF). Font packages like Fontsource ship only WOFF and WOFF2, so
+  their fonts can be used directly. WOFF2 fonts are refused with a clear error for now: they need Brotli, which
+  Chrome's `DecompressionStream` doesn't offer yet.
+
 ### Changes
 
 - PNG and APNG encoding (`encode()`, `encodePNG()`, `encodeAPNG()`, `apngEncoder()`) default to compression level 4

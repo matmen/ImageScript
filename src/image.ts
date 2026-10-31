@@ -180,8 +180,8 @@ export interface SVGOptions {
      * and `font-stretch` match best among them, by the names, weights and styles in the fonts (like browsers match
      * installed fonts). Generic families (`serif`, `sans-serif`, `monospace`, ...) are the first font that fits them,
      * other families and text without one get the first font's family; characters a face doesn't have come from the
-     * other fonts. Fonts the SVG embeds with `@font-face` (in data: URIs, also WOFF) are used too, before these for
-     * their family names. Without any fonts text isn't rendered. Default: `[]`
+     * other fonts (TrueType, OpenType or WOFF). Fonts the SVG embeds with `@font-face` (in data: URIs) are used too,
+     * before these for their family names. Without any fonts text isn't rendered. Default: `[]`
      */
     fonts?: BinaryData[];
 }
@@ -2411,10 +2411,11 @@ export class Image {
 
     /**
      * Creates a new image containing the rendered text.
-     * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use, or several by priority: every character
-     *     comes from the first font that has it (e.g. `[text, emoji]`), the first one sets the line height. Color
-     *     glyphs (COLR layers and paints, CBDT and sbix bitmaps, as in emoji fonts) keep their colors. Text in any script
-     *     is shaped like browsers do (right to left and bidirectional text, Arabic joining, Indic conjuncts, marks)
+     * @param font TrueType (ttf/ttc), OpenType (otf) or WOFF font buffer to use, or several by priority: every
+     *     character comes from the first font that has it (e.g. `[text, emoji]`), the first one sets the line height.
+     *     Color glyphs (COLR layers and paints, CBDT and sbix bitmaps, as in emoji fonts) keep their colors. Text in any
+     *     script is shaped like browsers do (right to left and bidirectional text, Arabic joining, Indic conjuncts,
+     *     marks)
      * @param size Font size in pixels (per em)
      * @param text Text to render
      * @param options Color, layout and style, see {@link TextOptions}; the image grows by the outline width on every
@@ -2424,10 +2425,11 @@ export class Image {
     static renderText(font: BinaryData | BinaryData[], size: number, text: string, options?: TextOptions): Promise<Image>;
     /**
      * Creates a new image containing the rendered text.
-     * @param font TrueType (ttf/ttc) or OpenType (otf) font buffer to use, or several by priority: every character
-     *     comes from the first font that has it (e.g. `[text, emoji]`), the first one sets the line height. Color
-     *     glyphs (COLR layers and paints, CBDT and sbix bitmaps, as in emoji fonts) keep their colors. Text in any script
-     *     is shaped like browsers do (right to left and bidirectional text, Arabic joining, Indic conjuncts, marks)
+     * @param font TrueType (ttf/ttc), OpenType (otf) or WOFF font buffer to use, or several by priority: every
+     *     character comes from the first font that has it (e.g. `[text, emoji]`), the first one sets the line height.
+     *     Color glyphs (COLR layers and paints, CBDT and sbix bitmaps, as in emoji fonts) keep their colors. Text in any
+     *     script is shaped like browsers do (right to left and bidirectional text, Arabic joining, Indic conjuncts,
+     *     marks)
      * @param size Font size in pixels (per em)
      * @param text Text to render
      * @param [color=0xffffffff] Text color to use

@@ -21,7 +21,6 @@ import { FontFace, FontStyle, fontFace, layOutText, parseFontFamilies, parseVari
 import { rasterizeGlyph } from './text.ts';
 import { renderPaintGlyph } from './colr.ts';
 import { decodeSync as decodePNG } from '../codecs/png.ts';
-import { decompress } from '../codecs/zlib.ts';
 
 const UNSUPPORTED = new Set(['filter', 'pattern', 'marker', 'foreignObject', 'script', 'style', 'title', 'desc', 'metadata',
     'defs', 'clipPath', 'mask', 'linearGradient', 'radialGradient', 'stop', 'symbol', 'font', 'font-face', 'animate', 'animateTransform', 'animateMotion', 'set']);
@@ -3633,13 +3632,7 @@ function embeddedFonts(css: string): FontFace[] {
         if (family) for (const [, , url] of (d.src ?? '').matchAll(/url\(\s*(['"]?)([^'")]*)\1\s*\)/g)) {
             const uri = dataURI(url);
             if (!uri) continue;
-            let data: Uint8Array | null = uri.data;
-            try {
-                if (data[0] === 0x77 && data[1] === 0x4f && data[2] === 0x46 && data[3] === 0x46) data = fromWOFF(data);
-            } catch {
-                data = null;
-            }
-            const face = data && fontFace(data, { family, weight, style });
+            const face = fontFace(uri.data, { family, weight, style });
             if (face) {
                 faces.push(face);
                 break;
@@ -3649,34 +3642,6 @@ function embeddedFonts(css: string): FontFace[] {
         at = next < 0 ? -1 : end + 1 + next;
     }
     return faces;
-}
-
-// a WOFF (1) font as the TrueType or OpenType font it compresses
-function fromWOFF(data: Uint8Array): Uint8Array {
-    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    const count = view.getUint16(12);
-    const tables: Array<{ tag: number, data: Uint8Array, checksum: number }> = [];
-    for (let i = 0; i < count; i++) {
-        const e = 44 + i * 20, offset = view.getUint32(e + 4), compressed = view.getUint32(e + 8), length = view.getUint32(e + 12);
-        const raw = data.subarray(offset, offset + compressed);
-        tables.push({ tag: view.getUint32(e), checksum: view.getUint32(e + 16), data: compressed < length ? decompress(raw, length).subarray(0, length) : raw });
-    }
-    const header = 12 + count * 16;
-    let size = header;
-    for (const t of tables) size += t.data.length + 3 & ~3;
-    const out = new Uint8Array(size), o = new DataView(out.buffer);
-    o.setUint32(0, view.getUint32(4));
-    o.setUint16(4, count);
-    let position = header;
-    tables.forEach((t, i) => {
-        o.setUint32(12 + i * 16, t.tag);
-        o.setUint32(16 + i * 16, t.checksum);
-        o.setUint32(20 + i * 16, position);
-        o.setUint32(24 + i * 16, t.data.length);
-        out.set(t.data, position);
-        position += t.data.length + 3 & ~3;
-    });
-    return out;
 }
 
 // an element's transform around its transform-origin
