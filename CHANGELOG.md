@@ -7,7 +7,8 @@
 - `encodeJPEG()` encodes like libjpeg-turbo: its integer color conversion, downsampling, DCT and quantization instead
   of floating point ones, so the files are byte for byte what `cjpeg -quality <q> -baseline -optimize` writes (with
   `-sample 1x1` above quality 90), but for the Exif segment. Quality 1-49 also uses libjpeg's integer scaling of the
-  quantization tables now. Files differ slightly from before, at about the same size and quality.
+  quantization tables now. Files differ slightly from before: photos 0.1-1% larger at the same quality, rendered
+  images (screenshots, graphics) at quality 90 and above up to 9%, mostly as libjpeg rounds the YCbCr samples to 8 bits.
 
 ### Performance
 
