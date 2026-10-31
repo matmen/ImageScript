@@ -1,6 +1,15 @@
 // 8-bit premultiplied alpha on the pixels as 32-bit words (little endian: alpha is the top byte), for the fast paths
 
-export const littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+export let littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+
+/**
+ * @internal for tests: run the code paths for the other byte order (on little endian machines, where the big endian
+ * ones never run otherwise; those don't depend on the byte order, so they work on either)
+ * @ignore
+ */
+export function useLittleEndian(value: boolean): void {
+    littleEndian = value;
+}
 
 const words = (bitmap: Uint8ClampedArray): Int32Array => new Int32Array(bitmap.buffer, bitmap.byteOffset, bitmap.length >> 2);
 

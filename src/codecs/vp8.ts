@@ -782,12 +782,17 @@ function toRGBA(Y: Uint8Array, U: Uint8Array, V: Uint8Array, ys: number, cs: num
     // the last row of an even height picture
     if (!(height & 1)) upsamplePair(Y, U, V, yRow(height - 1), -1, cRow(lastChroma), cRow(lastChroma), out, (height - 1) * width, -1, width);
 
-    // the words were written little endian
-    if (!littleEndian) for (let i = 0; i < out.length; i++) {
+    // (the words hold red in their low byte: elsewhere than on little endian machines, the bytes are taken from them)
+    if (littleEndian) return new Uint8Array(out.buffer);
+    const bytes = new Uint8Array(out.length * 4);
+    for (let i = 0, o = 0; i < out.length; i++, o += 4) {
         const w = out[i];
-        out[i] = (w << 24 | (w & 0xff00) << 8 | w >>> 8 & 0xff00 | w >>> 24) >>> 0;
+        bytes[o] = w & 0xff;
+        bytes[o + 1] = w >> 8 & 0xff;
+        bytes[o + 2] = w >> 16 & 0xff;
+        bytes[o + 3] = w >>> 24;
     }
-    return new Uint8Array(out.buffer);
+    return bytes;
 }
 
 // one pair of rows: top is nearer to the chroma row "top", bottom nearer to "current" (no bottom row if -1)
