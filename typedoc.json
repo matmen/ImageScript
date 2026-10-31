@@ -6,6 +6,8 @@
   "out": "docs",
   "name": "ImageScript",
   "readme": "README.md",
+  "favicon": "media/favicon.svg",
+  "customCss": "media/docs.css",
   "includeVersion": true,
   "excludePrivate": true,
   "excludeInternal": true,

@@ -1,0 +1,39 @@
+/* typedoc's custom CSS for imagescript.dev (assets/custom.css, next to assets/favicon.svg) */
+
+/* the mark before the title in the toolbar */
+.tsd-page-toolbar .title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+}
+
+.tsd-page-toolbar .title::before {
+    content: "";
+    flex: none;
+    width: 1.5em;
+    height: 1.5em;
+    background: url(favicon.svg) center / contain no-repeat;
+}
+
+/* the README's wordmark following typedoc's theme setting rather than the OS's (scripts/docs.js splits it in two) */
+.wordmark-dark {
+    display: none;
+}
+
+:root[data-theme="dark"] .wordmark-light {
+    display: none;
+}
+
+:root[data-theme="dark"] .wordmark-dark {
+    display: inline;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root[data-theme="os"] .wordmark-light {
+        display: none;
+    }
+
+    :root[data-theme="os"] .wordmark-dark {
+        display: inline;
+    }
+}
